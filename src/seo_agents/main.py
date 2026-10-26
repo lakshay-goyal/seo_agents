@@ -12,7 +12,7 @@ def main() -> None:
     sandbox = create_sandbox()
     clone_repo(sandbox, github_url)
     create_pr(sandbox, github_url)
-    repo_analysis(github_url)
+    # repo_analysis(github_url)
 
 
 if __name__ == "__main__":

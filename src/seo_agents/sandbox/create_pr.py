@@ -5,6 +5,7 @@ Who shows up on GitHub?
 - PR author / contributor username: whoever owns GITHUB_TOKEN
   (check locally with `gh auth status`). GitHub resolves the
   fork/push/PR to that account no matter what `git config` says.
+  Use a classic PAT with the `repo` scope.
 """
 
 import os
@@ -94,7 +95,9 @@ def create_pr(sandbox, github_url):
     # 2. Token for fork + push + PR (gh reads GH_TOKEN, git push reads GITHUB_TOKEN).
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
-        raise RuntimeError("Set GITHUB_TOKEN in .env first.")
+        raise RuntimeError(
+            "Set GITHUB_TOKEN in .env first (classic PAT with the `repo` scope)."
+        )
     env = {"GITHUB_TOKEN": token, "GH_TOKEN": token}
 
     # 3. Shorthand: run a command in the sandbox, fail loudly if it errors.
@@ -122,17 +125,20 @@ def create_pr(sandbox, github_url):
         run(f"cd {target} && git add .seo_agents/readme.md && git commit -q -m '{PR_TITLE}'")
 
     # 7. Push the branch to YOUR fork (${GITHUB_TOKEN} comes from env, not the command).
-    run(f"cd {target} && git push 'https://x-access-token:${{GITHUB_TOKEN}}@github.com/{fork_owner}/{repo}.git' {PR_BRANCH}")
+    #     Double quotes so bash expands the token; single quotes would send it literally.
+    run(f'cd {target} && git push "https://x-access-token:${{GITHUB_TOKEN}}@github.com/{fork_owner}/{repo}.git" {PR_BRANCH}')
 
     # 8. Open the PR — or return the existing one if you re-run this.
+    #    Same-repo PR (forking your own repo): head is just the branch name.
+    head = PR_BRANCH if fork_owner == owner else f"{fork_owner}:{PR_BRANCH}"
     sandbox.write("/tmp/seo_agents_pr_body.md", PR_BODY)
-    already = run(f"gh pr list --repo {owner}/{repo} --head {fork_owner}:{PR_BRANCH} --json url -q '.[0].url'")
+    already = run(f"gh pr list --repo {owner}/{repo} --head {head} --json url -q '.[0].url'")
     if already and already != "null":
         print(f"PR already exists: {already}")
         return already
     pr_url = run(
         f"gh pr create --repo {owner}/{repo} --base {base} "
-        f"--head {fork_owner}:{PR_BRANCH} --title '{PR_TITLE}' --body-file /tmp/seo_agents_pr_body.md"
+        f"--head {head} --title '{PR_TITLE}' --body-file /tmp/seo_agents_pr_body.md"
     )
     print(f"Opened PR: {pr_url}")
     return pr_url
