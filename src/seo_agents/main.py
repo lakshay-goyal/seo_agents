@@ -1,5 +1,5 @@
 from seo_agents.exploration.repo_analysis import repo_analysis
-from seo_agents.sandbox import clone_repo, create_sandbox, is_valid_github_url
+from seo_agents.sandbox import clone_repo, create_pr, create_sandbox, is_valid_github_url
 
 
 def main() -> None:
@@ -11,6 +11,7 @@ def main() -> None:
 
     sandbox = create_sandbox()
     clone_repo(sandbox, github_url)
+    create_pr(sandbox, github_url)
     repo_analysis(github_url)
 
 
