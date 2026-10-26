@@ -126,7 +126,9 @@ def create_pr(sandbox, github_url):
 
     # 7. Push the branch to YOUR fork (${GITHUB_TOKEN} comes from env, not the command).
     #     Double quotes so bash expands the token; single quotes would send it literally.
-    run(f'cd {target} && git push "https://x-access-token:${{GITHUB_TOKEN}}@github.com/{fork_owner}/{repo}.git" {PR_BRANCH}')
+    #     --force because this is our own disposable dummy branch: each run resets it
+    #     to main, so a branch left over from a previous run would reject the push.
+    run(f'cd {target} && git push --force "https://x-access-token:${{GITHUB_TOKEN}}@github.com/{fork_owner}/{repo}.git" {PR_BRANCH}')
 
     # 8. Open the PR — or return the existing one if you re-run this.
     #    Same-repo PR (forking your own repo): head is just the branch name.
