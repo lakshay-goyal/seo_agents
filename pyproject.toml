@@ -7,10 +7,10 @@ authors = [
     { name = "Lakshay Goyal", email = "lakshaygoyal201@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["langsmith>=0.14"]
 
 [project.scripts]
-seo-agents = "seo_agents:main"
+seo-agents = "seo_agents.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.20,<0.13.0"]
