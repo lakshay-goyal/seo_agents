@@ -1,3 +1,7 @@
-def is_valid_github_url(url: str) -> bool:
-    """Lightweight check run before creating the sandbox."""
-    return url.startswith("https://github.com/") and len(url.split("/")) >= 5
+"""URL check: accept only github.com repo links."""
+
+
+def is_valid_github_url(url):
+    if not url.startswith("https://github.com/"):
+        return False
+    return len(url.split("/")) >= 5
