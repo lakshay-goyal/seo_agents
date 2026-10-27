@@ -1,8 +1,6 @@
 """Docker sandbox: one long-running container for the whole pipeline."""
 
-import os
 import subprocess
-import tempfile
 
 from seo_agents.log import done, log, start
 
@@ -36,23 +34,18 @@ class DockerSandbox:
     def write(self, path, content):
         if isinstance(content, str):
             content = content.encode()
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        tmp.write(content)
-        tmp.close()
-        try:
-            parent = path.rsplit("/", 1)[0]
-            subprocess.run(
-                ["docker", "exec", self.container, "mkdir", "-p", parent],
-                capture_output=True,
-                check=True,
-            )
-            subprocess.run(
-                ["docker", "cp", tmp.name, self.container + ":" + path],
-                capture_output=True,
-                check=True,
-            )
-        finally:
-            os.unlink(tmp.name)
+        # Stream bytes into the container; never stage source/report data on the host.
+        writer = (
+            "import pathlib, sys; dest = pathlib.Path(sys.argv[1]); "
+            "dest.parent.mkdir(parents=True, exist_ok=True); "
+            "dest.write_bytes(sys.stdin.buffer.read())"
+        )
+        subprocess.run(
+            ["docker", "exec", "-i", self.container, "python3", "-c", writer, path],
+            input=content,
+            capture_output=True,
+            check=True,
+        )
 
 
 def docker_stdout(args):

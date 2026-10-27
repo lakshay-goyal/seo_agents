@@ -10,8 +10,8 @@ from pathlib import Path
 from seo_agents.log import done, log, start
 
 CONTAINER_SRC = "/opt/seo_agents/src"
-RUNTIME_MARKER = "/opt/seo_agents/.runtime_ready"
-PIP_DEPS = ["langchain-core", "langgraph", "langchain-openai", "python-dotenv"]
+RUNTIME_MARKER = "/opt/seo_agents/.runtime_ready_ast_v1"
+PIP_DEPS = ["langchain-core", "langgraph", "langchain-openai", "python-dotenv", "tree-sitter==0.25.2", "tree-sitter-javascript==0.25.0", "tree-sitter-typescript==0.23.2"]
 
 PR_URL_RE = re.compile(r"SEO_PR_URL=(\S+)")
 
