@@ -7,6 +7,8 @@ container, ships this package into it, and starts the driver.
 import re
 from pathlib import Path
 
+from seo_agents.log import done, log, start
+
 CONTAINER_SRC = "/opt/seo_agents/src"
 RUNTIME_MARKER = "/opt/seo_agents/.runtime_ready"
 PIP_DEPS = ["langchain-core", "langgraph", "langchain-openai", "python-dotenv"]
@@ -20,17 +22,18 @@ def host_src_dir():
 
 def ensure_container_runtime(sandbox):
     if sandbox.run("test -f " + RUNTIME_MARKER).success:
-        print("Container runtime already provisioned.")
+        log("container runtime already provisioned.")
         return
-    print("Provisioning container runtime (pip install, first run only)...")
+    begun = start("provisioning container runtime (pip install)")
     result = sandbox.run("python3 -m pip install --quiet --break-system-packages " + " ".join(PIP_DEPS))
     if not result.success:
         raise RuntimeError("pip install failed:\n" + result.stdout + result.stderr)
     sandbox.run("mkdir -p /opt/seo_agents && touch " + RUNTIME_MARKER)
-    print("Container runtime ready.")
+    done("provisioning container runtime (pip install)", begun)
 
 
 def sync_sources(sandbox):
+    begun = start("syncing sources into container")
     src = host_src_dir()
     count = 0
     for path in sorted(src.rglob("*.py")):
@@ -39,15 +42,16 @@ def sync_sources(sandbox):
         dest = CONTAINER_SRC + "/" + str(path.relative_to(src))
         sandbox.write(dest, path.read_bytes())
         count = count + 1
-    print("Synced " + str(count) + " source files into the container.")
+    done("syncing " + str(count) + " source files into container", begun)
     return count
 
 
 def run_pipeline_in_sandbox(sandbox, github_url, env=None):
+    begun = start("full pipeline in sandbox")
     ensure_container_runtime(sandbox)
     sync_sources(sandbox)
     driver = CONTAINER_SRC + "/seo_agents/sandbox/in_container.py"
-    print("Running pipeline inside the sandbox for " + github_url + " ...")
+    log("running driver inside the sandbox for " + github_url)
     if env is None:
         env = {}
     result = sandbox.run("python3 " + driver + " " + github_url, env=env)
@@ -57,4 +61,5 @@ def run_pipeline_in_sandbox(sandbox, github_url, env=None):
     match = PR_URL_RE.search(result.stdout)
     if not match:
         raise RuntimeError("Pipeline finished but no SEO_PR_URL found:\n" + result.stdout + result.stderr)
+    done("full pipeline in sandbox", begun)
     return match.group(1)

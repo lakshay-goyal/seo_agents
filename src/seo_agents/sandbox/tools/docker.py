@@ -4,6 +4,8 @@ import os
 import subprocess
 import tempfile
 
+from seo_agents.log import done, log, start
+
 IMAGE = "python:3.14-slim"
 CONTAINER = "seo-agents-sandbox"
 
@@ -59,7 +61,8 @@ def docker_stdout(args):
 
 
 def create_sandbox():
-    print("Creating local Docker sandbox...")
+    begun = start("sandbox boot")
+    log("creating local Docker sandbox...")
     running = docker_stdout(["docker", "ps", "-q", "-f", "name=" + CONTAINER]).stdout.strip()
     if not running:
         docker_stdout(["docker", "rm", "-f", CONTAINER])
@@ -73,9 +76,15 @@ def create_sandbox():
     sandbox = DockerSandbox(CONTAINER)
     tools_ready = sandbox.run("command -v git >/dev/null && command -v gh >/dev/null")
     if not tools_ready.success:
-        print("Installing git/gh inside the container (first run only)...")
+        install_begun = start("installing git/gh in container")
         result = sandbox.run("apt-get update -qq && apt-get install -y -qq git gh curl ca-certificates")
         if not result.success:
-            raise RuntimeError("Tool install failed:\n" + result.stdout + result.stderr)
-    print("Sandbox is running.")
+            raise RuntimeError(
+                "Tool install failed (exit " + str(result.exit_code) + ").\n"
+                + result.stdout + result.stderr
+                + '\nRe-run by hand to see the full error:\n'
+                + 'docker exec ' + CONTAINER + ' bash -c "apt-get update && apt-get install -y git gh curl ca-certificates"'
+            )
+        done("installing git/gh in container", install_begun)
+    done("sandbox boot", begun)
     return sandbox

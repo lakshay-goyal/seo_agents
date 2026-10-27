@@ -1,5 +1,7 @@
 """Three SEO pillars: on-page (content), technical (crawl/speed), off-page (authority)."""
 
+from seo_agents.log import done, log, start
+
 from seo_agents.exploration.checks.onpage.content_arrangement import analyze_content_arrangement
 from seo_agents.exploration.checks.onpage.page_structure import analyze_page_structure
 from seo_agents.exploration.checks.onpage.internal_links import analyze_internal_links
@@ -34,6 +36,7 @@ def analyze_onpage_seo(repo_path=None):
 
 def analyze_technical_seo():
     """Run the technical SEO checks (crawl, render, speed)."""
+    begun = start("technical SEO")
     explore_code()
     check_sitemap_and_robots()
     analyze_canonicals_redirects()
@@ -46,22 +49,26 @@ def analyze_technical_seo():
     analyze_structured_data()
     analyze_mobile_parity()
     analyze_hreflang_i18n()
+    done("technical SEO", begun)
 
 
 def analyze_offpage_seo():
     """Run the off-page SEO readiness checks (shareability, brand, local, AI search)."""
+    begun = start("off-page SEO")
     analyze_shareability_link_assets()
     analyze_brand_entity_signals()
     analyze_local_business_presence()
     analyze_ai_search_readiness()
+    done("off-page SEO", begun)
 
 
 def repo_analysis(github_url, repo_path=None):
     """Analyze the client checkout and return the on-page results from memory."""
-    print("Starting analysis for repository: " + github_url)
+    begun = start("repo analysis: " + github_url)
     state = analyze_onpage_seo(repo_path=repo_path)
     artifacts = state.get("artifacts") or {}
-    print("On-page reports in memory: " + str(sorted(artifacts)))
+    log("on-page reports in memory: " + str(sorted(artifacts)))
     analyze_technical_seo()
     analyze_offpage_seo()
+    done("repo analysis: " + github_url, begun)
     return state

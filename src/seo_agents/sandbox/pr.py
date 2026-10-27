@@ -9,6 +9,7 @@ import json
 import os
 
 from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
+from seo_agents.log import done, log, start
 
 PR_TITLE = "chore(seo-agents): add on-page SEO reports"
 PR_BRANCH = "seo-agents/onpage-reports"
@@ -127,21 +128,26 @@ def run_or_fail(runner, env, command):
 
 
 def create_pr(runner, github_url, reports=None):
+    begun = start("PR on " + github_url)
     owner, repo, target = split_github_url(github_url)
     env = login_env()
     check_reports(reports)
+    log("target checkout: " + target)
 
     run_or_fail(runner, env, "git --version")
     run_or_fail(runner, env, "gh --version || (apt-get update -qq && apt-get install -y -qq gh)")
     run_or_fail(runner, env, "test -d " + target + "/.git || git clone --depth 1 " + github_url + " " + target)
+    log("checkout ready: " + target)
 
     runner.run("gh repo fork " + owner + "/" + repo + " --clone=false", env=env)
     fork_owner = run_or_fail(runner, env, "gh api user -q .login")
     base = run_or_fail(runner, env, "gh api repos/" + owner + "/" + repo + " -q .default_branch")
+    log("forked as " + fork_owner + ", base branch " + base)
 
     run_or_fail(runner, env, "cd " + target + " && git fetch origin -q && git checkout -B " + PR_BRANCH + " origin/" + base)
     run_or_fail(runner, env, "cd " + target + " && git config user.name '" + GIT_USER_NAME + "' && git config user.email '" + GIT_USER_EMAIL + "'")
     runner.write(target + "/.seo_agents/readme.md", README_CONTENT)
+    log("branch ready: " + PR_BRANCH)
 
     added = [".seo_agents/readme.md"]
     if reports is not None:
@@ -149,15 +155,18 @@ def create_pr(runner, github_url, reports=None):
             content = json.dumps(reports[key], indent=2, ensure_ascii=False)
             runner.write(target + "/seo_reports/onpage/" + filename, content)
             added.append("seo_reports/onpage/" + filename)
+        log("staged " + str(len(REPORT_FILES)) + " report files")
     run_or_fail(runner, env, "cd " + target + " && git add " + " ".join(added))
     if run_or_fail(runner, env, "cd " + target + " && git status --porcelain"):
         run_or_fail(runner, env, "cd " + target + " && git commit -q -m '" + PR_TITLE + "'")
+        log("committed " + str(len(added)) + " files")
 
     push_cmd = (
         "cd " + target + ' && git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/'
         + fork_owner + "/" + repo + '.git" ' + PR_BRANCH
     )
     run_or_fail(runner, env, push_cmd)
+    log("pushed branch " + PR_BRANCH)
 
     if fork_owner == owner:
         head = PR_BRANCH
@@ -169,12 +178,14 @@ def create_pr(runner, github_url, reports=None):
         "gh pr list --repo " + owner + "/" + repo + " --head " + head + ' --json url -q ".[0].url"',
     )
     if already and already != "null":
-        print("PR already exists: " + already)
+        log("PR already exists: " + already)
+        done("PR on " + github_url, begun)
         return already
     pr_url = run_or_fail(
         runner, env,
         "gh pr create --repo " + owner + "/" + repo + " --base " + base
         + " --head " + head + " --title '" + PR_TITLE + "' --body-file /tmp/seo_agents_pr_body.md",
     )
-    print("Opened PR: " + pr_url)
+    log("opened PR: " + pr_url)
+    done("PR on " + github_url, begun)
     return pr_url

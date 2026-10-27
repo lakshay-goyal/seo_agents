@@ -5,6 +5,8 @@ import os
 import re
 from pathlib import Path
 
+from seo_agents.log import log
+
 
 SKIP_DIRS = {
     "node_modules", ".git", ".next", "dist", "build", ".venv", "venv",
@@ -74,6 +76,7 @@ def iter_source_files(repo, exts=None):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
         for name in files:
             if count >= MAX_FILES_PER_SCAN:
+                log("iter_source_files: reached cap of " + str(MAX_FILES_PER_SCAN) + " files in " + str(repo))
                 return
             path = Path(root) / name
             if path.suffix.lower() in exts:

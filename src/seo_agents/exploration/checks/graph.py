@@ -9,6 +9,8 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from seo_agents.log import done, start
+
 from seo_agents.exploration.checks.onpage.content_arrangement import analyze_content_arrangement
 from seo_agents.exploration.checks.onpage.eeat_trust_signals import analyze_eeat_trust_signals
 from seo_agents.exploration.checks.onpage.internal_links import analyze_internal_links
@@ -36,9 +38,12 @@ CHECKS = [
 
 def make_node(key, func):
     def node(state):
+        begun = start("check: " + key)
         saved = dict(state.get("artifacts") or {})
         saved[key] = func(state.get("repo_path"))
-        return {"artifacts": saved}
+        result = {"artifacts": saved}
+        done("check: " + key, begun)
+        return result
     return node
 
 
@@ -54,8 +59,11 @@ def build_onpage_graph():
 
 
 def run_onpage_graph(repo_path=None):
+    begun = start("on-page graph (7 checks)")
     graph = build_onpage_graph()
-    start = {"artifacts": {}}
+    start_state = {"artifacts": {}}
     if repo_path:
-        start["repo_path"] = repo_path
-    return graph.invoke(start)
+        start_state["repo_path"] = repo_path
+    result = graph.invoke(start_state)
+    done("on-page graph (7 checks)", begun)
+    return result

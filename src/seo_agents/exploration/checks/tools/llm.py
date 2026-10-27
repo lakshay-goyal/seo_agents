@@ -7,6 +7,8 @@ OPENROUTER_API_KEY is set. Anything fails -> return None, never crash.
 import json
 import os
 
+from seo_agents.log import log
+
 
 def get_chat_model():
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -24,7 +26,9 @@ def summarize(check_name, stats):
     try:
         model = get_chat_model()
     except Exception:
+        log("summarize: no OPENROUTER_API_KEY, skipping AI summary for " + check_name)
         return None
+    log("summarize: asking OpenRouter for " + check_name)
     prompt = (
         "You are an SEO analyst. Check: " + check_name + ". "
         "Given these crawl stats (JSON), return STRICT JSON "

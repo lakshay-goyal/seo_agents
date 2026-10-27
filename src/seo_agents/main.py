@@ -1,5 +1,6 @@
 import os
 
+from seo_agents.log import done, log, start
 from seo_agents.sandbox import create_sandbox, is_valid_github_url, run_pipeline_in_sandbox
 
 
@@ -13,10 +14,11 @@ def forward_env():
 
 
 def main():
+    begun = start("seo-agents run")
     github_url = "https://github.com/lakshay-goyal/my-portfolio"
 
     if not is_valid_github_url(github_url):
-        print("Skipping: not a valid GitHub URL: " + github_url)
+        log("skipping: not a valid GitHub URL: " + github_url)
         return
 
     if not os.environ.get("GITHUB_TOKEN"):
@@ -24,7 +26,8 @@ def main():
 
     sandbox = create_sandbox()
     pr_url = run_pipeline_in_sandbox(sandbox, github_url, env=forward_env())
-    print("Done. PR: " + pr_url)
+    log("result: " + pr_url)
+    done("seo-agents run", begun)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from seo_agents.exploration.checks.tools.helpers import (
     resolve_repo_path,
     sha16,
 )
+from seo_agents.log import log
 
 
 APP_PAGE = re.compile(r"(?:^|/)app/(.+?)/page\.(tsx|jsx|ts|js|mdx?)")
@@ -111,7 +112,9 @@ def discover_routes(repo_path):
         routes = code_routes(repo)
     if not routes:
         routes = static_routes(repo)
-    return unique_routes(routes)
+    routes = unique_routes(routes)
+    log("discover_routes: " + str(len(routes)) + " routes in " + str(repo))
+    return routes
 
 
 def page_files(repo, routes):
@@ -185,6 +188,7 @@ def scrape_content_blocks(repo_path=""):
             and counts[page["content_hash"]] > 1
             and page["word_count"] < 800
         )
+    log("scrape_content_blocks: " + str(len(pages)) + " pages")
     return {"page_count": len(pages), "pages": pages}
 
 
@@ -229,6 +233,7 @@ def scrape_headings(repo_path=""):
             "landmarks": landmarks,
             "has_main": landmarks.get("main", 0) > 0,
         })
+    log("scrape_headings: " + str(len(pages)) + " pages")
     return {"page_count": len(pages), "pages": pages}
 
 
@@ -284,6 +289,7 @@ def scrape_internal_links(repo_path=""):
     total_edges = 0
     for count in edge_counts.values():
         total_edges = total_edges + count
+    log("scrape_internal_links: " + str(total_edges) + " edges, " + str(len(orphans)) + " orphans")
     return {
         "linking_files": linking_files,
         "edge_count": total_edges,
@@ -370,6 +376,7 @@ def scrape_metadata(repo_path=""):
     for title, count in seen_titles.items():
         if count > 1 and title:
             duplicates.append(title)
+    log("scrape_metadata: " + str(len(pages)) + " pages, " + str(len(duplicates)) + " duplicate titles")
     return {
         "page_count": len(pages),
         "duplicate_title_count": len(duplicates),
@@ -444,6 +451,7 @@ def scrape_media(repo_path=""):
     for item in items:
         if item["kind"] in ("img", "next-image") and not item["has_alt"]:
             missing = missing + 1
+    log("scrape_media: " + str(len(items)) + " media files, " + str(missing) + " missing alt")
     return {
         "media_count": len(items),
         "by_kind": counts,
@@ -501,6 +509,7 @@ def scrape_urls(repo_path=""):
     for path in iter_source_files(repo, exts=code_exts):
         if "breadcrumb" in read_capped(path).lower():
             breadcrumbs = breadcrumbs + 1
+    log("scrape_urls: " + str(len(urls)) + " urls")
     return {
         "url_count": len(urls),
         "deep_url_count": len(deep),
@@ -539,6 +548,7 @@ def scrape_eeat(repo_path=""):
     summary = {}
     for key, files in hits.items():
         summary[key] = len(files)
+    log("scrape_eeat: " + str(summary))
     return {
         "signals": summary,
         "has_about": summary["about"] > 0,
