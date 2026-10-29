@@ -28,7 +28,7 @@ from seo_agents.exploration.checks.offpage.ai_search_readiness import analyze_ai
 
 
 def analyze_onpage_seo(repo_path=None):
-    """Run the 7 on-page checks through the LangGraph chain. Returns in-memory results."""
+    """Run seven skill-guided exploration agents; return verified reports in memory."""
     from seo_agents.exploration.checks.graph import run_onpage_graph
 
     return run_onpage_graph(repo_path=repo_path)

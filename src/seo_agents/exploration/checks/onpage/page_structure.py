@@ -1,7 +1,7 @@
 """Extract the page_structure inventory for JSON-based downstream analysis."""
 
-from seo_agents.exploration.checks.tools.crawl import scrape_headings
+from seo_agents.exploration.checks.agents.extractor import extract_category
 
 
 def analyze_page_structure(repo_path=None):
-    return scrape_headings.func(str(repo_path) if repo_path else "")
+    return extract_category('page_structure', repo_path)

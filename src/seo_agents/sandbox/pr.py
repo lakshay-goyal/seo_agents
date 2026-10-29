@@ -34,6 +34,10 @@ routes, source references and explicit extraction coverage:
 These are static source observations. Runtime data, component props and dynamic
 route instances remain unresolved; coverage fields explain the gaps. No production
 code is changed. This schema replaces the earlier count/excerpt format.
+
+In agent mode, each category uses its own skill and repository-specific extraction
+script, accepted only after bounded execution, schema/source checks and a repeated
+run. Extraction metadata records script, skill and source snapshot hashes.
 """
 
 GIT_USER_NAME = "seo-agents-bot"
@@ -65,6 +69,12 @@ invented. Absolute links remain unclassified without an authoritative site origi
 ## Coverage
 
 This is a static inventory, not a rendered browser crawl. Local components and
+framework routing are explored by category agents in the default mode. Their
+generated scripts must pass bounded execution, schema/source checks and a repeated
+run before report acceptance; extraction metadata records verification hashes.
+Coverage and framework semantics depend on the generated extractor and are not
+proof of complete runtime coverage. The following details describe legacy static
+mode: local components and
 ancestor Next.js layouts are followed. Literal constants and local asset imports
 are resolved. Vite mount entries, same-file components, supported props/maps/pathname routing,
 local public-file fetches and object-valued click states are resolved through syntax

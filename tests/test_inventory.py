@@ -98,7 +98,7 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
         self.assertTrue(any(s['signal'] == 'authorship' and s['evidence'] for s in home['signals']))
 
     def test_graph_tools_and_offline_analysis(self):
-        state = run_onpage_graph(str(self.repo))
+        state = run_onpage_graph(str(self.repo), mode='static')
         reports = state['artifacts']
         self.assertEqual(set(reports), set(REPORT_FILES))
         folder = self.repo / 'saved'

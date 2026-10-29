@@ -17,7 +17,7 @@ def get_chat_model():
     from langchain_openai import ChatOpenAI
     model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash")
     base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=0)
+    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=0, timeout=90, max_retries=2)
 
 
 def summarize(check_name, stats):

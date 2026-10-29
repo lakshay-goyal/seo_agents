@@ -10,8 +10,8 @@ from pathlib import Path
 from seo_agents.log import done, log, start
 
 CONTAINER_SRC = "/opt/seo_agents/src"
-RUNTIME_MARKER = "/opt/seo_agents/.runtime_ready_ast_v1"
-PIP_DEPS = ["langchain-core", "langgraph", "langchain-openai", "python-dotenv", "tree-sitter==0.25.2", "tree-sitter-javascript==0.25.0", "tree-sitter-typescript==0.23.2"]
+RUNTIME_MARKER = "/opt/seo_agents/.runtime_ready_agents_v2"
+PIP_DEPS = ["langchain>=1.0,<2.0", "langchain-core>=1.0,<2.0", "langgraph>=1.0,<2.0", "langchain-openai>=1.0", "python-dotenv", "tree-sitter==0.25.2", "tree-sitter-javascript==0.25.0", "tree-sitter-typescript==0.23.2"]
 
 PR_URL_RE = re.compile(r"SEO_PR_URL=(\S+)")
 
@@ -36,8 +36,8 @@ def sync_sources(sandbox):
     begun = start("syncing sources into container")
     src = host_src_dir()
     count = 0
-    for path in sorted(src.rglob("*.py")):
-        if "__pycache__" in path.parts:
+    for path in sorted(src.rglob("*")):
+        if not path.is_file() or path.suffix not in {'.py', '.md'} or "__pycache__" in path.parts:
             continue
         dest = CONTAINER_SRC + "/" + str(path.relative_to(src))
         sandbox.write(dest, path.read_bytes())

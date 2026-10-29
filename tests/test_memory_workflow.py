@@ -30,7 +30,7 @@ class MemoryWorkflowTests(unittest.TestCase):
             with patch.object(Path, 'write_text', side_effect=AssertionError('analysis wrote text')), patch.object(
                     Path, 'write_bytes', side_effect=AssertionError('analysis wrote bytes')), patch(
                     'builtins.open', side_effect=AssertionError('unexpected file open')):
-                state = run_onpage_graph(str(repo))
+                state = run_onpage_graph(str(repo), mode='static')
             self.assertEqual(set(state['artifacts']), set(REPORT_FILES))
             self.assertEqual(state['artifacts']['content']['pages'][0]['blocks'][0]['text'], 'Example page')
             self.assertEqual(sorted(str(p.relative_to(repo)) for p in repo.rglob('*')), before)

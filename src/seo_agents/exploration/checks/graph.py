@@ -1,66 +1,90 @@
-"""Run the 7 on-page checks in order using LangGraph.
+"""Seven independent skill-guided agents, followed by cross-report validation."""
 
-The graph is a straight chain: content -> structure -> links ->
-metadata -> media -> urls -> eeat. Each step runs one check and
-saves its result in the shared state under "artifacts".
-"""
-
+import os
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from seo_agents.log import done, start
-
-from seo_agents.exploration.checks.onpage.content_arrangement import analyze_content_arrangement
-from seo_agents.exploration.checks.onpage.eeat_trust_signals import analyze_eeat_trust_signals
-from seo_agents.exploration.checks.onpage.internal_links import analyze_internal_links
-from seo_agents.exploration.checks.onpage.media_alt_text import analyze_media_alt_text
-from seo_agents.exploration.checks.onpage.metadata_social_cards import analyze_metadata_social_cards
-from seo_agents.exploration.checks.onpage.page_structure import analyze_page_structure
-from seo_agents.exploration.checks.onpage.url_information_architecture import analyze_url_information_architecture
-
+from seo_agents.exploration.checks.agents.extractor import run_exploration_agent
+from seo_agents.exploration.checks.agents.repository import snapshot_repository
 
 class OnpageState(TypedDict, total=False):
     repo_path: str
     artifacts: dict
+    agent_runs: dict
+    snapshot: dict
 
 
-CHECKS = [
-    ("content", analyze_content_arrangement),
-    ("page_structure", analyze_page_structure),
-    ("internal_links", analyze_internal_links),
-    ("metadata", analyze_metadata_social_cards),
-    ("media", analyze_media_alt_text),
-    ("urls", analyze_url_information_architecture),
-    ("eeat", analyze_eeat_trust_signals),
-]
+CHECKS = ('urls', 'content', 'page_structure', 'internal_links', 'metadata', 'media', 'eeat')
 
 
-def make_node(key, func):
+def make_node(key, mode):
     def node(state):
         begun = start("check: " + key)
         saved = dict(state.get("artifacts") or {})
-        saved[key] = func(state.get("repo_path"))
-        result = {"artifacts": saved}
+        if mode == 'agent':
+            route_pages = saved.get('urls', {}).get('pages')
+            routes = [{k: p[k] for k in ('url', 'template', 'is_dynamic')} for p in route_pages] if route_pages is not None else None
+            extraction = run_exploration_agent(key, snapshot=state['snapshot'], routes=routes)
+            saved[key] = extraction['report']
+            runs = dict(state.get('agent_runs') or {})
+            runs[key] = extraction['run']
+            result = {'artifacts': saved, 'agent_runs': runs}
+        else:
+            # Explicit legacy/offline mode; never a silent fallback from a failed agent.
+            from seo_agents.exploration.checks.tools.inventory import inventory
+            from seo_agents.exploration.checks.tools.helpers import resolve_repo_path
+            saved[key] = inventory(resolve_repo_path(state.get('repo_path')), key)
+            result = {'artifacts': saved}
         done("check: " + key, begun)
         return result
     return node
 
 
-def build_onpage_graph():
+def validate_artifact_links(state):
+    artifacts = state['artifacts']
+    routes = None
+    for report in artifacts.values():
+        current = {(p['url'], p['template']) for p in report['pages']}
+        if routes is not None and current != routes:
+            raise ValueError('Independent agents discovered inconsistent route inventories')
+        routes = current
+    links = {(p['url'], p['template']): {r['source_id'] for r in p['links']} for p in artifacts['internal_links']['pages']}
+    media = {(p['url'], p['template']): {r['source_id'] for r in p['items']} for p in artifacts['media']['pages']}
+    for page in artifacts['content']['pages']:
+        for field, targets, filename in [('link_refs', links, 'internal_links.json'), ('media_refs', media, 'media.json')]:
+            for ref in page[field]:
+                if ref['report'] != filename or ref['source_id'] not in targets.get((page['url'], page['template']), set()):
+                    raise ValueError('Unmatched cross-report reference: ' + ref['source_id'])
+    return {}
+
+
+def build_onpage_graph(mode=None):
+    mode = mode or os.getenv('SEO_EXPLORATION_MODE', 'agent')
+    if mode not in {'agent', 'static'}:
+        raise ValueError('SEO_EXPLORATION_MODE must be agent or static')
     graph = StateGraph(OnpageState)
-    for key, func in CHECKS:
-        graph.add_node(key, make_node(key, func))
-    graph.add_edge(START, CHECKS[0][0])
+    for key in CHECKS:
+        graph.add_node(key, make_node(key, mode))
+    if mode == 'agent':
+        graph.add_node('snapshot', lambda state: {'snapshot': snapshot_repository(state.get('repo_path'))})
+        graph.add_edge(START, 'snapshot')
+        graph.add_edge('snapshot', CHECKS[0])
+        graph.add_node('validate_artifacts', validate_artifact_links)
+        graph.add_edge(CHECKS[-1], 'validate_artifacts')
+        graph.add_edge('validate_artifacts', END)
+    else:
+        graph.add_edge(START, CHECKS[0])
+        graph.add_edge(CHECKS[-1], END)
     for i in range(len(CHECKS) - 1):
-        graph.add_edge(CHECKS[i][0], CHECKS[i + 1][0])
-    graph.add_edge(CHECKS[-1][0], END)
+        graph.add_edge(CHECKS[i], CHECKS[i + 1])
     return graph.compile()
 
 
-def run_onpage_graph(repo_path=None):
+def run_onpage_graph(repo_path=None, *, mode=None):
     begun = start("on-page graph (7 checks)")
-    graph = build_onpage_graph()
+    graph = build_onpage_graph(mode)
     start_state = {"artifacts": {}}
     if repo_path:
         start_state["repo_path"] = repo_path
