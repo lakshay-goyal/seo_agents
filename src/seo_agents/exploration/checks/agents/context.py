@@ -30,14 +30,44 @@ class SourceHTML(HTMLParser):
         return {'file': self.file, 'line': line, 'column': column,
                 'source_id': f'{self.file}:{line}:{column}:{kind}', 'method': 'literal-html-source'}
 
+    def finish_record(self, node, *, closed=False):
+        if node.get('record') is not None:
+            key = 'anchor_text' if node['tag'] == 'a' else 'text'
+            node['record'][key] = ' '.join(''.join(node['parts']).split())
+            node['record']['element_closed'] = closed
+
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
-        if tag == 'script' and attrs.get('type', '').lower() == 'application/ld+json':
+        node = {'tag': tag, 'attributes': attrs, 'ref': self.ref(tag), 'parts': []}
+        section = next((n['tag'] for n in reversed(self.stack)
+                        if n['tag'] in {'main', 'article', 'nav', 'header', 'footer', 'aside', 'section'}), 'body')
+        node['section'] = section
+        if tag == 'script' and (attrs.get('type') or '').lower() == 'application/ld+json':
             self.script = {**self.ref('json-ld'), 'kind': 'structured-data', 'raw': ''}
         if tag in {'meta', 'link', 'base', 'html'}:
             self.records.append({**self.ref(tag), 'kind': 'head-declaration', 'tag': tag, 'attributes': attrs})
-        if tag not in {'meta', 'link', 'base', 'img', 'br', 'hr', 'input', 'source', 'area', 'embed', 'wbr'}:
-            self.stack.append((tag, attrs))
+        if tag == 'a' and 'href' in attrs:
+            record = {**node['ref'], 'kind': 'navigation-link', 'raw_value': attrs['href'],
+                      'attributes': attrs, 'section': section, 'anchor_text': '',
+                      'image_alternatives': [], 'element_closed': False}
+            self.records.append(record)
+            node['record'] = record
+        if tag in {'img', 'video', 'audio', 'source', 'track', 'iframe'}:
+            self.records.append({**node['ref'], 'kind': 'media-declaration', 'tag': tag,
+                                 'attributes': attrs, 'section': section})
+        if tag == 'img' and attrs.get('alt'):
+            for ancestor in self.stack:
+                if ancestor['tag'] == 'a' and ancestor.get('record') is not None:
+                    ancestor['record']['image_alternatives'].append(attrs['alt'])
+        if tag == 'title' or tag in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
+            record = {**node['ref'], 'kind': 'head-declaration' if tag == 'title' else 'heading',
+                      'tag': tag, 'text': '', 'element_closed': False}
+            if tag != 'title':
+                record.update(level=int(tag[1]), section=section)
+            self.records.append(record)
+            node['record'] = record
+        if tag not in {'meta', 'link', 'base', 'img', 'br', 'hr', 'input', 'source', 'area', 'embed', 'wbr', 'col', 'param', 'track'}:
+            self.stack.append(node)
 
     def handle_endtag(self, tag):
         if tag == 'script' and self.script is not None:
@@ -50,7 +80,9 @@ class SourceHTML(HTMLParser):
             self.records.append(self.script)
             self.script = None
         for index in range(len(self.stack) - 1, -1, -1):
-            if self.stack[index][0] == tag:
+            if self.stack[index]['tag'] == tag:
+                for node in self.stack[index:]:
+                    self.finish_record(node, closed=node['tag'] == tag)
                 del self.stack[index:]
                 break
 
@@ -61,15 +93,25 @@ class SourceHTML(HTMLParser):
     def handle_data(self, data):
         if self.script is not None:
             self.script['raw'] += data
-        if not data.strip() or any(tag in {'script', 'style'} for tag, _ in self.stack):
+        if any(n['tag'] in {'script', 'style'} for n in self.stack):
+            return
+        for node in self.stack:
+            if node.get('record') is not None:
+                node['parts'].append(data)
+        if not data.strip():
             return
         if self.stack:
             self.records.append({**self.ref('text'), 'kind': 'literal-text', 'text': data,
-                                 'tag': self.stack[-1][0], 'ancestors': [tag for tag, _ in self.stack],
+                                 'tag': self.stack[-1]['tag'], 'ancestors': [n['tag'] for n in self.stack],
+                                 'section': next((n['tag'] for n in reversed(self.stack)
+                                     if n['tag'] in {'main', 'article', 'nav', 'header', 'footer', 'aside', 'section'}), 'body'),
                                  'visibility': 'unverified'})
 
     def close(self):
         super().close()
+        for node in self.stack:
+            self.finish_record(node)
+        self.stack.clear()
         if self.script is not None:
             self.script.update(parse_status='unterminated-script', validation_scope='not-validated')
             self.records.append(self.script)

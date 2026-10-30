@@ -9,8 +9,8 @@ import subprocess
 import sys
 from urllib.parse import urlsplit
 
-from seo_agents.exploration.checks.agents.context import SourceHTML
 from seo_agents.exploration.checks.evidence import origin
+from seo_agents.exploration.checks.technical.initial_response import extract_initial_response, reconcile_initial_responses
 
 
 def fetch_baseline(url, *, timeout=12, max_body_bytes=512_000):
@@ -41,7 +41,7 @@ def validate_runtime_config(site_url, max_pages, timeout):
 
 def observe_runtime(bundle, *, site_url=None, max_pages=100, timeout=12, fetcher=None):
     validate_runtime_config(site_url, max_pages, timeout)
-    ledger, responses = [], []
+    ledger, responses, link_occurrences = [], [], []
     fetcher = fetcher or fetch_baseline
     attempts = 0
     for concrete in bundle['concrete_urls']:
@@ -72,15 +72,12 @@ def observe_runtime(bundle, *, site_url=None, max_pages=100, timeout=12, fetcher
                        'bounded_body_read_ms', 'body_bytes_read')})
         response = {'requested_url': url, 'observed_at': observed_at, **result}
         if result.get('initial_html') is not None:
-            parser = SourceHTML(url)
-            parser.feed(result['initial_html'])
-            parser.close()
-            response['initial_html_evidence'] = [{**record, 'method': 'initial-response-html', 'url': url,
-                'response_ref': row['response_ref']} for record in parser.records]
+            link_occurrences.extend(extract_initial_response(response, row['response_ref'], site_url=site_url))
         responses.append(response)
         concrete['fetch'] = result['status']
     counts = Counter(row['status'] for row in ledger)
     bundle['runtime'] = {'ledger': ledger, 'responses': responses,
+        'link_occurrences': link_occurrences,
         'configuration': {'site_url': site_url, 'max_pages': max_pages, 'timeout_seconds': timeout,
             'concurrency': 1, 'repeats': 1, 'cache_policy': 'fresh worker, no cookies; Cache-Control: no-cache (origin/CDN cache not controlled)',
             'tool': 'Python stdlib HTTP baseline v1', 'python_version': platform.python_version(),
@@ -90,6 +87,22 @@ def observe_runtime(bundle, *, site_url=None, max_pages=100, timeout=12, fetcher
             'No crawl expansion or remote sitemap fetch; this measures the enumerated concrete frontier only.',
             'Redirects stay within the explicit origin. External destinations are not requested.',
             'HTTP evidence is recomputed; it is not reused indefinitely from source checkpoints.']}
+    reconcile_initial_responses(bundle, responses, site_url=site_url)
+    known = {row['url'] for row in bundle['concrete_urls']}
+    destinations = {}
+    for index, link in enumerate(link_occurrences):
+        if link['destination'] is not None:
+            entry = destinations.setdefault(link['destination'], {'url': link['destination'], 'kind': link['kind'],
+                'health': 'not-checked', 'occurrence_indices': [], 'in_source_frontier': link['destination'] in known})
+            entry['occurrence_indices'].append(index)
+    bundle['runtime']['destinations'] = list(destinations.values())
+    bundle['coverage']['initial_response_extraction'] = {
+        'attempted_urls': attempts, 'html_responses_parsed': sum('initial_html_summary' in r for r in responses),
+        'partial_bodies': sum(bool(r.get('body_truncated')) for r in responses),
+        'link_occurrences': len(link_occurrences),
+        'new_internal_destinations_not_scheduled': sorted(url for url, row in destinations.items()
+            if row['kind'] == 'internal' and not row['in_source_frontier']),
+        'note': 'Known source frontier only; response-discovered URLs remain outside this run. Destination health is separate from discovery.'}
     bundle['coverage']['performance'] = {'eligible_concrete_urls': len(ledger), 'attempted': attempts,
         'states': dict(counts), 'pending': counts['pending'], 'unresolved_route_families': len(bundle['unresolved_route_families']),
         'all_known_urls_attempted': bool(ledger) and not counts['pending'],

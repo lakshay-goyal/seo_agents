@@ -149,6 +149,8 @@ class CorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(home['keywords']['observed_terms']['jasmine'], 2)
         self.assertNotIn('navigation', home['keywords']['observed_terms'])
         self.assertEqual(home['keywords']['declared_meta_keywords'][0]['value'], 'jasmine, tea')
+        self.assertIn(home['page_id'], evidence['source_relationships']['index.html']['directly_observed_page_ids'])
+        self.assertEqual(evidence['coverage']['source_attribution']['report_files_outside_capture'], [])
         self.assertGreater(evidence['coverage']['performance']['pending'], 0)
 
     def test_url_resolution_preserves_queries_path_case_and_domain_scope(self):

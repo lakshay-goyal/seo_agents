@@ -62,6 +62,19 @@ term counts separated from declared keywords. These are source observations and
 qualified derived views. There are no invented search-volume or ranking metrics.
 Generic index candidates are not automatically treated as public page content.
 
+`source_relationships` provides a reverse lookup by relative source path: directly
+observed page IDs, pages connected only by candidate import dependencies, capture
+status, candidate file roles, and a JSON pointer to the captured source. Files
+without a page association remain explicit; this does not prove they are unused.
+`coverage.source_attribution` counts these states and identifies report-referenced
+files outside the captured corpus. This is especially relevant in legacy static
+mode, whose filesystem extractor can inspect files beyond the snapshot budgets.
+
+The literal HTML index also preserves headings, navigation-link occurrences and
+media attributes, including anchor text, image alternatives and semantic sections.
+Canonical/hreflang annotations remain distinct from navigational links. Agents can
+query these facts without reparsing a file for each field.
+
 The bundle retains full captured source so unsupported or omitted semantic
 extraction has a recovery path. It cannot contain unavailable CMS/API records,
 unreadable files or content beyond declared capture limits. Those are explicit
@@ -84,6 +97,8 @@ python -m seo_agents.exploration.inspect /path/to/site --mode static > /tmp/expl
 # Query the saved evidence without source, models or network access:
 python -m seo_agents.exploration.inspect /tmp/exploration.json --query /pages
 python -m seo_agents.exploration.inspect /tmp/exploration.json --query /reports/content/pages/0
+# Recover source/page relationships for src/layout.tsx (JSON-pointer escaping):
+python -m seo_agents.exploration.inspect /tmp/exploration.json --query /source_relationships/src~1layout.tsx
 ```
 
 `query_evidence(bundle, pointer, offset=...)` supports JSON-pointer queries. List
@@ -124,6 +139,17 @@ and bounded body-read timings, not browser load times or Web Vitals. No LCP, CLS
 FCP, TBT, INP, Lighthouse score, field data or device emulation is fabricated.
 Build mode/deployment identity and origin/CDN caches remain unverified.
 
+Initial-response records retain text boundaries, headings, metadata, media and
+JSON-LD independently of the source reports. `runtime.link_occurrences` and
+`runtime.destinations` preserve response links resolved against the final URL and
+first `<base href>`. New internal destinations appear in
+`coverage.initial_response_extraction.new_internal_destinations_not_scheduled`;
+they are outside the measured source frontier, and are not silently fetched.
+`runtime.source_comparisons` compares source title declaration sets with observed
+initial-response title sets. Inherited defaults may explain differences; these
+comparisons are review evidence, not proof of a defect. Partial bodies, HTTP
+errors, missing source rows or missing titles produce `not-comparable` states.
+
 ## Resume and invalidation
 
 Completed category results can be reused with `--resume /tmp/previous.json` on an
@@ -131,6 +157,11 @@ unchanged capture, mode, extraction code/skills, dependency versions and model
 selection. Runtime observations are always refreshed. Partial source captures
 cannot be reused conservatively. Shared-source changes invalidate the whole source
 result instead of attempting dependency-aware incremental invalidation.
+
+```sh
+python -m seo_agents.exploration.inspect /path/to/site --mode static \
+  --resume /tmp/exploration.json > /tmp/exploration-resumed.json
+```
 
 Python callers may pass `on_checkpoint(state)` to retain each completed step.
 `ExplorationIncomplete.checkpoint` exposes completed work after failures or handled

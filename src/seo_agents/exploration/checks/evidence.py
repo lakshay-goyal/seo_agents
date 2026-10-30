@@ -55,6 +55,31 @@ def refs(value):
                 yield from refs(child)
 
 
+def source_relationships(snapshot, pages):
+    """Reverse source lookup; dependency candidates do not establish page usage."""
+    inventory = {row['path']: row for row in snapshot.get('inventory', []) if row['kind'] == 'file'}
+    paths = set(snapshot['files'])
+    observed, candidates = defaultdict(set), defaultdict(set)
+    for page in pages:
+        for file in page['observed_source_files']:
+            paths.add(file)
+            observed[file].add(page['page_id'])
+        for file in page['dependency_candidate_files']:
+            paths.add(file)
+            candidates[file].add(page['page_id'])
+    result = {}
+    for file in sorted(paths):
+        row = inventory.get(file, {})
+        result[file] = {'file': file, 'capture_status': row.get('status', 'not-in-snapshot-inventory'),
+            'roles': row.get('roles', []),
+            'corpus_ref': '/source_corpus/' + file.replace('~', '~0').replace('/', '~1') if file in snapshot['files'] else None,
+            'directly_observed_page_ids': sorted(observed[file]),
+            'dependency_candidate_page_ids': sorted(candidates[file]),
+            'attribution': 'observed-in-page-report' if observed[file] else
+                'dependency-candidate-only' if candidates[file] else 'not-associated-with-enumerated-pages'}
+    return result
+
+
 def build_evidence(state, *, site_url=None):
     reports, snapshot = state.get('artifacts', {}), state['snapshot']
     context = state['context']
@@ -162,6 +187,8 @@ def build_evidence(state, *, site_url=None):
     for key in REPORT_FILES:
         if key not in category_coverage:
             category_coverage[key] = {'status': 'pending', 'page_rows': None, 'source_files_accessed': None, 'semantically_complete': False}
+    relationships = source_relationships(snapshot, pages)
+    attribution_counts = Counter(row['attribution'] for file, row in relationships.items() if file in snapshot['files'])
     return {'schema_version': '1.0', 'kind': 'seo-exploration-evidence',
             'snapshot_sha256': snapshot['sha256'], 'observed_at': snapshot.get('observed_at'),
             'scope': {'site_url': site_url, 'observation': 'source', 'external_crawling': False},
@@ -170,10 +197,15 @@ def build_evidence(state, *, site_url=None):
             'reports': reports, 'repository': {'inventory': snapshot.get('inventory', []),
                 'coverage': snapshot.get('coverage', {}), 'limitations': snapshot['limitations']},
             'context': context, 'pages': pages, 'link_occurrences': occurrences,
+            'source_relationships': relationships,
             'destinations': list(destinations.values()), 'concrete_urls': list(concrete.values()),
             'unresolved_route_families': unresolved,
             'duplicate_content_candidates': [{'fingerprint': key, 'page_ids': ids} for key, ids in duplicates.items() if len(ids) > 1],
             'coverage': {'repository': snapshot.get('coverage', {}), 'extraction': category_coverage,
+                'source_attribution': {'captured_source_files': len(snapshot['files']),
+                    'states': dict(attribution_counts),
+                    'report_files_outside_capture': sorted(file for file in relationships if file not in snapshot['files']),
+                    'note': 'Report references establish observations; transitive literal imports are candidates. Unassociated files are not proven unused or irrelevant.'},
                 'url_discovery': {'route_rows': len(rows), 'known_concrete_urls': len(concrete),
                                   'unresolved_families': len(unresolved), 'possible_url_denominator': None},
                 'link_validation': {'destinations': len(destinations), 'checked': 0, 'pending': len(destinations)},

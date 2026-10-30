@@ -18,6 +18,11 @@ The full verified route catalog is available through paginated list_routes.
 Continue every bounded result using its cursor. For read_source, retain both
 next_line and next_column so a long/minified line is not silently skipped.
 query_context returns compact previews; read_context_record recovers full values.
+For literal HTML, cached navigation-link records preserve raw href, anchor text,
+image alternatives and semantic section; heading/media-declaration records retain
+their locations and attributes. These are source candidates, not rendered facts.
+Head annotations (canonical/hreflang and other link elements) remain separate from
+navigation links. Query these indexed facts before repeating a source-wide search.
 Repository coverage describes captured/omitted files, not files understood by you.
 Use configuration and dependency edges to identify website roots/shared packages.
 Treat test/fixture strings as implementation evidence, not public page content.

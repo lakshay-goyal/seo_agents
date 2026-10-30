@@ -21,10 +21,39 @@ The baseline test suite contained 46 passing tests, primarily static extraction,
 worker boundaries, memory-only publication and a local model double. It did not
 prove live-model extraction quality across arbitrary frameworks.
 
-Final local validation: 67 tests passed, including the new corpus/coverage,
+Final local validation: 73 tests passed, including the new corpus/coverage,
 runtime boundary, byte-budget/recovery and checkpoint cases. The offline benchmark
 also passed report/source equality checks. HTTP behavior was tested with controlled
 response doubles; no paid-provider, deployed-site, browser or CMS run was performed.
+
+### Follow-up review of the existing working tree
+
+The checkout already contained the corpus/coverage/retrieval/checkpoint changes
+and 67 passing tests when this review began. Those changes were preserved. This
+increment added six ground-truth tests and two derived capabilities:
+
+- Reverse source attribution: `source_relationships` maps a captured file to
+  directly observed pages and candidate dependency pages separately. Unassociated
+  files and report references outside the capture remain visible. This supports
+  downstream investigation of shared content without claiming dependency imports
+  prove runtime use or that unassociated files are unused.
+- Richer literal HTML and response reconciliation: headings, navigation-link
+  occurrences, media attributes, text boundaries, raw JSON-LD and title declarations
+  share one parser. Runtime link resolution uses the final URL and first base href;
+  source-versus-response title comparisons retain both evidence locations and
+  reasons when comparison is unavailable. Partial bodies and HTTP failures retain
+  their evidence without becoming complete observations.
+
+These are additive views over the existing reports, source snapshot and responses;
+they introduce no dependency, service, model request or HTTP request. Response link
+discovery stays separate from scheduling: newly observed internal destinations are
+listed explicitly as unscheduled. Source and runtime link inventories remain
+separate rather than implying source-only links were observed in a response.
+
+The static legacy extractor still reads the filesystem rather than the bounded
+snapshot. Its reports can reference content outside the corpus; the new attribution
+coverage exposes those references. Strict snapshot-only static extraction would
+require adapting its filesystem-based composition layer and remains deferred.
 
 ## Harness lessons applied
 
@@ -64,6 +93,8 @@ copied into this MVP. The user's independent category agents remain intact.
 - `repository.inventory` and `repository.coverage`: denominator, captures,
   truncation, pending/unreadable files and explicit subtree exclusions.
 - `source_corpus` and `asset_inventory`: captured source and measured asset data.
+- `source_relationships` and `coverage.source_attribution`: reverse source-to-page
+  references, candidate dependencies, unassociated files and out-of-capture evidence.
 - `context.records`/`file_coverage`/`parse_errors`: cached source facts, JSON
   pointers, imports/data calls, raw declarations and unsupported/partial parsing.
 - `reports`: the original seven inventories, once each. `pages[].report_refs`
@@ -73,6 +104,9 @@ copied into this MVP. The user's independent category agents remain intact.
   fragments, graph relationships and unknown instance denominators.
 - `runtime.ledger`/`responses` and `coverage.performance`: known-frontier attempt
   states, selected headers, initial HTML, truncation and measured HTTP timings.
+- `runtime.link_occurrences`/`destinations`/`source_comparisons` and
+  `coverage.initial_response_extraction`: independent response observations,
+  declaration-set differences and unscheduled internal destinations.
 - `efficiency` and `checkpoint`: measured operation counters and reusable
   completed categories. Provider token usage is null when not reported.
 
@@ -93,8 +127,8 @@ Run `PYTHONPATH=src python scripts/benchmark_exploration.py`. One local run used
 | Page-composition passes | 7 | 1 |
 | Known eight-file read round trips | 8 | 1, identical source text |
 | Initial context for a 2,000-path manifest | 172,051 bytes | 831 bytes |
-| Median wall time | 20.321 ms | 14.181 ms |
-| Observed range | 19.234–21.786 ms | 13.881–23.979 ms |
+| Median wall time | 22.238 ms | 15.892 ms |
+| Observed range | 21.595–24.160 ms | 15.556–19.217 ms |
 
 This is a synthetic operation comparison, not a paid-model benchmark or a promise
 for arbitrary repositories. After timing includes inventory/context/evidence and

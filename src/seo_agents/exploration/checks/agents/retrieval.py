@@ -162,7 +162,7 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
 
     @tool
     def query_context(kind: str = '', prefix: str = '', offset: int = 0) -> dict:
-        """Query cached imports, data calls, JSON pointers, HTML text/head/JSON-LD, Markdown and sitemaps."""
+        """Query cached dependencies/data, JSON pointers, HTML text/head/headings/navigation-link/media-declaration/structured-data, Markdown and sitemaps."""
         rows = []
         for index, record in enumerate(context['records']):
             if (not kind or record['kind'] == kind) and record['file'].startswith(prefix):

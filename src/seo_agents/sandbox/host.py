@@ -5,6 +5,7 @@ container, ships this package into it, and starts the driver.
 """
 
 import re
+import shlex
 from pathlib import Path
 
 from seo_agents.log import done, log, start
@@ -25,7 +26,9 @@ def ensure_container_runtime(sandbox):
         log("container runtime already provisioned.")
         return
     begun = start("provisioning container runtime (pip install)")
-    result = sandbox.run("python3 -m pip install --quiet --break-system-packages " + " ".join(PIP_DEPS))
+    result = sandbox.run(shlex.join([
+        "python3", "-m", "pip", "install", "--quiet", "--break-system-packages", *PIP_DEPS,
+    ]))
     if not result.success:
         raise RuntimeError("pip install failed:\n" + result.stdout + result.stderr)
     sandbox.run("mkdir -p /opt/seo_agents && touch " + RUNTIME_MARKER)
