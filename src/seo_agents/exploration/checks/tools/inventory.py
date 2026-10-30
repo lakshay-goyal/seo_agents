@@ -132,6 +132,7 @@ class PageParser(HTMLParser):
         self.element_count += 1
         node = {'source_id': f'{self.file}:{self.element_count}', 'tag': tag, 'attrs': a, 'parts': [], 'line': self.getpos()[0], 'section': next((n['tag'] for n in reversed(self.stack) if n['tag'] in {'nav', 'header', 'footer', 'main', 'article', 'aside', 'section'}), 'body')}
         if tag in {'main', 'article', 'section', 'nav', 'header', 'footer', 'aside'}:
+            node['section'] = tag
             self.landmarks[tag] = self.landmarks.get(tag, 0) + 1
         if tag in {'input', 'button', 'textarea', 'select'}:
             for key in ('placeholder', 'aria-label', 'title'):
@@ -360,10 +361,10 @@ def media_details(repo, item):
             'size_budget_note': 'Review budget only; source bytes are not optimized transfer bytes. Display size and placement are needed to assess undersizing.'}
 
 
-def inventory(repo, category):
+def inventory(repo, category, *, page_inventory=None):
     """Category-specific JSON contract; observations only, with explicit coverage."""
     output = []
-    for page in pages(repo):
+    for page in page_inventory if page_inventory is not None else pages(repo):
         parsers = page['parsers']
         row = page_identity(page)
         blocks = [b for p in parsers for b in p.blocks]

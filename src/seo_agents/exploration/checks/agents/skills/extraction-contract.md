@@ -10,8 +10,22 @@ When a verified_route_catalog is supplied, cover those exact route/template pair
 It is shared factual output from the URL agent, not another agent's instructions.
 Your script must still extract its category dynamically from the captured source.
 
+Start with repository_summary and candidate roles; query list_files by role and
+prefix, then query_context for already parsed dependencies/data/declarations.
+Batch known related paths with read_sources and known patterns with search_sources;
+sequence only investigations whose next step depends on the current result.
+The full verified route catalog is available through paginated list_routes.
+Continue every bounded result using its cursor. For read_source, retain both
+next_line and next_column so a long/minified line is not silently skipped.
+query_context returns compact previews; read_context_record recovers full values.
+Repository coverage describes captured/omitted files, not files understood by you.
+Use configuration and dependency edges to identify website roots/shared packages.
+Treat test/fixture strings as implementation evidence, not public page content.
+Inspect available generated route manifests and content collections for dynamic
+instances. A route family without accessible instance data remains unresolved.
+
 Return Python source containing function definitions only, with entry point
-`def extract(files, assets):`. `files` is a dictionary of relative POSIX paths to
+`def extract(files, assets):`. `files` is a read-only mapping of relative POSIX paths to
 UTF-8 source strings. `assets` maps relative paths to measured local asset metadata.
 Derive observations from these inputs on each invocation. Do not embed inspected
 page values in a fixed JSON result. Do not import packages or use filesystem,
@@ -55,6 +69,14 @@ List unresolved expressions, imports, inherited data, hidden/interaction states,
 omitted/truncated files and unsupported semantics explicitly. Empty page inventories
 are rejected; report an unresolved real entry template with its gaps where possible.
 
+Optional shared page context: route_family (pattern), instance_status (template,
+concrete or unresolved), locale (string/null), content_sources (source relationship
+records). For a concrete instance of a dynamic route retain is_dynamic=true and
+set instance_status=concrete plus its route_family. Enumerate only source-backed
+instances; retain an unresolved template row when the full instance set is unknown.
+Other category agents should copy this route context from list_routes. Include
+content_sources with evidence locations and JSON pointers when known.
+
 Every observed record needs `file`, `line`, `source_id`. Lines reference the captured
 source. For parsed elements use `source_id = file + ":" + str(node["line"]) + ":" +
 str(node["column"]) + ":" + node["tag"]` consistently across all seven agents.
@@ -92,3 +114,9 @@ Category fields and record shapes:
 Only return observations; downstream analysis supplies SEO judgments. Verification
 checks code policy, bounded trial execution, report fields, source locations and
 repeatability, not semantic completeness or browser equivalence.
+Source reads are instrumented to record accessed files; merely iterating keys does
+not establish extraction coverage. parse_html caches repeated input within a worker.
+Retain source relationships on individual records (section/parent/instance IDs,
+JSON pointers, content origins and UI states) when known. Never combine initial,
+conditional and interaction-only content as a single initial page. Complete content
+belongs in the report; prompts and tools should contain compact evidence references.

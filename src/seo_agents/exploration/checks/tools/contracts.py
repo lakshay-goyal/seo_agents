@@ -11,6 +11,7 @@ PAGE_FIELDS = {
     'urls': {'depth', 'query_links'},
     'eeat': {'signals', 'trust_links', 'citations', 'interpretation'},
 }
+PAGE_CONTEXT_FIELDS = {'route_family', 'instance_status', 'locale', 'content_sources'}
 
 
 def validate_report(category, report):
@@ -28,7 +29,7 @@ def validate_report(category, report):
         raise ValueError('Invalid pages or extraction in ' + category)
     required = {'url', 'template', 'is_dynamic', 'coverage'} | PAGE_FIELDS[category]
     for page in report['pages']:
-        optional = {'sections'} if category == 'content' else set()
+        optional = PAGE_CONTEXT_FIELDS | ({'sections'} if category == 'content' else set())
         if not isinstance(page, dict) or not required <= set(page) or set(page) - required - optional:
             raise ValueError('Unexpected page fields in ' + category)
         if not isinstance(page['url'], str) or not page['url'].startswith('/'):
@@ -37,6 +38,13 @@ def validate_report(category, report):
             raise ValueError('Expected static-source coverage in ' + category)
         if category == 'content' and 'sections' in page and not isinstance(page['sections'], list):
             raise ValueError('Expected content section list')
+        for field in ('route_family', 'locale'):
+            if field in page and page[field] is not None and not isinstance(page[field], str):
+                raise ValueError('Expected string or null for ' + field)
+        if 'instance_status' in page and page['instance_status'] not in {'template', 'concrete', 'unresolved'}:
+            raise ValueError('Invalid URL instance status')
+        if 'content_sources' in page and not isinstance(page['content_sources'], list):
+            raise ValueError('Expected content source relationship list')
         for field in PAGE_FIELDS[category] - {'word_count', 'depth', 'interpretation', 'inheritance_note'}:
             if not isinstance(page[field], list):
                 raise ValueError('Expected list for ' + category + '.' + field)

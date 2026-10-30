@@ -1,6 +1,8 @@
 """Stdlib-only worker launched with python -I -B; never imports target code."""
 
 import builtins
+import copy
+from collections.abc import Mapping
 from html.parser import HTMLParser
 import importlib.util
 import json
@@ -24,6 +26,8 @@ class MarkupParser(HTMLParser):
                 'section': next((n['tag'] for n in reversed(self.stack)
                                  if n['tag'] in {'main', 'nav', 'header', 'footer', 'article', 'section', 'aside'}), 'body')}
         self.nodes.append(node)
+        if tag in {'main', 'nav', 'header', 'footer', 'article', 'section', 'aside'}:
+            node['section'] = tag
         if tag not in {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}:
             self.stack.append(node)
 
@@ -58,6 +62,26 @@ def re_sub(pattern, replacement, text, flags=0):
     return re.sub(pattern, replacement, text, flags=flags)
 
 
+class SourceFiles(Mapping):
+    def __init__(self, files):
+        self._files = files
+        self.accessed = set()
+
+    def __getitem__(self, key):
+        value = self._files[key]
+        self.accessed.add(key)
+        return value
+
+    def __iter__(self):
+        return iter(self._files)
+
+    def __len__(self):
+        return len(self._files)
+
+    def copy(self):
+        return dict(self)
+
+
 def main():
     resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
     # Linux (the pipeline container) enforces address space; macOS rejects that
@@ -75,15 +99,30 @@ def main():
     spec = importlib.util.spec_from_file_location('script_policy', Path(__file__).with_name('script_policy.py'))
     policy = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(policy)
-    payload = json.loads(sys.stdin.buffer.read(32_000_000))
+    raw = sys.stdin.buffer.read(64_000_001)
+    if len(raw) > 64_000_000:
+        raise ValueError('Worker input exceeds 64 MB limit')
+    payload = json.loads(raw)
     tree = policy.validate_script(payload['source'])
+    cache, parse_stats = {}, {'calls': 0, 'cache_hits': 0}
+    def cached_html(text):
+        if text in cache:
+            parse_stats['cache_hits'] += 1
+            return copy.deepcopy(cache[text])
+        nodes = parse_html(text)
+        parse_stats['calls'] += 1
+        if len(cache) < 128:
+            cache[text] = nodes
+        return copy.deepcopy(nodes)
     namespace = {'__builtins__': {key: getattr(builtins, key) for key in policy.BUILTINS},
-                 'parse_html': parse_html, 'json_loads': json.loads,
+                 'parse_html': cached_html, 'json_loads': json.loads,
                  're_findall': re.findall, 're_sub': re_sub, 're_escape': re.escape,
                  'resolve_url': urljoin}
     exec(compile(tree, '<verified-extractor>', 'exec'), namespace)
-    result = namespace['extract'](payload['files'], payload['assets'])
-    output = json.dumps(result, ensure_ascii=False, allow_nan=False)
+    files = SourceFiles(payload['files'])
+    result = namespace['extract'](files, payload['assets'])
+    output = json.dumps({'report': result, 'accessed_files': sorted(files.accessed),
+                         'html_parsing': parse_stats}, ensure_ascii=False, allow_nan=False)
     if len(output.encode()) > 16_000_000:
         raise ValueError('Report exceeds 16 MB output limit')
     sys.stdout.write(output)

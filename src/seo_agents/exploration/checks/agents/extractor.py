@@ -4,13 +4,16 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
-from langchain_core.tools import tool
+from langchain_core.messages import AIMessage
 
 from seo_agents.exploration.checks.agents.repository import snapshot_repository
+from seo_agents.exploration.checks.agents.context import build_context
+from seo_agents.exploration.checks.agents.retrieval import repository_tools, repository_summary
 from seo_agents.exploration.checks.agents.verification import verify_and_extract
 from seo_agents.exploration.checks.tools.contracts import PAGE_FIELDS
 from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
@@ -27,54 +30,16 @@ class ExtractionPlan:
     source: str
 
 
-def repository_tools(snapshot, inspected=None):
-    files = snapshot['files']
-
-    @tool
-    def list_files(prefix: str = '', offset: int = 0) -> dict:
-        """List captured source paths by prefix, with pagination and coverage limitations."""
-        paths = [p for p in files if p.startswith(prefix)]
-        offset = max(0, offset)
-        return {'paths': paths[offset:offset + 150], 'total': len(paths),
-                'next_offset': offset + 150 if offset + 150 < len(paths) else None,
-                'limitations': snapshot['limitations']}
-
-    @tool
-    def read_source(path: str, start_line: int = 1, max_lines: int = 150) -> dict:
-        """Read numbered source lines from a captured relative path; never reads disk."""
-        if path not in files:
-            return {'error': 'Unknown captured source path'}
-        if inspected is not None:
-            inspected.add(path)
-        lines = files[path].splitlines()
-        start = max(1, start_line)
-        end = start - 1 + max(1, min(max_lines, 200))
-        selected = '\n'.join(str(i) + ': ' + line for i, line in enumerate(lines[start - 1:end], start))
-        return {'path': path, 'lines': selected[:24000], 'total_lines': len(lines),
-                'truncated': len(selected) > 24000, 'next_line': end + 1 if end < len(lines) else None}
-
-    @tool
-    def search_source(needle: str, prefix: str = '', offset: int = 0) -> dict:
-        """Search literal text in captured source; returns paginated path/line evidence."""
-        if not needle:
-            return {'error': 'Search text must not be empty'}
-        matches = [{'file': path, 'line': index, 'text': line[:500]}
-                   for path, text in files.items() if path.startswith(prefix)
-                   for index, line in enumerate(text.splitlines(), 1) if needle.lower() in line.lower()]
-        offset = max(0, offset)
-        return {'matches': matches[offset:offset + 60], 'total': len(matches),
-                'next_offset': offset + 60 if offset + 60 < len(matches) else None}
-
-    return [list_files, read_source, search_source]
-
-
 def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=None,
-                          model=None, agent_factory=None):
+                          context=None, model=None, agent_factory=None):
     if category not in REPORT_FILES:
         raise ValueError('Unknown exploration category: ' + category)
     if os.getenv('SEO_NO_LLM') == '1':
         raise RuntimeError('Agent exploration requires a model; unset SEO_NO_LLM or explicitly use SEO_EXPLORATION_MODE=static')
     snapshot = snapshot if snapshot is not None else snapshot_repository(repo_path)
+    if not snapshot['files']:
+        raise ValueError('No captured textual source; inspect inventory before generating an extractor')
+    context = context if context is not None else build_context(snapshot)
     skill = Path(__file__).with_name('skills').joinpath(category, 'SKILL.md').read_text()
     common = Path(__file__).with_name('skills').joinpath('extraction-contract.md').read_text()
     prompt = (
@@ -88,21 +53,41 @@ def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=Non
         ', '.join(sorted(PAGE_FIELDS[category])) + '.'
     )
     inspected = set()
+    metrics = {}
     agent = (agent_factory or create_agent)(
-        model=model if model is not None else get_chat_model(), tools=repository_tools(snapshot, inspected),
+        model=model if model is not None else get_chat_model(),
+        tools=repository_tools(snapshot, inspected, context=context, routes=routes, metrics=metrics),
         system_prompt=prompt, response_format=ToolStrategy(ExtractionPlan),
         name='explore_' + category,
     )
-    manifest = {'source_files': list(snapshot['files']), 'assets': snapshot['assets'],
-                'limitations': snapshot['limitations']}
-    if routes is not None:
-        manifest['verified_route_catalog'] = routes
+    manifest = repository_summary(snapshot, context)
+    manifest['verified_route_count'] = len(routes) if routes is not None else None
     messages = [{'role': 'user', 'content': 'Inspect the manifest, routing/configuration and relevant '
                  'templates/components. Generate your category extractor.\n' + json.dumps(manifest)}]
-    errors = []
+    errors, seen_messages = [], set()
+    metrics.update(model_calls=0, input_tokens=None, output_tokens=None, token_usage_available=False,
+                   peak_recorded_conversation_bytes=0)
+    begun = time.perf_counter()
     for attempt in range(1, 4):
         log('agent ' + category + ': generate/verify attempt ' + str(attempt))
         response = agent.invoke({'messages': messages}, config={'recursion_limit': 40})
+        response_messages = response.get('messages') or []
+        for message in response_messages:
+            if not isinstance(message, AIMessage):
+                continue
+            identifier = message.id or id(message)
+            if identifier in seen_messages:
+                continue
+            seen_messages.add(identifier)
+            metrics['model_calls'] += 1
+            usage = message.usage_metadata or {}
+            for key in ('input_tokens', 'output_tokens'):
+                if key in usage:
+                    metrics[key] = (metrics[key] or 0) + usage[key]
+                    metrics['token_usage_available'] = True
+        conversation = [m.model_dump() if hasattr(m, 'model_dump') else m for m in response_messages or messages]
+        metrics['peak_recorded_conversation_bytes'] = max(metrics['peak_recorded_conversation_bytes'],
+            len(prompt.encode()) + len(json.dumps(conversation, default=str, ensure_ascii=False).encode()))
         plan = response.get('structured_response')
         if not isinstance(plan, ExtractionPlan):
             raise RuntimeError('Agent did not return an ExtractionPlan for ' + category)
@@ -112,18 +97,21 @@ def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=Non
             report = verify_and_extract(category, plan.source, snapshot)
             if routes is not None and {(p['url'], p['template']) for p in report['pages']} != {
                     (p['url'], p['template']) for p in routes}:
-                raise ValueError('Report routes must match the verified_route_catalog; retain empty category rows')
+                raise ValueError('Report routes must match the verified_route_catalog from list_routes; retain empty category rows')
         except (ValueError, SyntaxError, TypeError, KeyError, RecursionError) as error:
             errors.append(str(error)[:2000])
             messages = list(response.get('messages') or messages)
             messages.append({'role': 'user', 'content': 'Verification failed: ' + errors[-1] +
-                             '\nRepair the script and return a complete ExtractionPlan. Previous source:\n' + plan.source})
+                             '\nRepair the script and return a complete ExtractionPlan.' +
+                             (' Previous source:\n' + plan.source if not response_messages else '')})
             continue
         report['extraction'].update(framework=plan.framework,
                                     skill_sha256=hashlib.sha256((skill + common).encode()).hexdigest())
+        metrics['wall_seconds'] = round(time.perf_counter() - begun, 4)
         return {'report': report, 'run': {'category': category, 'framework': plan.framework,
                 'notes': plan.notes, 'script': plan.source, 'attempts': attempt,
-                'verification': 'passed', 'inspected_files': sorted(inspected), 'previous_errors': errors}}
+                'verification': 'passed', 'inspected_files': sorted(inspected),
+                'metrics': metrics, 'previous_errors': errors}}
     raise RuntimeError(category + ' extraction failed verification after 3 attempts: ' + errors[-1])
 
 

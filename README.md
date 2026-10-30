@@ -17,8 +17,9 @@ conversation or reuse of another category's extraction code.
 
 The workflow is:
 
-1. Capture one bounded in-memory source/asset snapshot, excluding dependencies,
-   generated reports, hidden files, common credential files and symlinks.
+1. Inventory the declared repository scope and capture a bounded in-memory
+   source/asset snapshot. Record omissions and excluded subtrees; retain selected
+   hidden framework configuration and generated Next.js route manifests.
 2. Each agent reads configuration, entry points, templates, components and local
    data, then returns framework notes and a repository-specific Python script.
 3. Check the script's Python syntax and allowed capabilities before execution.
@@ -33,8 +34,10 @@ The workflow is:
 Scripts, exploration notes, inspected paths and verification attempts are available
 in graph state under `agent_runs`; JSON includes script/skill/snapshot hashes in
 `extraction`. Client source, scripts and notes are not saved in this repository.
-The source snapshot is capped at 2,000 files, 500 KB per file and 20 MB total;
-omissions/truncation are reported in extraction coverage. Source-backed extraction
+Source capture is capped at 2,000 loaded files, 500 KB per file and 20 MB total;
+inventory continues after capture limits. Omissions/truncation and unreadable files
+are reported individually. A file listed or accessed is not a file understood.
+Source-backed extraction
 can adapt to different frameworks, but verification does not prove semantic
 completeness or rendered-browser equivalence. Runtime API/CMS data and unsupported
 framework semantics must remain explicit gaps. Linux workers enforce a 512 MiB
@@ -46,6 +49,98 @@ is disabled or extraction cannot be verified. To use the previous deterministic
 React/Next.js extractor offline, set `SEO_EXPLORATION_MODE=static` (or pass
 `mode="static"` to `run_onpage_graph`). `SEO_NO_LLM=1` alone does not select static
 mode. No model key is required for static mode or JSON-only analysis.
+
+## Corpus evidence and read-only exploration
+
+`run_onpage_graph` also returns `state["evidence"]`, a separate version 1.0 bundle.
+It contains the seven reports, complete **captured** textual source corpus, asset
+inventory, file roles/capture states, cached AST import/data-source candidates,
+local JSON values with JSON pointers, Markdown references, literal HTML evidence,
+raw JSON-LD and syntax errors, source sitemaps/robots, page/source relationships,
+link occurrences and destination inventory, exact content fingerprints, and lexical
+term counts separated from declared keywords. These are source observations and
+qualified derived views. There are no invented search-volume or ranking metrics.
+Generic index candidates are not automatically treated as public page content.
+
+The bundle retains full captured source so unsupported or omitted semantic
+extraction has a recovery path. It cannot contain unavailable CMS/API records,
+unreadable files or content beyond declared capture limits. Those are explicit
+gaps. It does not claim every possible URL or every rendered state was discovered.
+
+Agents receive a compact summary, then use role-filtered inventories, batched
+reads/searches and paginated context queries. Tool responses are limited to 16 KB
+with recovery cursors, including within long/minified lines. Per-agent metrics
+record tool calls, returned bytes, repeated reads, model response counts and
+provider token usage when available; unavailable token counts remain null.
+Static mode composes/parses pages once for all seven reports.
+
+Explore without cloning, committing or publishing; JSON goes to stdout and logs
+to stderr. Choose an artifact location outside this agent checkout:
+
+```sh
+python -m seo_agents.exploration.inspect /path/to/site --mode agent > /tmp/exploration.json
+# Offline legacy extraction plus the same corpus/evidence views:
+python -m seo_agents.exploration.inspect /path/to/site --mode static > /tmp/exploration.json
+# Query the saved evidence without source, models or network access:
+python -m seo_agents.exploration.inspect /tmp/exploration.json --query /pages
+python -m seo_agents.exploration.inspect /tmp/exploration.json --query /reports/content/pages/0
+```
+
+`query_evidence(bundle, pointer, offset=...)` supports JSON-pointer queries. List
+results contain previews and item pointers. Larger values return JSON text chunks
+with character offsets. Full content remains in the bundle; previews are not the
+artifact. Source paths in pointers escape `/` as `~1` and `~` as `~0`.
+
+## Runtime observations and speed coverage
+
+Without a runtime URL, every enumerated eligible concrete URL has a pending HTTP
+baseline record. Dynamic families remain unresolved with an unknown instance
+denominator. Concrete dynamic instances may use optional `route_family` and
+`instance_status="concrete"` page context; unknown instances are never invented.
+Optional page fields also include `locale` and `content_sources`.
+
+An explicit runtime URL enables serial initial-response observations:
+
+```sh
+python -m seo_agents.exploration.inspect /path/to/site --mode static \
+  --site-url https://example.com --max-runtime-pages 100 --runtime-timeout 12 \
+  > /tmp/exploration.json
+```
+
+Routes should already contain their public base paths. The configured origin
+defines internal scope; domain substrings are not used. Meaningful query variants,
+path case and raw link occurrences are preserved. Fragments share a fetch, and
+source `<base>` declarations are considered for source-link resolution. Local
+sitemap URLs join the frontier when they match the configured origin. External
+destinations and remote child sitemaps are not crawled; no recursive crawl is added.
+
+Each eligible concrete URL is attempted once within the request budget or remains
+pending. Results distinguish success, timeout, failure, access blocks, non-HTML,
+HTTP errors and redirect outcomes. Fresh isolated workers enforce a per-URL wall
+timeout and do not inherit credentials/cookies. Responses retain selected headers,
+redirect chains, initial HTML (512 KB cap) and parsed initial-response evidence,
+separate from source declarations. Metrics are request-to-header/first-body-byte
+and bounded body-read timings, not browser load times or Web Vitals. No LCP, CLS,
+FCP, TBT, INP, Lighthouse score, field data or device emulation is fabricated.
+Build mode/deployment identity and origin/CDN caches remain unverified.
+
+## Resume and invalidation
+
+Completed category results can be reused with `--resume /tmp/previous.json` on an
+unchanged capture, mode, extraction code/skills, dependency versions and model
+selection. Runtime observations are always refreshed. Partial source captures
+cannot be reused conservatively. Shared-source changes invalidate the whole source
+result instead of attempting dependency-aware incremental invalidation.
+
+Python callers may pass `on_checkpoint(state)` to retain each completed step.
+`ExplorationIncomplete.checkpoint` exposes completed work after failures or handled
+interruptions. The CLI emits a partial bundle and exits with status 2 after these
+failures. It does not automatically write checkpoints or survive a hard process
+kill; a caller must persist callbacks if that behavior is needed.
+
+The existing GitHub publisher still consumes only the seven category reports.
+The richer source bundle is returned/exported explicitly; it is not added to PRs.
+The existing `seo-agents` command retains its GitHub pipeline behavior.
 
 ## Report contract
 
@@ -131,4 +226,8 @@ use temporary directories outside this codebase and keep generated reports in me
 
 ```sh
 PYTHONPATH=src python -m unittest discover -s tests -v
+PYTHONPATH=src python scripts/benchmark_exploration.py
 ```
+
+See [the implementation review](docs/exploration-improvements.md) for the
+current-state map, suggestion decisions, benchmark evidence and remaining gaps.

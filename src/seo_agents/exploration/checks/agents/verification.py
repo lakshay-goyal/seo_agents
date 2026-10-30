@@ -12,7 +12,9 @@ from seo_agents.exploration.checks.tools.contracts import validate_report
 
 def execute_script(source, snapshot, timeout=12):
     validate_script(source)
-    payload = json.dumps({'source': source, 'files': snapshot['files'], 'assets': snapshot['assets']})
+    payload = json.dumps({'source': source, 'files': snapshot['files'], 'assets': snapshot['assets']}, ensure_ascii=False)
+    if len(payload.encode()) > 64_000_000:
+        raise ValueError('Worker input exceeds 64 MB budget; reduce snapshot scope')
     try:
         process = subprocess.run(
             [sys.executable, '-I', '-B', str(Path(__file__).with_name('script_worker.py'))],
@@ -24,7 +26,13 @@ def execute_script(source, snapshot, timeout=12):
     if process.returncode:
         raise ValueError('Extractor trial failed: ' + (process.stderr[:2000] or 'worker resource limit exceeded'))
     try:
-        return json.loads(process.stdout)
+        output = json.loads(process.stdout)
+        report = output['report']
+        if isinstance(report, dict) and isinstance(report.get('extraction'), dict):
+            report['extraction']['script_access'] = {'files': output['accessed_files'],
+                'meaning': 'Source values accessed, not proof of semantic understanding',
+                'html_parsing': output['html_parsing']}
+        return report
     except (ValueError, RecursionError) as error:
         raise ValueError('Extractor did not return valid JSON') from error
 
@@ -35,6 +43,7 @@ def validate_observations(category, report, snapshot):
     if not report['pages']:
         raise ValueError('No pages discovered; investigate entry points instead of accepting an empty inventory')
     identities = set()
+    line_counts = {}
 
     def evidence(value):
         if isinstance(value, list):
@@ -45,11 +54,15 @@ def validate_observations(category, report, snapshot):
                 file = value['file']
                 if not isinstance(file, str) or file not in files:
                     raise ValueError('Evidence references an unknown source file')
+                if file not in line_counts:
+                    line_counts[file] = len(files[file].splitlines())
                 line = value.get('line')
-                if (type(line) is not int or not 1 <= line <= len(files[file].splitlines())
+                if (type(line) is not int or not 1 <= line <= line_counts[file]
                         or not isinstance(value.get('source_id'), str) or not value['source_id']):
                     raise ValueError('Evidence requires an in-range line and stable source_id')
-            for child in value.values():
+            for key, child in value.items():
+                if key == 'coverage':
+                    continue
                 if isinstance(child, (list, dict)):
                     evidence(child)
 
