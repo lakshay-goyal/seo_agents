@@ -16,6 +16,12 @@ def analyze_reports(reports):
                          'status': 'review', 'evidence': evidence, 'recommendation': recommendation})
     for category, report in reports.items():
         validate_report(category, report)
+    # Findings keep the same order whether reports came from sequential agents
+    # or were loaded from saved JSON files.
+    for category in REPORT_FILES:
+        if category not in reports:
+            continue
+        report = reports[category]
         for page in report['pages']:
             if category == 'content' and not page['blocks']:
                 add(category, page, 'no_static_content', [], 'Resolve coverage gaps and verify the rendered page before assessing content quality.')

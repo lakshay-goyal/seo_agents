@@ -14,7 +14,8 @@ METHODS = {'get', 'items', 'keys', 'values', 'update', 'setdefault', 'append', '
            'strip', 'lstrip', 'rstrip', 'split', 'rsplit', 'splitlines', 'join',
            'lower', 'upper', 'replace', 'startswith', 'endswith', 'find', 'rfind',
            'count', 'removeprefix', 'removesuffix', 'isdigit', 'isalnum', 'index',
-           'copy', 'add', 'pop'}
+           'copy', 'add', 'pop', 'zfill', 'ljust', 'rjust', 'center', 'casefold',
+           'partition', 'rpartition', 'insert', 'sort', 'reverse'}
 NODES = {
     'Module', 'FunctionDef', 'arguments', 'arg', 'Return', 'Assign', 'AugAssign',
     'Expr', 'If', 'For', 'While', 'Break', 'Continue', 'Pass', 'Name', 'Load', 'Store',

@@ -5,6 +5,8 @@ returns a timer; done() ends it and prints how long it took.
 """
 
 import time
+from contextlib import contextmanager
+from threading import Event, Thread
 
 
 def now():
@@ -23,3 +25,28 @@ def start(name):
 def done(name, begun):
     took = round(time.time() - begun, 1)
     log("DONE " + name + " (" + str(took) + "s)")
+
+
+@contextmanager
+def progress(name, interval=15):
+    """Show that a blocking operation is still active, without claiming progress."""
+    begun = start(name)
+    stopped = Event()
+
+    def heartbeat():
+        while not stopped.wait(interval):
+            log(name + ': waiting (' + str(round(time.time() - begun, 1)) + 's elapsed)')
+
+    worker = Thread(target=heartbeat, daemon=True)
+    worker.start()
+    try:
+        yield
+    except BaseException:
+        stopped.set()
+        worker.join()
+        log('FAILED ' + name + ' (' + str(round(time.time() - begun, 1)) + 's)')
+        raise
+    else:
+        stopped.set()
+        worker.join()
+        done(name, begun)

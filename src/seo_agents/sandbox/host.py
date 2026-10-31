@@ -57,12 +57,12 @@ def run_pipeline_in_sandbox(sandbox, github_url, env=None):
     log("running driver inside the sandbox for " + github_url)
     if env is None:
         env = {}
-    result = sandbox.run("python3 " + driver + " " + github_url, env=env)
-    print(result.stdout)
+    result = sandbox.run("python3 -u " + driver + " " + github_url, env=env, stream=True)
     if not result.success:
-        raise RuntimeError("Container pipeline failed:\n" + result.stdout + result.stderr)
+        raise RuntimeError("Container pipeline failed (exit " + str(result.exit_code) +
+                           "); see the streamed output above.")
     match = PR_URL_RE.search(result.stdout)
     if not match:
-        raise RuntimeError("Pipeline finished but no SEO_PR_URL found:\n" + result.stdout + result.stderr)
+        raise RuntimeError("Pipeline finished but no SEO_PR_URL found; see the streamed output above.")
     done("full pipeline in sandbox", begun)
     return match.group(1)

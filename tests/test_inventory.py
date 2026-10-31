@@ -111,6 +111,7 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
             (folder / filename).write_text(json.dumps(report))
         expected = analyze_reports(reports)
         self.assertEqual(analyze_directory(folder), expected)
+        self.assertEqual(analyze_reports(dict(reversed(list(reports.items())))), expected)
         self.assertEqual(crawl.scrape_content_blocks.invoke({'repo_path': str(self.repo)})['schema_version'], '2.0')
 
     def test_heading_return_to_higher_level_is_valid(self):

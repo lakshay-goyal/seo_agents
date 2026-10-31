@@ -1,4 +1,4 @@
-"""Seven independent skill-guided agents, followed by cross-report validation."""
+"""Seven sequential skill-guided agents, followed by cross-report validation."""
 
 import os
 import hashlib
@@ -10,12 +10,15 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from seo_agents.log import done, start
+from seo_agents.log import done, log, progress, start
 from seo_agents.exploration.checks.agents.extractor import ExtractionFailed, run_exploration_agent
 from seo_agents.exploration.checks.agents.repository import snapshot_repository
 from seo_agents.exploration.checks.agents.context import build_context
+from seo_agents.exploration.checks.agents.handoff import build_handoff
+from seo_agents.exploration.checks.agents.references import validate_content_references
 from seo_agents.exploration.checks.agents.verification import validate_observations
-from seo_agents.exploration.checks.tools.contracts import validate_report
+from seo_agents.exploration.checks.tools.contracts import PAGE_FIELDS, validate_report
+from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
 from seo_agents.exploration.checks.evidence import build_evidence
 from seo_agents.exploration.checks.technical.page_latency import measure_page_latency
 from seo_agents.exploration.checks.technical.runtime import validate_runtime_config
@@ -30,7 +33,7 @@ class OnpageState(TypedDict, total=False):
     checkpoint: dict
 
 
-CHECKS = ('urls', 'content', 'page_structure', 'internal_links', 'metadata', 'media', 'eeat')
+CHECKS = ('urls', 'page_structure', 'internal_links', 'media', 'content', 'metadata', 'eeat')
 
 
 class ExplorationIncomplete(RuntimeError):
@@ -73,15 +76,19 @@ def prepare(state):
 
 def make_node(key, mode, cache):
     def node(state):
-        begun = start("check: " + key)
         saved = dict(state.get("artifacts") or {})
+        label = 'check ' + str(CHECKS.index(key) + 1) + '/' + str(len(CHECKS)) + ': ' + key
         if key in saved:
+            log('SKIP ' + label + ' (reusing verified report)')
             return {}  # Resume inputs were checked against snapshot and extractor identities.
+        begun = start(label)
         if mode == 'agent':
             route_pages = saved.get('urls', {}).get('pages')
             routes = [{k: p[k] for k in ('url', 'template', 'is_dynamic', 'route_family', 'instance_status', 'locale') if k in p}
                       for p in route_pages] if route_pages is not None else None
-            extraction = run_exploration_agent(key, snapshot=state['snapshot'], routes=routes, context=state['context'])
+            handoff = build_handoff(key, saved, state.get('agent_runs') or {})
+            extraction = run_exploration_agent(key, snapshot=state['snapshot'], routes=routes, context=state['context'],
+                                                handoff=handoff)
             saved[key] = extraction['report']
             runs = dict(state.get('agent_runs') or {})
             runs[key] = extraction['run']
@@ -98,7 +105,15 @@ def make_node(key, mode, cache):
                 cache['identity'] = identity
             saved[key] = inventory(repo, key, page_inventory=cache['pages'])
             result = {'artifacts': saved}
-        done("check: " + key, begun)
+        report = saved[key]
+        log('report ready: ' + REPORT_FILES[key] + ' (' + str(len(report['pages'])) + ' pages; retained in memory)')
+        for page in report['pages']:
+            counts = {field: len(page[field]) if isinstance(page[field], list) else page[field]
+                      for field in sorted(PAGE_FIELDS[key] - {'interpretation', 'inheritance_note'})}
+            counts['limitations'] = len(page['coverage']['limitations'])
+            log('agent ' + key + ': page ' + json.dumps(page['url']) + ' completed ' + json.dumps(counts))
+        done(label, begun)
+        log('on-page progress: ' + str(len(saved)) + '/' + str(len(CHECKS)) + ' reports completed')
         return result
     return node
 
@@ -111,13 +126,7 @@ def validate_artifact_links(state):
         if routes is not None and current != routes:
             raise ValueError('Independent agents discovered inconsistent route inventories')
         routes = current
-    links = {(p['url'], p['template']): {r['source_id'] for r in p['links']} for p in artifacts['internal_links']['pages']}
-    media = {(p['url'], p['template']): {r['source_id'] for r in p['items']} for p in artifacts['media']['pages']}
-    for page in artifacts['content']['pages']:
-        for field, targets, filename in [('link_refs', links, 'internal_links.json'), ('media_refs', media, 'media.json')]:
-            for ref in page[field]:
-                if ref['report'] != filename or ref['source_id'] not in targets.get((page['url'], page['template']), set()):
-                    raise ValueError('Unmatched cross-report reference: ' + ref['source_id'])
+    validate_content_references(artifacts['content'], artifacts, require_targets=True)
     return {}
 
 
@@ -134,14 +143,19 @@ def build_onpage_graph(mode=None, *, site_url=None, max_runtime_pages=100, runti
     for key in CHECKS:
         graph.add_node(key, make_node(key, mode, cache))
     if mode == 'agent':
-        graph.add_node('validate_artifacts', validate_artifact_links)
+        def validate_node(state):
+            with progress('cross-report validation'):
+                return validate_artifact_links(state)
+        graph.add_node('validate_artifacts', validate_node)
         graph.add_edge(CHECKS[-1], 'validate_artifacts')
         graph.add_edge('validate_artifacts', 'evidence')
     else:
         graph.add_edge(CHECKS[-1], 'evidence')
     def evidence_node(state):
-        bundle = build_evidence(state, site_url=site_url)
-        measure_page_latency(bundle, site_url=site_url, max_pages=max_runtime_pages, timeout=runtime_timeout)
+        with progress('build combined evidence'):
+            bundle = build_evidence(state, site_url=site_url)
+        with progress('runtime page checks'):
+            measure_page_latency(bundle, site_url=site_url, max_pages=max_runtime_pages, timeout=runtime_timeout)
         return {'evidence': bundle}
     graph.add_node('evidence', evidence_node)
     graph.add_edge('evidence', END)
@@ -153,12 +167,17 @@ def build_onpage_graph(mode=None, *, site_url=None, max_runtime_pages=100, runti
 def run_onpage_graph(repo_path=None, *, mode=None, site_url=None, max_runtime_pages=100,
                      runtime_timeout=12, resume=None, on_checkpoint=None):
     begun = start("on-page graph (7 checks)")
+    log('on-page execution: sequential (one agent at a time)')
     mode = mode or os.getenv('SEO_EXPLORATION_MODE', 'agent')
     graph = build_onpage_graph(mode, site_url=site_url, max_runtime_pages=max_runtime_pages, runtime_timeout=runtime_timeout)
-    snapshot = snapshot_repository(repo_path)
+    with progress('repository snapshot'):
+        snapshot = snapshot_repository(repo_path)
+    log('repository captured: ' + str(len(snapshot['files'])) + ' source files, ' + str(len(snapshot['assets'])) + ' assets')
+    with progress('repository context'):
+        context = build_context(snapshot)
     header = {'snapshot_sha256': snapshot['sha256'], 'extraction_identity': extraction_identity(mode),
               'mode': mode, 'completed': []}
-    start_state = {'artifacts': {}, 'snapshot': snapshot, 'context': build_context(snapshot), 'checkpoint': header}
+    start_state = {'artifacts': {}, 'snapshot': snapshot, 'context': context, 'checkpoint': header}
     if resume:
         old_header = resume.get('checkpoint', {})
         if any(old_header.get(key) != header[key] for key in ('snapshot_sha256', 'extraction_identity', 'mode')):
@@ -176,7 +195,7 @@ def run_onpage_graph(repo_path=None, *, mode=None, site_url=None, max_runtime_pa
     try:
         if not snapshot['files']:
             raise ValueError('No textual source captured; inventory is retained for diagnosing scope/capture gaps')
-        for update in graph.stream(start_state, stream_mode='updates'):
+        for update in graph.stream(start_state, config={'max_concurrency': 1}, stream_mode='updates'):
             for values in update.values():
                 if values:
                     result.update(values)
@@ -185,6 +204,9 @@ def run_onpage_graph(repo_path=None, *, mode=None, site_url=None, max_runtime_pa
             if on_checkpoint:
                 on_checkpoint(dict(result))
     except (Exception, KeyboardInterrupt) as error:
+        completed = [key for key in CHECKS if key in result['artifacts']]
+        log('on-page stopped after ' + str(len(completed)) + '/' + str(len(CHECKS)) +
+            ' reports; completed: ' + ', '.join(completed))
         if isinstance(error, ExtractionFailed):
             result['agent_runs'] = {**result.get('agent_runs', {}), error.category: error.run}
             result['checkpoint'] = {**result['checkpoint'], 'agent_runs': result['agent_runs']}

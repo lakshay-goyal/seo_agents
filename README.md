@@ -12,8 +12,30 @@ Each category has its own LangChain agent and packaged
 structure, internal links, metadata, media and E-E-A-T. The URL agent runs first;
 its verified route/template catalog is shared with the other agents so all reports
 cover the same pages. Each remaining agent has a fresh conversation, its own domain
-skill and read-only listing, source-reading and search tools. There is no shared
-conversation or reuse of another category's extraction code.
+skill and read-only listing, source-reading and search tools. Relevant earlier
+reports, discovery notes and inspected paths are available on demand through
+`query_prior_report` and `read_prior_report`. For example, content can look up the
+link/media source IDs already extracted, metadata can inspect shared layouts and
+headings, and E-E-A-T can consult copy and contact/policy links. Earlier notes are
+leads to verify against source; using them is optional. No prior conversation or
+extraction code is shared, and full reports are not inserted into prompts.
+
+Agents run sequentially: URLs → page structure → internal links → media →
+content → metadata → E-E-A-T. The terminal streams Docker output as it happens.
+Each agent logs model rounds, completed source reads/searches, verification retries,
+and a per-page report summary before the next agent starts. Long model calls emit
+a waiting update every 15 seconds. Logs show task metadata and observation counts;
+report payloads remain in memory until publication. Cross-report validation and
+evidence assembly have their own progress messages. Failed runs keep the output
+already streamed instead of printing the entire transcript again.
+
+Content link/media references are checked against the earlier reports inside the
+content agent's verification/repair loop, before metadata or E-E-A-T starts. Repair
+feedback includes the failing JSON pointer, page and target report. After discovery
+ends, a repair may spend up to two additional model rounds querying prior reports
+and routes; broad source discovery stays closed. Unsupported references remain
+explicit coverage gaps while the observed content is retained. The final cross-report
+validation still checks all reports, including resumed results.
 
 The workflow is:
 

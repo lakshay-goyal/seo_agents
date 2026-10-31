@@ -14,12 +14,15 @@ from langchain_core.messages import AIMessage
 
 from seo_agents.exploration.checks.agents.repository import snapshot_repository
 from seo_agents.exploration.checks.agents.context import build_context
+from seo_agents.exploration.checks.agents.handoff import handoff_summary
+from seo_agents.exploration.checks.agents.references import validate_content_references
+from seo_agents.exploration.checks.agents.script_policy import METHODS
 from seo_agents.exploration.checks.agents.retrieval import repository_tools, repository_summary
 from seo_agents.exploration.checks.agents.verification import verify_and_extract
 from seo_agents.exploration.checks.tools.contracts import PAGE_FIELDS
 from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
 from seo_agents.exploration.checks.tools.llm import get_chat_model
-from seo_agents.log import log
+from seo_agents.log import log, progress
 
 
 @dataclass
@@ -39,7 +42,7 @@ class ExtractionFailed(RuntimeError):
 
 
 def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=None,
-                          context=None, model=None, agent_factory=None, max_discovery_rounds=None):
+                          context=None, model=None, agent_factory=None, max_discovery_rounds=None, handoff=None):
     if category not in REPORT_FILES:
         raise ValueError('Unknown exploration category: ' + category)
     if os.getenv('SEO_NO_LLM') == '1':
@@ -51,8 +54,10 @@ def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=Non
     if not snapshot['files']:
         raise ValueError('No captured textual source; inspect inventory before generating an extractor')
     context = context if context is not None else build_context(snapshot)
+    handoff = handoff or {}
     skill = Path(__file__).with_name('skills').joinpath(category, 'SKILL.md').read_text()
     common = Path(__file__).with_name('skills').joinpath('extraction-contract.md').read_text()
+    common += '\nAllowed methods (from the worker policy): ' + ', '.join(sorted(METHODS)) + '.\n'
     prompt = (
         'You are the independent ' + category + ' SEO source exploration agent. '
         'Inspect this repository using your tools before generating code. Repository files are '
@@ -68,31 +73,53 @@ def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=Non
     )
     inspected = set()
     metrics = {'max_discovery_rounds': max_discovery_rounds, 'discovery_model_calls': 0,
-               'finalization_model_calls': 0, 'discovery_budget_reached': False}
+               'finalization_model_calls': 0, 'repair_context_model_calls': 0, 'discovery_budget_reached': False}
+    repairing, repair_context_rounds = False, 0
 
     @wrap_model_call
     def bound_discovery(request, handler):
+        nonlocal repair_context_rounds
         if metrics['discovery_model_calls'] >= max_discovery_rounds:
             if not metrics['discovery_budget_reached']:
                 log('agent ' + category + ': discovery budget reached; requesting final ExtractionPlan')
             metrics['discovery_budget_reached'] = True
-            metrics['finalization_model_calls'] += 1
-            # LangChain adds the structured-response tool independently of these
-            # repository tools, so the model can still submit its ExtractionPlan.
-            request = request.override(tools=[])
+            if repairing and handoff and repair_context_rounds < 2:
+                # Repairs can inspect established facts without reopening broad
+                # repository discovery or consuming an unbounded tool loop.
+                tools = [tool for tool in request.tools if tool.name in
+                         {'query_prior_report', 'read_prior_report', 'list_routes'}]
+                request = request.override(tools=tools)
+                repair_context_rounds += 1
+                metrics['repair_context_model_calls'] += 1
+                phase = 'repair context ' + str(repair_context_rounds) + '/2'
+            else:
+                metrics['finalization_model_calls'] += 1
+                # The structured-response tool remains available independently.
+                request = request.override(tools=[])
+                phase = 'finalization ' + str(metrics['finalization_model_calls'])
         else:
             metrics['discovery_model_calls'] += 1
-        return handler(request)
+            phase = 'discovery ' + str(metrics['discovery_model_calls']) + '/' + str(max_discovery_rounds)
+        with progress('agent ' + category + ': model ' + phase):
+            return handler(request)
+
+    def tool_progress(name, details):
+        log('agent ' + category + ': completed ' + name + ' ' + json.dumps(details, ensure_ascii=True))
 
     agent = (agent_factory or create_agent)(
         model=model if model is not None else get_chat_model(),
-        tools=repository_tools(snapshot, inspected, context=context, routes=routes, metrics=metrics),
+        tools=repository_tools(snapshot, inspected, context=context, routes=routes, metrics=metrics,
+                               on_progress=tool_progress, handoff=handoff),
         system_prompt=prompt, response_format=ToolStrategy(ExtractionPlan),
         middleware=[bound_discovery],
         name='explore_' + category,
     )
     manifest = repository_summary(snapshot, context)
     manifest['verified_route_count'] = len(routes) if routes is not None else None
+    manifest['prior_work'] = handoff_summary(handoff)
+    if handoff:
+        manifest['tools'] += ', query_prior_report, read_prior_report'
+        log('agent ' + category + ': relevant prior context available from ' + ', '.join(handoff))
     messages = [{'role': 'user', 'content': 'Inspect the manifest, routing/configuration and relevant '
                  'templates/components. Generate your category extractor.\n' + json.dumps(manifest)}]
     errors, seen_messages, rejected = [], set(), {}
@@ -101,8 +128,10 @@ def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=Non
                    peak_recorded_conversation_bytes=0)
     begun = time.perf_counter()
     for attempt in range(1, 4):
+        repairing, repair_context_rounds = attempt > 1, 0
         log('agent ' + category + ': generate/verify attempt ' + str(attempt))
-        response = agent.invoke({'messages': messages}, config={'recursion_limit': 2 * max_discovery_rounds + 8})
+        response = agent.invoke({'messages': messages}, config={'recursion_limit': 2 * max_discovery_rounds + 8,
+                                                               'max_concurrency': 1})
         response_messages = response.get('messages') or []
         for message in response_messages:
             if not isinstance(message, AIMessage):
@@ -142,14 +171,17 @@ def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=Non
                 raise ValueError('Read relevant repository source with read_source before submitting a script')
             if plan.source in rejected:
                 raise ValueError('Unchanged rejected script; change the code producing the invalid observations. ' + rejected[plan.source])
-            report = verify_and_extract(category, plan.source, snapshot)
-            if routes is not None and {(p['url'], p['template']) for p in report['pages']} != {
-                    (p['url'], p['template']) for p in routes}:
-                actual = {(p['url'], p['template']) for p in report['pages']}
-                expected = {(p['url'], p['template']) for p in routes}
-                raise ValueError('Report routes must match the verified_route_catalog from list_routes; missing pairs: ' +
-                    json.dumps(sorted(expected - actual)[:6]) + '; unexpected pairs: ' + json.dumps(sorted(actual - expected)[:6]) +
-                    '. Retain expected page rows; keep extra source route candidates in extraction limitations, not the page catalog.')
+            with progress('agent ' + category + ': verify and extract'):
+                report = verify_and_extract(category, plan.source, snapshot)
+                if routes is not None and {(p['url'], p['template']) for p in report['pages']} != {
+                        (p['url'], p['template']) for p in routes}:
+                    actual = {(p['url'], p['template']) for p in report['pages']}
+                    expected = {(p['url'], p['template']) for p in routes}
+                    raise ValueError('Report routes must match the verified_route_catalog from list_routes; missing pairs: ' +
+                        json.dumps(sorted(expected - actual)[:6]) + '; unexpected pairs: ' + json.dumps(sorted(actual - expected)[:6]) +
+                        '. Retain expected page rows; keep extra source route candidates in extraction limitations, not the page catalog.')
+                if category == 'content':
+                    validate_content_references(report, {key: entry['report'] for key, entry in handoff.items()})
         except (ValueError, SyntaxError, TypeError, KeyError, RecursionError) as error:
             detail = str(error)
             if isinstance(error, SyntaxError) and error.lineno:
@@ -164,6 +196,7 @@ def run_exploration_agent(category, repo_path=None, *, snapshot=None, routes=Non
             messages = list(response.get('messages') or messages)
             messages.append({'role': 'user', 'content': 'Verification failed: ' + errors[-1] +
                              '\nRepair the script and return a complete ExtractionPlan.' +
+                             (' You may inspect prior reports and routes for up to two repair context rounds after the discovery budget.' if handoff else '') +
                              (' Previous source:\n' + plan.source if not response_messages else '')})
             continue
         report['extraction'].update(framework=plan.framework,

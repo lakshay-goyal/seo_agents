@@ -89,6 +89,16 @@ class CorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(structured['raw'], '{"@type":')
         self.assertEqual(next(r for r in context['records'] if r['kind'] == 'sitemap-url')['value'], 'https://example.test/orphan')
 
+    def test_empty_context_query_exposes_filters_and_valid_kinds_for_recovery(self):
+        snapshot = snapshot_repository(self.repo)
+        context = build_context(snapshot)
+        tools = {tool.name: tool for tool in repository_tools(snapshot, context=context)}
+        result = tools['query_context'].invoke({'kind': 'unknown-eeat-kind', 'prefix': 'src/'})
+        self.assertEqual(result['records'], [])
+        self.assertEqual(result['kind'], 'unknown-eeat-kind')
+        self.assertEqual(result['prefix'], 'src/')
+        self.assertEqual(result['available_kinds'], sorted({record['kind'] for record in context['records']}))
+
     def test_long_line_and_bulk_json_are_recoverable_with_byte_bounded_queries(self):
         original = ('茶"\\' * 9000) + '\nlast line'
         self.write('long.txt', original)
@@ -243,10 +253,10 @@ class CorpusEvidenceTests(unittest.TestCase):
         with patch.object(inventory, 'inventory', side_effect=interrupt), self.assertRaises(ExplorationIncomplete) as caught:
             self.state()
         checkpoint = caught.exception.checkpoint
-        self.assertEqual(checkpoint['checkpoint']['completed'], ['urls', 'content', 'page_structure', 'internal_links'])
+        self.assertEqual(checkpoint['checkpoint']['completed'], ['urls', 'page_structure', 'internal_links', 'media', 'content'])
         with patch.object(inventory, 'inventory', wraps=original) as extract:
             resumed = run_onpage_graph(self.repo, mode='static', resume=checkpoint)
-        self.assertEqual([call.args[1] for call in extract.call_args_list], ['metadata', 'media', 'eeat'])
+        self.assertEqual([call.args[1] for call in extract.call_args_list], ['metadata', 'eeat'])
         self.assertEqual(len(resumed['artifacts']), 7)
         self.write('shared/layout.ts', 'export const changed = true;')
         with self.assertRaisesRegex(ValueError, 'identity changed'):

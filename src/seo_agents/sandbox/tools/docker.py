@@ -1,6 +1,7 @@
 """Docker sandbox: one long-running container for the whole pipeline."""
 
 import subprocess
+import sys
 
 from seo_agents.log import done, log, start
 
@@ -23,11 +24,27 @@ class DockerSandbox:
     def __init__(self, container):
         self.container = container
 
-    def run(self, command, env=None):
+    def run(self, command, env=None, *, stream=False):
         cmd = ["docker", "exec"]
         for key, value in (env or {}).items():
             cmd = cmd + ["-e", key + "=" + value]
         cmd = cmd + [self.container, "bash", "-c", command]
+        if stream:
+            # One pipe preserves the order of progress and error messages and
+            # avoids a full stderr pipe blocking the child while stdout is read.
+            with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, bufsize=1) as proc:
+                output = []
+                try:
+                    for line in proc.stdout:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                        output.append(line)
+                    return DockerResult(''.join(output), '', proc.wait())
+                except BaseException:
+                    proc.terminate()
+                    proc.wait()
+                    raise
         proc = subprocess.run(cmd, capture_output=True, text=True)
         return DockerResult(proc.stdout, proc.stderr, proc.returncode)
 
