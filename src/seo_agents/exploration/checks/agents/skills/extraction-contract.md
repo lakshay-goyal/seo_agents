@@ -135,6 +135,9 @@ Category fields and record shapes:
 - eeat: `signals` of {signal,status,evidence:[{file,line,source_id,text,...}]},
   `trust_links` and `citations` of {file,line,source_id,href,...}, `interpretation`
   string. Use candidate_evidence or not_observed_in_static_content statuses.
+  Evidence items must be source-backed objects with literal text strings, never
+  strings or absence placeholders. An unobserved signal uses `evidence: []`;
+  absence explanations belong in interpretation or coverage.limitations.
 
 Only return observations; downstream analysis supplies SEO judgments. Verification
 checks code policy, bounded trial execution, report fields, source locations and

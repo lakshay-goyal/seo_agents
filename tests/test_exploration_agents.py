@@ -215,6 +215,79 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertIn('NoneType', feedback)
         self.assertEqual(result['report']['pages'][0]['blocks'][0]['section'], 'main')
 
+    def test_missing_observation_fields_identify_records_across_categories(self):
+        fields = {'content': 'blocks', 'page_structure': 'headings', 'internal_links': 'links',
+                  'metadata': 'declarations', 'media': 'items', 'urls': 'query_links', 'eeat': 'trust_links'}
+        for category, field in fields.items():
+            with self.subTest(category=category):
+                report = execute_script(generated_script(category), self.snapshot)
+                report['pages'][0][field] = [{'file': 'index.html'}]
+                with self.assertRaises(ObservationValidationError) as caught:
+                    validate_observations(category, report, self.snapshot)
+                issue = caught.exception.issues[0]
+                self.assertEqual(issue['pointer'], '/pages/0/' + field + '/0')
+                self.assertIn('line', issue['missing_fields'])
+                self.assertNotIn('file', issue['missing_fields'])
+
+    def test_eeat_evidence_errors_are_bounded_precise_and_do_not_echo_copy(self):
+        original = execute_script(generated_script('eeat'), self.snapshot)
+        for value, actual_type, missing in [('Private client copy', 'str', None),
+                ({'file': 'index.html', 'line': 2}, 'dict', ['source_id', 'text']),
+                (None, 'NoneType', None)]:
+            with self.subTest(actual_type=actual_type):
+                report = copy.deepcopy(original)
+                report['pages'][0]['signals'] = [{'signal': 'authorship', 'status': 'candidate_evidence',
+                                                 'evidence': [value] * 10}]
+                with self.assertRaises(ObservationValidationError) as caught:
+                    validate_observations('eeat', report, self.snapshot)
+                self.assertEqual(len(caught.exception.issues), 4)
+                issue = caught.exception.issues[0]
+                self.assertEqual(issue['pointer'], '/pages/0/signals/0/evidence/0')
+                self.assertEqual(issue['actual_type'], actual_type)
+                self.assertEqual(issue.get('missing_fields'), missing)
+                self.assertIn('evidence=[]', issue['hint'])
+                self.assertNotIn('Private client copy', str(caught.exception))
+
+    def test_eeat_evidence_shape_and_text_types_are_validated(self):
+        original = execute_script(generated_script('eeat'), self.snapshot)
+        ref = {'file': 'index.html', 'line': 2, 'source_id': 'index.html:2:0:main'}
+        for evidence, suffix, expected in [('Private client copy', '', 'list of observation objects'),
+                ([dict(ref, text=None)], '/0/text', 'string')]:
+            with self.subTest(evidence=evidence):
+                report = copy.deepcopy(original)
+                report['pages'][0]['signals'] = [{'signal': 'authorship', 'status': 'candidate_evidence',
+                                                 'evidence': evidence}]
+                with self.assertRaises(ObservationValidationError) as caught:
+                    validate_observations('eeat', report, self.snapshot)
+                issue = caught.exception.issues[0]
+                self.assertEqual(issue['pointer'], '/pages/0/signals/0/evidence' + suffix)
+                self.assertEqual(issue['expected'], expected)
+                self.assertNotIn('Private client copy', str(caught.exception))
+        original['pages'][0]['signals'] = [{'signal': 'authorship',
+            'status': 'not_observed_in_static_content', 'evidence': []}]
+        self.assertIs(validate_observations('eeat', original, self.snapshot), original)
+
+    def test_real_eeat_agent_repairs_evidence_after_discovery_budget_is_reached(self):
+        valid = generated_script('eeat').replace('row.update(signals=[],',
+            "row.update(signals=[{'signal': 'authorship', 'status': 'candidate_evidence', 'evidence': [blocks[0]]}],")
+        invalid = valid.replace("'evidence': [blocks[0]]", "'evidence': [blocks[0]['text']]")
+
+        class RepairingModel(BrowsingModel):
+            def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+                if any('Verification failed:' in str(m.content) and '/pages/0/signals/0/evidence/0' in str(m.content)
+                       for m in messages):
+                    self.source = valid
+                return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+        model = RepairingModel(source=invalid)
+        result = run_exploration_agent('eeat', snapshot=self.snapshot, model=model, max_discovery_rounds=1)
+        self.assertEqual(result['run']['attempts'], 2)
+        self.assertEqual(result['run']['metrics']['finalization_model_calls'], 2)
+        self.assertIn('/pages/0/signals/0/evidence/0', result['run']['previous_errors'][0])
+        evidence = result['report']['pages'][0]['signals'][0]['evidence'][0]
+        self.assertEqual(evidence['text'], 'Observed heading')
+        self.assertEqual(evidence['file'], 'index.html')
+
     def test_plain_model_response_is_repaired_in_existing_conversation(self):
         message = AIMessage(content='I will now produce the script.', response_metadata={'finish_reason': 'stop'})
         agent = Mock()

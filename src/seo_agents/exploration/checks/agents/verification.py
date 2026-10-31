@@ -16,7 +16,7 @@ class ObservationValidationError(ValueError):
     """Bounded field-level feedback, without dumping extracted client content."""
     def __init__(self, issues):
         self.issues = issues
-        super().__init__('Invalid content observations: ' + json.dumps(issues, ensure_ascii=True))
+        super().__init__('Invalid observations: ' + json.dumps(issues, ensure_ascii=True))
 
 
 def execute_script(source, snapshot, timeout=12):
@@ -125,13 +125,29 @@ def validate_observations(category, report, snapshot):
                 if isinstance(child, (list, dict)):
                     evidence(child)
 
-    def records(items, required):
-        for item in items:
+    def records(items, required, pointer, hint=None):
+        hint = hint or 'Return observation objects with the required fields and source locations.'
+        if not isinstance(items, list):
+            raise ObservationValidationError([{'pointer': pointer, 'expected': 'list of observation objects',
+                'actual_type': type(items).__name__, 'hint': hint}])
+        issues = []
+        for index, item in enumerate(items):
             if not isinstance(item, dict) or not required <= set(item):
-                raise ValueError('Missing observation fields: ' + str(sorted(required)))
+                issue = {'pointer': f'{pointer}/{index}', 'expected': 'observation object',
+                         'actual_type': type(item).__name__, 'hint': hint}
+                if isinstance(item, dict):
+                    issue['missing_fields'] = sorted(required - set(item))
+                else:
+                    issue['required_fields'] = sorted(required)
+                issues.append(issue)
+                if len(issues) == 4:
+                    break
+        if issues:
+            raise ObservationValidationError(issues)
 
     ref = {'file', 'line', 'source_id'}
     for page_index, page in enumerate(report['pages']):
+        pointer = f'/pages/{page_index}'
         if not isinstance(page['template'], str) or page['template'] not in files or PurePosixPath(page['template']).is_absolute():
             raise ValueError('Page template must reference a captured source file')
         identity = (page['url'], page['template'])
@@ -149,7 +165,7 @@ def validate_observations(category, report, snapshot):
             if limitation not in coverage['limitations']:
                 coverage['limitations'].append(limitation)
         if category == 'content':
-            records(page['blocks'], ref | {'text', 'tag', 'section'})
+            records(page['blocks'], ref | {'text', 'tag', 'section'}, pointer + '/blocks')
             issues = []
             for block_index, block in enumerate(page['blocks']):
                 for field in ('text', 'tag', 'section'):
@@ -170,21 +186,21 @@ def validate_observations(category, report, snapshot):
             if type(page['word_count']) is not int or page['word_count'] != sum(len(b['text'].split()) for b in page['blocks']):
                 raise ValueError('Content word_count must match extracted blocks')
             for field in ('link_refs', 'media_refs'):
-                records(page[field], {'source_id', 'report'})
+                records(page[field], {'source_id', 'report'}, pointer + '/' + field)
         elif category == 'page_structure':
-            records(page['headings'], ref | {'level', 'text'})
+            records(page['headings'], ref | {'level', 'text'}, pointer + '/headings')
             if any(type(h['level']) is not int or not 1 <= h['level'] <= 6 for h in page['headings']):
                 raise ValueError('Heading levels must be integers from 1 to 6')
             if any(not isinstance(h['text'], str) for h in page['headings']):
                 raise ValueError('Heading text must be a string')
-            records(page['landmarks'], ref | {'landmarks'})
+            records(page['landmarks'], ref | {'landmarks'}, pointer + '/landmarks')
         elif category == 'internal_links':
-            records(page['links'], ref | {'href', 'anchor_text', 'target_url', 'kind', 'rel', 'target'})
+            records(page['links'], ref | {'href', 'anchor_text', 'target_url', 'kind', 'rel', 'target'}, pointer + '/links')
             for link in page['links']:
                 if not all(isinstance(link[key], str) for key in ('href', 'anchor_text', 'target_url', 'kind')):
                     raise ValueError('Link destinations and labels must be strings')
         elif category == 'metadata':
-            records(page['declarations'], ref)
+            records(page['declarations'], ref, pointer + '/declarations')
             for declaration in page['declarations']:
                 for key in ('title', 'description', 'name', 'property', 'content', 'href'):
                     if declaration.get(key) is not None and not isinstance(declaration[key], str):
@@ -192,22 +208,28 @@ def validate_observations(category, report, snapshot):
             if not isinstance(page['inheritance_note'], str):
                 raise ValueError('Metadata inheritance_note must be a string')
         elif category == 'media':
-            records(page['items'], ref | {'kind', 'src', 'size_review'})
+            records(page['items'], ref | {'kind', 'src', 'size_review'}, pointer + '/items')
         elif category == 'urls':
             if type(page['depth']) is not int or page['depth'] < 0:
                 raise ValueError('URL depth must be a nonnegative integer')
-            records(page['query_links'], ref | {'href', 'target_url'})
+            records(page['query_links'], ref | {'href', 'target_url'}, pointer + '/query_links')
         elif category == 'eeat':
-            records(page['signals'], {'signal', 'status', 'evidence'})
-            for signal in page['signals']:
+            records(page['signals'], {'signal', 'status', 'evidence'}, pointer + '/signals')
+            evidence_hint = ('Use source-backed objects with file, line, source_id and literal text. '
+                             'For not_observed_in_static_content use evidence=[]; put absence explanations '
+                             'in interpretation or coverage.limitations. Never fabricate source locations.')
+            for signal_index, signal in enumerate(page['signals']):
+                evidence_pointer = f'{pointer}/signals/{signal_index}/evidence'
                 if (not isinstance(signal['signal'], str) or signal['status'] not in
                         {'candidate_evidence', 'not_observed_in_static_content'}):
                     raise ValueError('Invalid candidate signal name or status')
-                if not isinstance(signal['evidence'], list):
-                    raise ValueError('Signal evidence must be a list')
-                records(signal['evidence'], ref | {'text'})
-            records(page['trust_links'], ref | {'href'})
-            records(page['citations'], ref | {'href'})
+                records(signal['evidence'], ref | {'text'}, evidence_pointer, evidence_hint)
+                for evidence_index, item in enumerate(signal['evidence']):
+                    if not isinstance(item['text'], str):
+                        raise ObservationValidationError([{'pointer': f'{evidence_pointer}/{evidence_index}/text',
+                            'expected': 'string', 'actual_type': type(item['text']).__name__, 'hint': evidence_hint}])
+            records(page['trust_links'], ref | {'href'}, pointer + '/trust_links')
+            records(page['citations'], ref | {'href'}, pointer + '/citations')
             if not isinstance(page['interpretation'], str):
                 raise ValueError('E-E-A-T interpretation must be a string')
         evidence(page, page_root=True)
