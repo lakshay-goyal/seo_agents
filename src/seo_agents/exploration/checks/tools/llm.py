@@ -1,8 +1,4 @@
-"""Optional AI summary of crawl stats through OpenRouter.
-
-The static crawl always runs. The summary is attached on top when
-OPENROUTER_API_KEY is set. Anything fails -> return None, never crash.
-"""
+"""Shared OpenRouter configuration and optional summaries of crawl statistics."""
 
 import json
 import os
@@ -17,7 +13,21 @@ def get_chat_model():
     from langchain_openai import ChatOpenAI
     model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash")
     base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=0, timeout=90, max_retries=2)
+    try:
+        max_tokens = int(os.getenv('OPENROUTER_MAX_TOKENS', '32768'))
+    except ValueError as error:
+        raise ValueError('OPENROUTER_MAX_TOKENS must be a positive integer') from error
+    if max_tokens < 1:
+        raise ValueError('OPENROUTER_MAX_TOKENS must be a positive integer')
+    # OpenRouter counts reasoning and visible output against the same budget.
+    # Flash can spend the entire cap on thinking even at low effort, leaving no plan.
+    effort = os.getenv('OPENROUTER_REASONING_EFFORT',
+                       'none' if model == 'deepseek/deepseek-v4.1-flash' else 'default')
+    if effort not in {'default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
+        raise ValueError('Invalid OPENROUTER_REASONING_EFFORT')
+    options = {} if effort == 'default' else {'extra_body': {'reasoning': {'effort': effort}}}
+    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=0,
+                      timeout=90, max_retries=2, max_tokens=max_tokens, **options)
 
 
 def summarize(check_name, stats):

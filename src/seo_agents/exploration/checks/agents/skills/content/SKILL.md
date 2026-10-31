@@ -13,3 +13,9 @@ with section context. Avoid double counting parent/child descendant text, counti
 code or treating expressions as user-facing strings. Keep link/media source IDs
 consistent with the shared contract. Compute word_count from emitted blocks.
 Report unresolved server/CMS data, bindings, conditionals and CSS visibility as gaps.
+
+Every block's text, tag and section must be strings. A section is a semantic tag,
+not a section descriptor object or null. Use body as the fallback when no semantic
+parent is established, retain that uncertainty in coverage, and store richer
+hierarchy separately. Before submitting, inspect every emitted block's field types
+and compute word_count only from those literal text strings.

@@ -11,7 +11,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from seo_agents.log import done, start
-from seo_agents.exploration.checks.agents.extractor import run_exploration_agent
+from seo_agents.exploration.checks.agents.extractor import ExtractionFailed, run_exploration_agent
 from seo_agents.exploration.checks.agents.repository import snapshot_repository
 from seo_agents.exploration.checks.agents.context import build_context
 from seo_agents.exploration.checks.agents.verification import validate_observations
@@ -46,7 +46,9 @@ def extraction_identity(mode):
     digest = hashlib.sha256()
     for path in paths:
         digest.update(path.read_bytes())
-    digest.update(json.dumps([mode, os.getenv('OPENROUTER_MODEL'), os.getenv('OPENROUTER_BASE_URL'), dependency_versions()]).encode())
+    digest.update(json.dumps([mode, os.getenv('OPENROUTER_MODEL'), os.getenv('OPENROUTER_BASE_URL'),
+        os.getenv('OPENROUTER_MAX_TOKENS'), os.getenv('OPENROUTER_REASONING_EFFORT'),
+        os.getenv('SEO_MAX_DISCOVERY_ROUNDS'), dependency_versions()]).encode())
     return digest.hexdigest()
 
 
@@ -183,6 +185,11 @@ def run_onpage_graph(repo_path=None, *, mode=None, site_url=None, max_runtime_pa
             if on_checkpoint:
                 on_checkpoint(dict(result))
     except (Exception, KeyboardInterrupt) as error:
+        if isinstance(error, ExtractionFailed):
+            result['agent_runs'] = {**result.get('agent_runs', {}), error.category: error.run}
+            result['checkpoint'] = {**result['checkpoint'], 'agent_runs': result['agent_runs']}
+            if on_checkpoint:
+                on_checkpoint(dict(result))
         raise ExplorationIncomplete(error, result) from error
     result['evidence']['checkpoint'] = result['checkpoint']
     done("on-page graph (7 checks)", begun)

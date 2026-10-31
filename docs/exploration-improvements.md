@@ -21,10 +21,80 @@ The baseline test suite contained 46 passing tests, primarily static extraction,
 worker boundaries, memory-only publication and a local model double. It did not
 prove live-model extraction quality across arbitrary frameworks.
 
-Final local validation: 73 tests passed, including the new corpus/coverage,
+The initial exploration review passed 73 local tests, including the new corpus/coverage,
 runtime boundary, byte-budget/recovery and checkpoint cases. The offline benchmark
 also passed report/source equality checks. HTTP behavior was tested with controlled
 response doubles; no paid-provider, deployed-site, browser or CMS run was performed.
+
+The subsequent sandbox/extractor repair passes 93 local tests. Shell quoting is
+covered with an actual Bash argument check. Content-validation regressions cover
+null/object sections, exact JSON-pointer/type/location feedback, successful model
+double repair, unchanged rejected-script reuse, and failed-program retention in
+partial checkpoints. Validation still rejects invalid fields rather than coercing
+them or publishing malformed observations.
+
+An initial live content-only probe on the existing portfolio checkout exposed a
+second failure: a model response without the required `ExtractionPlan`. Missing
+plans now enter the same bounded repair loop, preserve the existing conversation,
+and record finish reason, response type and invalid-tool-call count. A rejected
+plan is retained when available; no script is invented when none was returned.
+
+A second live probe identified `finish_reason=length` after a long generation,
+followed by the probe's overall time limit during repair. This did not verify
+extraction. [OpenRouter's reasoning documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+explains that reasoning and visible output usually share a token budget. The model
+factory now sets a configurable 32,768-token response cap and disables reasoning
+by default for the configured DeepSeek Flash model. A low-effort probe exhausted
+all 16,384 tokens on reasoning alone, producing no plan, so a lower effort setting
+was insufficient. Other models keep their
+provider reasoning defaults unless explicitly configured. The selected model is
+unchanged. Budget/effort settings reach Docker and invalidate source-result reuse.
+
+The non-reasoning probe then exposed an unbounded discovery pattern: repeated
+context queries/source reads exhausted LangGraph's 40-step limit before a program
+was submitted. A configurable middleware budget now permits 12 discovery model
+rounds per category, then removes repository tools while keeping `ExtractionPlan`
+available. A real LangChain loop test with a model double that continually requests
+source verifies that it must submit a valid plan once discovery tools are removed.
+Reports and page limitations explicitly record when this budget is reached; all
+captured source remains available to the generated program. It does not establish
+semantic completeness of the repository.
+
+The first bounded non-reasoning probe produced plans that each consumed the
+16,384-token cap and ended in incomplete Python. The output allowance was raised
+to 32,768 tokens while retaining non-reasoning mode, and syntax-repair feedback now
+includes a small generated-source excerpt around the failing line.
+
+Policy feedback now aggregates bounded violation groups and source lines rather
+than consuming a repair attempt per problem. A live probe also exposed a validator
+bug: nested helper definitions were accepted by the AST whitelist, but calls to
+them were incorrectly rejected because only top-level function names were
+collected. Function-call validation now includes nested definitions, with every
+helper body still checked for prohibited capabilities before execution. Regression
+coverage verifies a nested pure helper executes and a nested `open()` is rejected.
+
+Source relationship records are now distinct from observed content records.
+Captured-file relationships can use selectors/JSON pointers without invented
+markup lines or source IDs. Resolved JSON pointers, invalid JSON pointers and
+unverified non-JSON selectors retain separate statuses and coverage limitations.
+Observed blocks still require valid source locations and string fields. Safe
+`reversed`/`pop` stack operations are supported in the isolated worker; filesystem,
+network, imports and introspection remain unavailable.
+
+Final live validation used the existing portfolio checkout and five concrete URLs
+enumerated by the static route extractor. The content agent passed in two attempts
+and 79.864 seconds. The first plan added `/404`; exact route-catalog feedback led
+the second plan to retain the five expected page rows. Accepted output passed
+strict report validation and two identical worker executions. This run recorded
+12 discovery model rounds, two finalization calls, 19 model-facing tool calls,
+354,151 provider input tokens and 18,514 output tokens. Token counts include
+conversation reuse; they are not the size of the captured repository. The
+discovery-budget limitation remains in page coverage.
+
+This verifies the failing content stage against that checkout and route catalog,
+not semantic completeness, arbitrary repository support or all seven live agents.
+The full clone/analyze/PR pipeline was not rerun, and no PR was opened during the
+probe. The seven-report local model-double graph and full 93-test suite passed.
 
 ### Follow-up review of the existing working tree
 

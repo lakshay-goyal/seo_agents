@@ -12,10 +12,10 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import PrivateAttr
 
-from seo_agents.exploration.checks.agents.extractor import ExtractionPlan, repository_tools, run_exploration_agent
+from seo_agents.exploration.checks.agents.extractor import ExtractionFailed, ExtractionPlan, repository_tools, run_exploration_agent
 from seo_agents.exploration.checks.agents.repository import snapshot_repository
-from seo_agents.exploration.checks.agents.verification import execute_script, verify_and_extract
-from seo_agents.exploration.checks.graph import run_onpage_graph, validate_artifact_links
+from seo_agents.exploration.checks.agents.verification import ObservationValidationError, execute_script, validate_observations, verify_and_extract
+from seo_agents.exploration.checks.graph import ExplorationIncomplete, run_onpage_graph, validate_artifact_links
 from seo_agents.exploration.checks.json_analysis import analyze_reports
 from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
 from seo_agents.sandbox.host import sync_sources
@@ -100,6 +100,24 @@ class ToolCallingModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 
+class BrowsingModel(ToolCallingModel):
+    """Keeps reading while a read tool is available; submits once it is removed."""
+    _can_read: bool = PrivateAttr(default=False)
+
+    def bind_tools(self, tools, **kwargs):
+        self._can_read = any((tool.get('function', {}).get('name') if isinstance(tool, dict) else tool.name) == 'read_source' for tool in tools)
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self._calls += 1
+        if self._can_read:
+            message = AIMessage(content='', tool_calls=[{'name': 'read_source', 'args': {'path': 'index.html'}, 'id': 'inspect-' + str(self._calls)}])
+        else:
+            message = AIMessage(content='', tool_calls=[{'name': 'ExtractionPlan', 'args': {
+                'framework': 'html', 'notes': 'Known evidence; remaining semantics unresolved.', 'source': self.source}, 'id': 'plan'}])
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
 @patch.dict(os.environ, {'SEO_NO_LLM': '0'})
 class ExplorationAgentTests(unittest.TestCase):
     def setUp(self):
@@ -116,6 +134,22 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertEqual(result['report']['pages'][0]['blocks'][0]['text'], 'Observed heading')
         self.assertEqual(result['run']['verification'], 'passed')
         self.assertEqual(result['report']['extraction']['snapshot_sha256'], self.snapshot['sha256'])
+
+    def test_discovery_loop_is_forced_to_submit_without_removing_structured_response_tool(self):
+        model = BrowsingModel(source=generated_script('content'))
+        result = run_exploration_agent('content', snapshot=self.snapshot, model=model, max_discovery_rounds=2)
+        self.assertEqual(model._calls, 3)
+        self.assertEqual(result['run']['metrics']['discovery_model_calls'], 2)
+        self.assertEqual(result['run']['metrics']['finalization_model_calls'], 1)
+        self.assertEqual(result['report']['extraction']['discovery_budget'], {'max_model_rounds': 2, 'reached': True})
+        self.assertTrue(any('budget reached' in item for item in result['report']['pages'][0]['coverage']['limitations']))
+
+    def test_invalid_discovery_budgets_are_rejected_before_model_use(self):
+        for value in (0, -1, 101, '2'):
+            with self.subTest(value=value), patch('seo_agents.exploration.checks.agents.extractor.get_chat_model') as model:
+                with self.assertRaises(ValueError):
+                    run_exploration_agent('content', snapshot=self.snapshot, max_discovery_rounds=value)
+                model.assert_not_called()
 
     def test_same_program_extracts_changed_source_across_framework_templates(self):
         for file in ['pages/index.vue', 'src/routes/+page.svelte', 'src/pages/index.astro', 'app/page.tsx']:
@@ -146,6 +180,114 @@ class ExplorationAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'after 3 attempts'):
             run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=Mock(return_value=agent))
         self.assertEqual(agent.invoke.call_count, 3)
+
+    def test_content_type_errors_identify_field_type_and_location_without_dumping_copy(self):
+        original = execute_script(generated_script('content'), self.snapshot)
+        for field, value, actual_type in [('section', None, 'NoneType'), ('section', {'id': 'main'}, 'dict'),
+                                           ('tag', ['p'], 'list'), ('text', 42, 'int')]:
+            with self.subTest(field=field, actual_type=actual_type):
+                report = copy.deepcopy(original)
+                report['pages'][0]['blocks'][0][field] = value
+                with self.assertRaises(ObservationValidationError) as caught:
+                    validate_observations('content', report, self.snapshot)
+                issue = caught.exception.issues[0]
+                self.assertEqual(issue['pointer'], '/pages/0/blocks/0/' + field)
+                self.assertEqual(issue['actual_type'], actual_type)
+                self.assertEqual(issue['file'], 'index.html')
+                self.assertIn('hint', issue)
+                self.assertNotIn('Observed heading', str(caught.exception))
+
+    def test_null_section_is_repaired_with_precise_feedback_and_no_type_coercion(self):
+        valid = generated_script('content')
+        invalid = valid.replace("section=node['section']", 'section=None')
+        agent = Mock()
+        agent.invoke.side_effect = [
+            {'structured_response': ExtractionPlan('html', 'bad context', invalid)},
+            {'structured_response': ExtractionPlan('html', 'fixed context', valid)},
+        ]
+        def factory(**kwargs):
+            next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
+            return agent
+        result = run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
+        self.assertEqual(result['run']['attempts'], 2)
+        feedback = agent.invoke.call_args_list[1].args[0]['messages'][-1]['content']
+        self.assertIn('/pages/0/blocks/0/section', feedback)
+        self.assertIn('NoneType', feedback)
+        self.assertEqual(result['report']['pages'][0]['blocks'][0]['section'], 'main')
+
+    def test_plain_model_response_is_repaired_in_existing_conversation(self):
+        message = AIMessage(content='I will now produce the script.', response_metadata={'finish_reason': 'stop'})
+        agent = Mock()
+        agent.invoke.side_effect = [
+            {'messages': [message]},
+            {'structured_response': ExtractionPlan('html', 'complete result', generated_script('content'))},
+        ]
+        def factory(**kwargs):
+            next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
+            return agent
+        result = run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
+        self.assertEqual(result['run']['attempts'], 2)
+        repair_messages = agent.invoke.call_args_list[1].args[0]['messages']
+        self.assertIs(repair_messages[0], message)
+        self.assertIn('ExtractionPlan response tool', repair_messages[-1]['content'])
+        self.assertEqual(result['run']['metrics']['last_response_diagnostic']['finish_reason'], 'stop')
+
+    def test_syntax_repair_receives_bounded_generated_source_context(self):
+        invalid = 'def extract(files, assets):\n    values = [\n    return {}'
+        agent = Mock()
+        agent.invoke.side_effect = [
+            {'structured_response': ExtractionPlan('html', 'incomplete program', invalid)},
+            {'structured_response': ExtractionPlan('html', 'repaired', generated_script('content'))},
+        ]
+        def factory(**kwargs):
+            next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
+            return agent
+        result = run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
+        feedback = agent.invoke.call_args_list[1].args[0]['messages'][-1]['content']
+        self.assertIn('Generated-source context', feedback)
+        self.assertIn('"line": 2', feedback)
+        self.assertIn('values = [', feedback)
+        self.assertEqual(result['run']['attempts'], 2)
+
+    def test_missing_plans_exhaust_bounded_attempts_with_diagnostics(self):
+        agent = Mock()
+        agent.invoke.return_value = {'messages': [AIMessage(content='Incomplete', response_metadata={'finish_reason': 'length'})]}
+        with self.assertRaises(ExtractionFailed) as caught:
+            run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=Mock(return_value=agent))
+        self.assertEqual(agent.invoke.call_count, 3)
+        self.assertIsNone(caught.exception.run['script'])
+        self.assertEqual(caught.exception.run['metrics']['last_response_diagnostic']['finish_reason'], 'length')
+
+    def test_identical_rejected_scripts_are_not_executed_repeatedly_and_remain_diagnosable(self):
+        invalid = generated_script('content').replace("section=node['section']", 'section=None')
+        agent = Mock()
+        agent.invoke.return_value = {'structured_response': ExtractionPlan('html', 'bad context', invalid)}
+        def factory(**kwargs):
+            next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
+            return agent
+        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
+            with self.assertRaises(ExtractionFailed) as caught:
+                run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
+        self.assertEqual(worker.call_count, 1)
+        self.assertEqual(caught.exception.run['script'], invalid)
+        self.assertEqual(caught.exception.run['verification'], 'failed')
+        self.assertEqual(len(caught.exception.run['previous_errors']), 3)
+        self.assertIn('Unchanged rejected script', caught.exception.run['previous_errors'][-1])
+
+    def test_failed_agent_diagnostics_join_completed_work_in_partial_checkpoint(self):
+        urls = verify_and_extract('urls', generated_script('urls'), self.snapshot)
+        failure = ExtractionFailed('content', {'category': 'content', 'verification': 'failed',
+            'script': 'rejected script', 'previous_errors': ['bad section']})
+        checkpoints = []
+        with patch('seo_agents.exploration.checks.graph.run_exploration_agent',
+                   side_effect=[{'report': urls, 'run': {'verification': 'passed'}}, failure]):
+            with self.assertRaises(ExplorationIncomplete) as caught:
+                run_onpage_graph(self.repo, mode='agent', on_checkpoint=checkpoints.append)
+        checkpoint = caught.exception.checkpoint
+        self.assertEqual(checkpoint['checkpoint']['completed'], ['urls'])
+        self.assertEqual(set(checkpoint['artifacts']), {'urls'})
+        self.assertEqual(checkpoint['agent_runs']['content']['script'], 'rejected script')
+        self.assertEqual(checkpoints[-1]['checkpoint']['agent_runs']['content']['verification'], 'failed')
 
     def test_no_silent_fallback_when_model_disabled(self):
         with patch.dict(os.environ, {'SEO_NO_LLM': '1'}):
@@ -178,6 +320,59 @@ class ExplorationAgentTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     execute_script(source, self.snapshot)
                 worker.assert_not_called()
+
+    def test_policy_reports_multiple_violation_kinds_in_one_bounded_repair(self):
+        source = 'VALUE = 1\ndef extract(files, assets):\n    try:\n        private = [_ for _ in []]\n        return open("private")\n    except ValueError:\n        return {}'
+        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+            with self.assertRaises(ValueError) as caught:
+                execute_script(source, self.snapshot)
+        message = str(caught.exception)
+        for problem in ('only functions', 'Private names', 'Unsupported Python syntax: Try', 'Unavailable function: open', 'line 3'):
+            self.assertIn(problem, message)
+        self.assertLess(len(message), 2000)
+        worker.assert_not_called()
+
+    def test_nested_pure_helpers_are_callable_and_still_subject_to_capability_checks(self):
+        source = 'def extract(files, assets):\n    def title(text):\n        return parse_html(text)[0]["text"]\n    return {"title": title(files["index.html"])}'
+        self.assertEqual(execute_script(source, self.snapshot)['title'], 'Example')
+        unsafe = source.replace('return parse_html(text)[0]["text"]', 'return open(text)')
+        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+            with self.assertRaisesRegex(ValueError, 'Unavailable function: open'):
+                execute_script(unsafe, self.snapshot)
+        worker.assert_not_called()
+
+    def test_source_relationships_accept_file_and_json_pointer_without_markup_locations(self):
+        snapshot = dict(self.snapshot, files={**self.snapshot['files'], 'data.json': '{"items":[{"a/b":"Tea"}]}'})
+        report = execute_script(generated_script('content'), snapshot)
+        page = report['pages'][0]
+        page['content_sources'] = [{'file': 'index.html', 'pointer': '', 'kind': 'template'},
+                                   {'file': 'data.json', 'pointer': '/items/0/a~1b', 'kind': 'local-json'}]
+        validate_observations('content', report, snapshot)
+        self.assertEqual(page['content_sources'][1]['pointer_validation'], 'resolved-json-pointer')
+        for relationship in [{'file': 'missing.json', 'pointer': ''},
+                             {'file': 'data.json', 'pointer': '/items/~2'},
+                             {'file': 'data.json', 'pointer': None},
+                             {'file': 'index.html', 'pointer': '', 'line': 9999}]:
+            with self.subTest(relationship=relationship):
+                page['content_sources'] = [relationship]
+                with self.assertRaises(ValueError):
+                    validate_observations('content', report, snapshot)
+        for pointer in ('/items/8', '/items/-1', '/items/00'):
+            page['content_sources'] = [{'file': 'data.json', 'pointer': pointer}]
+            validate_observations('content', report, snapshot)
+            self.assertEqual(page['content_sources'][0]['pointer_validation'], 'invalid-or-unresolvable-json-pointer')
+        page['content_sources'] = [{'file': 'index.html', 'pointer': '/HomePage'}]
+        validate_observations('content', report, snapshot)
+        self.assertEqual(page['content_sources'][0]['pointer_validation'], 'unverified-source-selector')
+        self.assertTrue(any('selectors are unverified or invalid' in text for text in page['coverage']['limitations']))
+        page['content_sources'] = []
+        del page['blocks'][0]['source_id']
+        with self.assertRaises(ValueError):
+            validate_observations('content', report, snapshot)
+
+    def test_worker_exposes_safe_stack_operations_used_by_source_parsers(self):
+        source = 'def extract(files, assets):\n    stack = [1, 2, 3]\n    last = stack.pop()\n    return {"remaining": list(reversed(stack)), "last": last}'
+        self.assertEqual(execute_script(source, self.snapshot), {'remaining': [2, 1], 'last': 3})
 
     def test_worker_stops_infinite_loop(self):
         with self.assertRaisesRegex(ValueError, 'time limit'):

@@ -2,12 +2,21 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 
 from seo_agents.exploration.checks.agents.script_policy import validate_script
+from seo_agents.exploration.checks.agents.context import strict_json
 from seo_agents.exploration.checks.tools.contracts import validate_report
+
+
+class ObservationValidationError(ValueError):
+    """Bounded field-level feedback, without dumping extracted client content."""
+    def __init__(self, issues):
+        self.issues = issues
+        super().__init__('Invalid content observations: ' + json.dumps(issues, ensure_ascii=True))
 
 
 def execute_script(source, snapshot, timeout=12):
@@ -44,8 +53,58 @@ def validate_observations(category, report, snapshot):
         raise ValueError('No pages discovered; investigate entry points instead of accepting an empty inventory')
     identities = set()
     line_counts = {}
+    json_documents = {}
 
-    def evidence(value):
+    def relationships(items, page_index):
+        unresolved = False
+        for index, item in enumerate(items):
+            location = f'/pages/{page_index}/content_sources/{index}'
+            if not isinstance(item, dict):
+                raise ValueError(location + ': expected a source relationship object')
+            if 'file' not in item:
+                continue  # External source intentions are not local-file observations.
+            file = item['file']
+            if not isinstance(file, str) or file not in files:
+                raise ValueError(location + '/file: relationship must reference a captured source file')
+            line = item.get('line')
+            if line is not None and (type(line) is not int or not 1 <= line <= len(files[file].splitlines())):
+                raise ValueError(location + '/line: expected an in-range source line when provided')
+            if item.get('source_id') is not None and (not isinstance(item['source_id'], str) or not item['source_id']):
+                raise ValueError(location + '/source_id: expected a nonempty string when provided')
+            if 'pointer' not in item:
+                continue  # A captured file itself is a valid relationship target.
+            pointer = item['pointer']
+            if not isinstance(pointer, str) or pointer and not pointer.startswith('/') or re.search(r'~(?:[^01]|$)', pointer):
+                raise ValueError(location + '/pointer: expected a valid JSON pointer')
+            if not pointer:
+                item['pointer_validation'] = 'file-reference'
+                continue  # Empty pointer denotes the source file, including a template.
+            if PurePosixPath(file).suffix.lower() != '.json':
+                item['pointer_validation'] = 'unverified-source-selector'
+                unresolved = True
+                continue
+            try:
+                if file not in json_documents:
+                    json_documents[file] = strict_json(files[file])
+                value = json_documents[file]
+                for token in pointer.split('/')[1:]:
+                    token = token.replace('~1', '/').replace('~0', '~')
+                    if isinstance(value, list):
+                        if not token.isascii() or not token.isdigit() or str(int(token)) != token:
+                            raise ValueError('Invalid JSON array index')
+                        value = value[int(token)]
+                    elif isinstance(value, dict):
+                        value = value[token]
+                    else:
+                        raise ValueError('JSON pointer traverses a scalar')
+                item['pointer_validation'] = 'resolved-json-pointer'
+            except (ValueError, KeyError, IndexError, TypeError, RecursionError) as error:
+                item['pointer_validation'] = 'invalid-or-unresolvable-json-pointer'
+                item['pointer_error'] = type(error).__name__
+                unresolved = True
+        return unresolved
+
+    def evidence(value, *, page_root=False):
         if isinstance(value, list):
             for item in value:
                 evidence(item)
@@ -61,7 +120,7 @@ def validate_observations(category, report, snapshot):
                         or not isinstance(value.get('source_id'), str) or not value['source_id']):
                     raise ValueError('Evidence requires an in-range line and stable source_id')
             for key, child in value.items():
-                if key == 'coverage':
+                if key == 'coverage' or page_root and key == 'content_sources':
                     continue
                 if isinstance(child, (list, dict)):
                     evidence(child)
@@ -72,7 +131,7 @@ def validate_observations(category, report, snapshot):
                 raise ValueError('Missing observation fields: ' + str(sorted(required)))
 
     ref = {'file', 'line', 'source_id'}
-    for page in report['pages']:
+    for page_index, page in enumerate(report['pages']):
         if not isinstance(page['template'], str) or page['template'] not in files or PurePosixPath(page['template']).is_absolute():
             raise ValueError('Page template must reference a captured source file')
         identity = (page['url'], page['template'])
@@ -85,11 +144,29 @@ def validate_observations(category, report, snapshot):
         if (coverage.get('complete') is not False or not isinstance(coverage.get('limitations'), list)
                 or not coverage['limitations']):
             raise ValueError('Static coverage requires complete=false and explicit limitations')
+        if relationships(page.get('content_sources', []), page_index):
+            limitation = 'Some content-source selectors are unverified or invalid; inspect content_sources.pointer_validation. They are not verified observation locations.'
+            if limitation not in coverage['limitations']:
+                coverage['limitations'].append(limitation)
         if category == 'content':
             records(page['blocks'], ref | {'text', 'tag', 'section'})
-            for block in page['blocks']:
-                if not all(isinstance(block[key], str) for key in ('text', 'tag', 'section')):
-                    raise ValueError('Content text, tag and section must be strings')
+            issues = []
+            for block_index, block in enumerate(page['blocks']):
+                for field in ('text', 'tag', 'section'):
+                    if not isinstance(block[field], str):
+                        hints = {'text': 'Extract literal text only. Keep unresolved data in coverage limitations; do not stringify objects or null.',
+                                 'tag': 'Use the literal element tag or a documented source-text label.',
+                                 'section': 'Use a semantic tag string (for example main or nav); use body when no semantic parent is established. Store hierarchy objects in sections/section_id, not section.'}
+                        issues.append({'pointer': f'/pages/{page_index}/blocks/{block_index}/{field}',
+                            'expected': 'string', 'actual_type': type(block[field]).__name__,
+                            'file': str(block.get('file', ''))[:180], 'line': block.get('line'),
+                            'hint': hints[field]})
+                        if len(issues) == 4:
+                            break
+                if len(issues) == 4:
+                    break
+            if issues:
+                raise ObservationValidationError(issues)
             if type(page['word_count']) is not int or page['word_count'] != sum(len(b['text'].split()) for b in page['blocks']):
                 raise ValueError('Content word_count must match extracted blocks')
             for field in ('link_refs', 'media_refs'):
@@ -133,7 +210,7 @@ def validate_observations(category, report, snapshot):
             records(page['citations'], ref | {'href'})
             if not isinstance(page['interpretation'], str):
                 raise ValueError('E-E-A-T interpretation must be a string')
-        evidence(page)
+        evidence(page, page_root=True)
     json.dumps(report, allow_nan=False)
     return report
 

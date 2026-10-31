@@ -6,7 +6,8 @@ from seo_agents.sandbox import create_sandbox, is_valid_github_url, run_pipeline
 
 def forward_env():
     env = {"GITHUB_TOKEN": os.environ["GITHUB_TOKEN"]}
-    for key in ("OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_BASE_URL", "SEO_NO_LLM", "SEO_EXPLORATION_MODE"):
+    for key in ("OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_BASE_URL",
+                "OPENROUTER_MAX_TOKENS", "OPENROUTER_REASONING_EFFORT", "SEO_MAX_DISCOVERY_ROUNDS", "SEO_NO_LLM", "SEO_EXPLORATION_MODE"):
         value = os.environ.get(key)
         if value:
             env[key] = value

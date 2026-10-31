@@ -34,6 +34,20 @@ The workflow is:
 Scripts, exploration notes, inspected paths and verification attempts are available
 in graph state under `agent_runs`; JSON includes script/skill/snapshot hashes in
 `extraction`. Client source, scripts and notes are not saved in this repository.
+Rejected content observations identify the field's JSON pointer, actual type and
+source location, with a repair hint. Every rejection is logged. Identical rejected
+scripts reuse their validation error instead of being executed again. After three
+failed attempts, `ExplorationIncomplete.checkpoint["agent_runs"][category]` retains
+the last rejected script and repair errors; failed reports are never published.
+Responses without the required `ExtractionPlan` are also returned for repair in
+the existing conversation. Their finish reason and response type are retained in
+run metrics; the script is null if the model never returned one.
+Source relationships in `content_sources` use captured files and optional selectors
+or JSON pointers. `pointer_validation` distinguishes resolved JSON pointers from
+invalid pointers and unverified non-JSON selectors; unresolved relationships remain
+coverage limitations. Observed content blocks still require valid file/line/source
+IDs. Policy feedback lists multiple violations together, including source lines,
+and nested pure helpers are checked and executed using the same capability rules.
 Source capture is capped at 2,000 loaded files, 500 KB per file and 20 MB total;
 inventory continues after capture limits. Omissions/truncation and unreadable files
 are reported individually. A file listed or accessed is not a file understood.
@@ -49,6 +63,20 @@ is disabled or extraction cannot be verified. To use the previous deterministic
 React/Next.js extractor offline, set `SEO_EXPLORATION_MODE=static` (or pass
 `mode="static"` to `run_onpage_graph`). `SEO_NO_LLM=1` alone does not select static
 mode. No model key is required for static mode or JSON-only analysis.
+
+Model responses use a combined reasoning/output cap of 32,768 tokens by default
+(`OPENROUTER_MAX_TOKENS`). The default Flash model disables reasoning to
+leave room for the structured extractor; other models retain their provider's
+reasoning default. Override with `OPENROUTER_REASONING_EFFORT` (`low`, `medium`,
+another supported effort, or `default` to omit the override). These values are
+forwarded into Docker and included in resume identity. A `length` finish reason
+is reported with token usage when available; it does not become a valid report.
+`SEO_MAX_DISCOVERY_ROUNDS` defaults to 12 model rounds with repository tools per
+category. After that, the final structured-response tool remains available and
+repository tools are removed. Budget exhaustion is recorded in run metrics,
+report extraction metadata and page coverage limitations; it is not complete
+semantic exploration. The generated script still receives the full captured
+source snapshot. This setting is configurable (1–100) and invalidates resume reuse.
 
 ## Corpus evidence and read-only exploration
 

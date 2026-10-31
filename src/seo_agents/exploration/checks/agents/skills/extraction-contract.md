@@ -37,7 +37,7 @@ page values in a fixed JSON result. Do not import packages or use filesystem,
 network, shell, environment, eval, exec, introspection, classes, decorators or type
 annotations. Define helper functions as needed. Available builtins:
 str, int, float, bool, len, list, dict, tuple, set, sorted, enumerate, range, zip,
-min, max, sum, any, all, abs, round, isinstance.
+min, max, sum, any, all, abs, round, isinstance, reversed.
 
 Available pure helpers (no import required):
 
@@ -55,12 +55,17 @@ Available pure helpers (no import required):
 - `resolve_url(page_url, href)` resolves relative links; preserve absolute URLs and
   mailto/tel/hash/resource links and classify their kinds explicitly.
 
-Allowed methods: get/items/keys/values/update/setdefault/append/extend/copy/add,
+Allowed methods: get/items/keys/values/update/setdefault/append/extend/copy/add/pop,
 strip/lstrip/rstrip/split/rsplit/splitlines/join/lower/upper/replace/startswith/
 endswith/find/rfind/count/removeprefix/removesuffix/isdigit/isalnum/index.
 Ordinary loops, functions, comprehensions, conditionals and f-strings are supported.
 Execution is bounded by CPU, memory, output size and wall time. Return a dictionary;
 do not print. Verification failures will be returned for repair (three attempts).
+The Python subset also excludes try/except, raise, assert, starred unpacking,
+global constants and ALL leading-underscore identifiers (including `_` loop names).
+Put constants inside functions. Use allowed helpers directly; avoid defensive
+exception-handling boilerplate and general-purpose interpreter implementations.
+Address every policy violation returned together, not just the first one.
 
 The report must have exactly these top-level fields (media may also have assets):
 `schema_version: "2.0"`, `category`, `extraction` (dictionary), `pages` (list).
@@ -81,6 +86,13 @@ set instance_status=concrete plus its route_family. Enumerate only source-backed
 instances; retain an unresolved template row when the full instance set is unknown.
 Other category agents should copy this route context from list_routes. Include
 content_sources with evidence locations and JSON pointers when known.
+Source relationships may use {file, pointer, kind} without a markup line/source_id.
+An empty pointer refers to the whole captured file. JSON-file pointers are checked;
+unresolvable values retain an invalid status. Non-JSON source selectors are retained
+as unverified, not treated as JSON addresses or observed locations. These statuses
+remain explicit coverage limitations. Optional line/source_id values must be valid
+when provided. Relationship records are distinct from observed content blocks,
+which still require file, line and source_id.
 
 Every observed record needs `file`, `line`, `source_id`. Lines reference the captured
 source. For parsed elements use `source_id = file + ":" + str(node["line"]) + ":" +
@@ -95,6 +107,14 @@ Category fields and record shapes:
   the sum of block text word counts, `link_refs` of {source_id,report:
   "internal_links.json"}, `media_refs` of {source_id,report:"media.json"}. Optional
   `sections` supports hierarchy/context. Capture all observed copy, not excerpts.
+  `text`, `tag` and `section` MUST each be strings, never null, lists or objects.
+  `section` is the semantic tag (for example "main", "nav", "footer"), with
+  "body" as the parser's fallback; keep section IDs and hierarchy in separate fields.
+  A markup-backed block can be built with
+  `dict(ref, text=node['text'], tag=node['tag'], section=node['section'])`.
+  For custom data-backed blocks use an established semantic parent or "body";
+  preserve unresolved content/context in coverage, rather than emitting null text
+  or converting a data object to its Python string representation.
 - page_structure: `headings` of {file,line,source_id,level:1..6,text}, `landmarks`
   of {file,line,source_id,landmarks:{tag:count}}. Include observed semantic context.
 - internal_links: `links` of {file,line,source_id,href,anchor_text,accessible_name,
