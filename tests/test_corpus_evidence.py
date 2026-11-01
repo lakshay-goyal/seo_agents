@@ -9,15 +9,15 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from seo_agents.exploration.checks.agents.context import build_context
-from seo_agents.exploration.checks.agents.http_probe import probe
-from seo_agents.exploration.checks.agents.repository import snapshot_repository
-from seo_agents.exploration.checks.agents.retrieval import encoded_size, repository_summary, repository_tools
-from seo_agents.exploration.checks.agents.verification import execute_script
-from seo_agents.exploration.checks.evidence import build_evidence, query_evidence, resolve_destination
-from seo_agents.exploration.checks.graph import ExplorationIncomplete, run_onpage_graph
-from seo_agents.exploration.checks.technical.runtime import observe_runtime
-from seo_agents.exploration.inspect import main
+from seo_agents.exploration.repo_analysis.tools.source_context import build_context
+from seo_agents.exploration.repo_analysis.tools.http_probe import probe
+from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
+from seo_agents.exploration.repo_analysis.tools.agent_retrieval import encoded_size, repository_summary, repository_tools
+from seo_agents.exploration.repo_analysis.agents.llm.verification import execute_script
+from seo_agents.exploration.repo_analysis.evidence import build_evidence, query_evidence, resolve_destination
+from seo_agents.exploration.repo_analysis.graph import ExplorationIncomplete, run_onpage_graph
+from seo_agents.exploration.repo_analysis.tools.runtime import observe_runtime
+from seo_agents.exploration.repo_analysis.inspect import main
 
 
 class CorpusEvidenceTests(unittest.TestCase):
@@ -146,7 +146,7 @@ class CorpusEvidenceTests(unittest.TestCase):
         self.assertLess(encoded_size(summary), encoded_size(old) // 10)
 
     def test_static_pipeline_parses_pages_once_and_preserves_ground_truth_content(self):
-        from seo_agents.exploration.checks.tools import inventory
+        from seo_agents.exploration.repo_analysis.tools import inventory
         with patch.object(inventory, 'pages', wraps=inventory.pages) as pages:
             state = self.state()
         self.assertEqual(pages.call_count, 1)
@@ -206,7 +206,7 @@ class CorpusEvidenceTests(unittest.TestCase):
         response.__exit__ = Mock(return_value=False)
         opener = Mock()
         opener.open.return_value = response
-        with patch('seo_agents.exploration.checks.agents.http_probe.build_opener', return_value=opener):
+        with patch('seo_agents.exploration.repo_analysis.tools.http_probe.build_opener', return_value=opener):
             result = probe({'url': 'https://example.test/', 'timeout': 1, 'max_body_bytes': 100})
         self.assertEqual(result['status'], 'redirect-out-of-scope')
         self.assertEqual(opener.open.call_count, 1)
@@ -218,8 +218,8 @@ class CorpusEvidenceTests(unittest.TestCase):
         response.read.side_effect = [b'<', b'title>Runtime</title>']
         opener = Mock()
         opener.open.return_value = response
-        with patch('seo_agents.exploration.checks.agents.http_probe.build_opener', return_value=opener), patch(
-                'seo_agents.exploration.checks.agents.http_probe.time.perf_counter', side_effect=[0, 0.02, 0.035, 0.05]):
+        with patch('seo_agents.exploration.repo_analysis.tools.http_probe.build_opener', return_value=opener), patch(
+                'seo_agents.exploration.repo_analysis.tools.http_probe.time.perf_counter', side_effect=[0, 0.02, 0.035, 0.05]):
             result = probe({'url': 'https://example.test/', 'timeout': 1, 'max_body_bytes': 100})
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['request_to_headers_ms'], 20)
@@ -244,7 +244,7 @@ class CorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(result['extraction']['script_access']['html_parsing'], {'calls': 1, 'cache_hits': 1})
 
     def test_interrupted_scan_resumes_completed_categories_and_rejects_changed_shared_source(self):
-        from seo_agents.exploration.checks.tools import inventory
+        from seo_agents.exploration.repo_analysis.tools import inventory
         original = inventory.inventory
         def interrupt(repo, category, **kwargs):
             if category == 'metadata':
@@ -288,13 +288,13 @@ class CorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(json.loads(''.join(chunks)), routes[0])
 
     def test_invalid_runtime_scope_is_rejected_before_model_work(self):
-        with patch('seo_agents.exploration.checks.agents.extractor.get_chat_model') as model:
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.extractor.get_chat_model') as model:
             with self.assertRaisesRegex(ValueError, 'HTTP'):
                 run_onpage_graph(self.repo, mode='agent', site_url='file:///private/site')
             model.assert_not_called()
 
     def test_resume_does_not_claim_reuse_of_a_partial_capture(self):
-        with patch('seo_agents.exploration.checks.agents.repository.MAX_FILE_BYTES', 5):
+        with patch('seo_agents.exploration.repo_analysis.tools.repository_snapshot.MAX_FILE_BYTES', 5):
             state = self.state()
             with self.assertRaisesRegex(ValueError, 'partial source capture'):
                 run_onpage_graph(self.repo, mode='static', resume=state)
@@ -305,7 +305,7 @@ class CorpusEvidenceTests(unittest.TestCase):
             snapshot = snapshot_repository(directory)
             self.assertEqual(snapshot['files'], {})
             output = io.StringIO()
-            with redirect_stdout(output), patch('seo_agents.exploration.checks.agents.extractor.get_chat_model') as model:
+            with redirect_stdout(output), patch('seo_agents.exploration.repo_analysis.agents.llm.extractor.get_chat_model') as model:
                 self.assertEqual(main([directory, '--mode', 'agent']), 2)
                 model.assert_not_called()
             bundle = json.loads(output.getvalue())

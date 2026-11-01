@@ -5,10 +5,42 @@ sandbox pipeline. Reports live in `seo_reports/onpage/` in the target repository
 Seven independent agents inspect the actual framework and generate extraction
 scripts rather than relying on one fixed React/Next.js parser.
 
+## Repository analysis (`repo_analysis`)
+
+`seo_agents.exploration.repo_analysis` is one package holding every agent, tool and
+skill used to explore a codebase; see its [layout map](src/seo_agents/exploration/repo_analysis/README.md).
+`repo_analysis()` is the entry point, and `pipeline.explore_codebase()` lists every
+agent call in run order. Before any LLM agent runs, it applies the framework-agnostic
+skills in [`repo_analysis/skills/`](src/seo_agents/exploration/repo_analysis/skills)
+to one source snapshot and writes `seo_reports/repo_context.json`:
+
+- `agents`: every agent result by name: `code_exploration`, `routes`, `page_inventory`,
+  `keywords`, `sitemap_robots`, `canonicals_redirects`, `rendering_strategy`,
+  `client_diagnostics`, `state_management`, `performance_web_vitals`,
+  `https_security_headers`, `structured_data`, `mobile_parity`, `hreflang_i18n`,
+  `shareability_link_assets`, `brand_entity_signals`, `local_business_presence`,
+  `ai_search_readiness`
+- `pages`: per-route titles, descriptions, headings, links, media issues, keywords,
+  rendering mode and inherited layout metadata
+- `edit_guide`, `gaps`: where to change each concern; missing signals (leads, not proof)
+- `files`: full content of every referenced file
+
+Every record has `location` (file, line range, JSON pointer into `files`), `code`
+(the exact source of the construct, whole function/object bodies for APIs) and
+`context` (surrounding lines). Skills are per agent, not per framework: each
+`SKILL.md` lists patterns for every ecosystem in a `json profile` block, so a new
+pattern is a JSON edit. The context file is written before the LLM agents start;
+set `SEO_RUN_LLM_AGENTS=0` to skip them.
+
+```sh
+python -m seo_agents.exploration.repo_analysis /path/to/site -o /tmp/repo_context.json
+python -m seo_agents.exploration.repo_analysis /path/to/site --with-llm-agents   # plus the 7 LLM reports
+```
+
 ## Skill-guided exploration (default)
 
 Each category has its own LangChain agent and packaged
-[`SKILL.md`](src/seo_agents/exploration/checks/agents/skills): URLs, content, page
+[`SKILL.md`](src/seo_agents/exploration/repo_analysis/agents/llm/skills): URLs, content, page
 structure, internal links, metadata, media and E-E-A-T. The URL agent runs first;
 its verified route/template catalog is shared with the other agents so all reports
 cover the same pages. Each remaining agent has a fresh conversation, its own domain
@@ -141,14 +173,14 @@ Explore without cloning, committing or publishing; JSON goes to stdout and logs
 to stderr. Choose an artifact location outside this agent checkout:
 
 ```sh
-python -m seo_agents.exploration.inspect /path/to/site --mode agent > /tmp/exploration.json
+python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode agent > /tmp/exploration.json
 # Offline legacy extraction plus the same corpus/evidence views:
-python -m seo_agents.exploration.inspect /path/to/site --mode static > /tmp/exploration.json
+python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode static > /tmp/exploration.json
 # Query the saved evidence without source, models or network access:
-python -m seo_agents.exploration.inspect /tmp/exploration.json --query /pages
-python -m seo_agents.exploration.inspect /tmp/exploration.json --query /reports/content/pages/0
+python -m seo_agents.exploration.repo_analysis.inspect /tmp/exploration.json --query /pages
+python -m seo_agents.exploration.repo_analysis.inspect /tmp/exploration.json --query /reports/content/pages/0
 # Recover source/page relationships for src/layout.tsx (JSON-pointer escaping):
-python -m seo_agents.exploration.inspect /tmp/exploration.json --query /source_relationships/src~1layout.tsx
+python -m seo_agents.exploration.repo_analysis.inspect /tmp/exploration.json --query /source_relationships/src~1layout.tsx
 ```
 
 `query_evidence(bundle, pointer, offset=...)` supports JSON-pointer queries. List
@@ -167,7 +199,7 @@ Optional page fields also include `locale` and `content_sources`.
 An explicit runtime URL enables serial initial-response observations:
 
 ```sh
-python -m seo_agents.exploration.inspect /path/to/site --mode static \
+python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode static \
   --site-url https://example.com --max-runtime-pages 100 --runtime-timeout 12 \
   > /tmp/exploration.json
 ```
@@ -209,7 +241,7 @@ cannot be reused conservatively. Shared-source changes invalidate the whole sour
 result instead of attempting dependency-aware incremental invalidation.
 
 ```sh
-python -m seo_agents.exploration.inspect /path/to/site --mode static \
+python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode static \
   --resume /tmp/exploration.json > /tmp/exploration-resumed.json
 ```
 
@@ -248,7 +280,7 @@ the page route. Absolute links are preserved without guessing the production ori
 ## Analyze the saved JSON without a repository
 
 ```sh
-python -m seo_agents.exploration.checks.json_analysis path/to/seo_reports/onpage
+python -m seo_agents.exploration.repo_analysis.json_analysis path/to/seo_reports/onpage
 ```
 
 The analyzer reads only the seven JSON files. It emits evidence-linked review

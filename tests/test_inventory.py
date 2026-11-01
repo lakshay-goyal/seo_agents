@@ -4,11 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from seo_agents.exploration.checks.tools.inventory import inventory, routes
-from seo_agents.exploration.checks.tools import crawl
-from seo_agents.exploration.checks.json_analysis import analyze_directory, analyze_reports
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
-from seo_agents.exploration.checks.graph import run_onpage_graph
+from seo_agents.exploration.repo_analysis.tools.inventory import inventory, routes
+from seo_agents.exploration.repo_analysis.tools import crawl
+from seo_agents.exploration.repo_analysis.json_analysis import analyze_directory, analyze_reports
+from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
+from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
 
 
 class InventoryTests(unittest.TestCase):

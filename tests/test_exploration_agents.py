@@ -15,13 +15,13 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import PrivateAttr
 
-from seo_agents.exploration.checks.agents.extractor import ExtractionFailed, ExtractionPlan, repository_tools, run_exploration_agent
-from seo_agents.exploration.checks.agents.handoff import PRIOR_WORK, build_handoff
-from seo_agents.exploration.checks.agents.repository import snapshot_repository
-from seo_agents.exploration.checks.agents.verification import ObservationValidationError, execute_script, validate_observations, verify_and_extract
-from seo_agents.exploration.checks.graph import CHECKS, ExplorationIncomplete, run_onpage_graph, validate_artifact_links
-from seo_agents.exploration.checks.json_analysis import analyze_reports
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
+from seo_agents.exploration.repo_analysis.agents.llm.extractor import ExtractionFailed, ExtractionPlan, repository_tools, run_exploration_agent
+from seo_agents.exploration.repo_analysis.agents.llm.handoff import PRIOR_WORK, build_handoff
+from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
+from seo_agents.exploration.repo_analysis.agents.llm.verification import ObservationValidationError, execute_script, validate_observations, verify_and_extract
+from seo_agents.exploration.repo_analysis.graph import CHECKS, ExplorationIncomplete, run_onpage_graph, validate_artifact_links
+from seo_agents.exploration.repo_analysis.json_analysis import analyze_reports
+from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
 from seo_agents.sandbox.host import sync_sources
 
 
@@ -178,7 +178,7 @@ class ExplorationAgentTests(unittest.TestCase):
                 self.assertIn('media', kwargs['handoff'])
             return {'report': reports[category], 'run': {'verification': 'passed'}}
 
-        with patch('seo_agents.exploration.checks.graph.run_exploration_agent', side_effect=extract), redirect_stdout(terminal):
+        with patch('seo_agents.exploration.repo_analysis.graph.run_exploration_agent', side_effect=extract), redirect_stdout(terminal):
             run_onpage_graph(self.repo, mode='agent')
         self.assertEqual(tuple(called), CHECKS)
         output = terminal.getvalue()
@@ -298,8 +298,8 @@ class ExplorationAgentTests(unittest.TestCase):
             agent.invoke.return_value = {'structured_response': ExtractionPlan('html', 'entry', source)}
             return agent
 
-        with patch('seo_agents.exploration.checks.agents.extractor.create_agent', side_effect=factory), patch(
-                'seo_agents.exploration.checks.agents.extractor.get_chat_model', return_value=Mock()):
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.extractor.create_agent', side_effect=factory), patch(
+                'seo_agents.exploration.repo_analysis.agents.llm.extractor.get_chat_model', return_value=Mock()):
             with self.assertRaises(ExplorationIncomplete) as caught:
                 run_onpage_graph(self.repo, mode='agent')
         self.assertEqual(called, ['urls', 'page_structure', 'internal_links', 'media', 'content'])
@@ -308,7 +308,7 @@ class ExplorationAgentTests(unittest.TestCase):
 
     def test_invalid_discovery_budgets_are_rejected_before_model_use(self):
         for value in (0, -1, 101, '2'):
-            with self.subTest(value=value), patch('seo_agents.exploration.checks.agents.extractor.get_chat_model') as model:
+            with self.subTest(value=value), patch('seo_agents.exploration.repo_analysis.agents.llm.extractor.get_chat_model') as model:
                 with self.assertRaises(ValueError):
                     run_exploration_agent('content', snapshot=self.snapshot, max_discovery_rounds=value)
                 model.assert_not_called()
@@ -330,7 +330,7 @@ class ExplorationAgentTests(unittest.TestCase):
         def factory(**kwargs):
             next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
             return fake
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
             result = run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
         self.assertEqual(worker.call_count, 2)  # Only the accepted script's trial and extraction.
         self.assertEqual(result['run']['attempts'], 2)
@@ -500,7 +500,7 @@ class ExplorationAgentTests(unittest.TestCase):
         def factory(**kwargs):
             next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
             return agent
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
             with self.assertRaises(ExtractionFailed) as caught:
                 run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
         self.assertEqual(worker.call_count, 1)
@@ -514,7 +514,7 @@ class ExplorationAgentTests(unittest.TestCase):
         failure = ExtractionFailed('page_structure', {'category': 'page_structure', 'verification': 'failed',
             'script': 'rejected script', 'previous_errors': ['bad section']})
         checkpoints = []
-        with patch('seo_agents.exploration.checks.graph.run_exploration_agent',
+        with patch('seo_agents.exploration.repo_analysis.graph.run_exploration_agent',
                    side_effect=[{'report': urls, 'run': {'verification': 'passed'}}, failure]):
             with self.assertRaises(ExplorationIncomplete) as caught:
                 run_onpage_graph(self.repo, mode='agent', on_checkpoint=checkpoints.append)
@@ -551,14 +551,14 @@ class ExplorationAgentTests(unittest.TestCase):
                   'files.clear()', '(lambda: 1)()']
         for body in bodies:
             source = body + '\ndef extract(files, assets):\n    return {}' if body.startswith('import') else 'def extract(files, assets):\n    ' + body
-            with self.subTest(body=body), patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+            with self.subTest(body=body), patch('seo_agents.exploration.repo_analysis.agents.llm.verification.subprocess.run') as worker:
                 with self.assertRaises(ValueError):
                     execute_script(source, self.snapshot)
                 worker.assert_not_called()
 
     def test_policy_reports_multiple_violation_kinds_in_one_bounded_repair(self):
         source = 'VALUE = 1\ndef extract(files, assets):\n    try:\n        private = [_ for _ in []]\n        return open("private")\n    except ValueError:\n        return {}'
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.verification.subprocess.run') as worker:
             with self.assertRaises(ValueError) as caught:
                 execute_script(source, self.snapshot)
         message = str(caught.exception)
@@ -571,7 +571,7 @@ class ExplorationAgentTests(unittest.TestCase):
         source = 'def extract(files, assets):\n    def title(text):\n        return parse_html(text)[0]["text"]\n    return {"title": title(files["index.html"])}'
         self.assertEqual(execute_script(source, self.snapshot)['title'], 'Example')
         unsafe = source.replace('return parse_html(text)[0]["text"]', 'return open(text)')
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.verification.subprocess.run') as worker:
             with self.assertRaisesRegex(ValueError, 'Unavailable function: open'):
                 execute_script(unsafe, self.snapshot)
         worker.assert_not_called()
@@ -631,7 +631,7 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertEqual(result['last_parts'], ['a:b', ':', 'c'])
 
     def test_agent_receives_the_workers_method_allowlist(self):
-        from seo_agents.exploration.checks.agents.script_policy import METHODS
+        from seo_agents.exploration.repo_analysis.agents.llm.script_policy import METHODS
         captured = {}
 
         def factory(**kwargs):
@@ -663,7 +663,7 @@ class ExplorationAgentTests(unittest.TestCase):
         valid = execute_script(generated_script('content'), self.snapshot)
         changed = copy.deepcopy(valid)
         changed['extraction']['changed'] = True
-        with patch('seo_agents.exploration.checks.agents.verification.execute_script', side_effect=[valid, changed]):
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.verification.execute_script', side_effect=[valid, changed]):
             with self.assertRaisesRegex(ValueError, 'changed between'):
                 verify_and_extract('content', generated_script('content'), self.snapshot)
 
@@ -690,8 +690,8 @@ class ExplorationAgentTests(unittest.TestCase):
             agent.invoke.return_value = {'structured_response': ExtractionPlan('html', 'entry verified', generated_script(category))}
             return agent
         before = sorted(p.relative_to(self.repo).as_posix() for p in self.repo.rglob('*'))
-        with patch('seo_agents.exploration.checks.agents.extractor.create_agent', side_effect=factory), patch(
-                'seo_agents.exploration.checks.agents.extractor.get_chat_model', return_value=Mock()), patch.object(
+        with patch('seo_agents.exploration.repo_analysis.agents.llm.extractor.create_agent', side_effect=factory), patch(
+                'seo_agents.exploration.repo_analysis.agents.llm.extractor.get_chat_model', return_value=Mock()), patch.object(
                 Path, 'write_text', side_effect=AssertionError('analysis wrote source')), patch.object(
                 Path, 'write_bytes', side_effect=AssertionError('analysis wrote bytes')):
             state = run_onpage_graph(str(self.repo), mode='agent')
@@ -709,7 +709,8 @@ class ExplorationAgentTests(unittest.TestCase):
         sync_sources(sandbox)
         paths = [call.args[0] for call in sandbox.write.call_args_list]
         self.assertTrue(any(p.endswith('/skills/content/SKILL.md') for p in paths))
-        self.assertTrue(any(p.endswith('/agents/script_worker.py') for p in paths))
+        self.assertTrue(any(p.endswith('/agents/llm/script_worker.py') for p in paths))
+        self.assertTrue(any(p.endswith('/repo_analysis/skills/routes/SKILL.md') for p in paths))
 
 
 if __name__ == '__main__':

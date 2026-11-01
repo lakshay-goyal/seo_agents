@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from seo_agents.exploration.checks.tools.inventory import inventory
+from seo_agents.exploration.repo_analysis.tools.inventory import inventory
 
 
 class ReactSourceTests(unittest.TestCase):

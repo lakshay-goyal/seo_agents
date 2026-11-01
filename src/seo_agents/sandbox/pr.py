@@ -9,8 +9,8 @@ import json
 import os
 import shlex
 
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
-from seo_agents.exploration.checks.tools.contracts import validate_report
+from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
+from seo_agents.exploration.repo_analysis.tools.contracts import validate_report
 from seo_agents.log import done, log, start
 
 PR_TITLE = "chore(seo-agents): add on-page SEO reports"
@@ -29,6 +29,12 @@ routes, source references and explicit extraction coverage:
 - `media.json`: sources, alt, local bytes/dimensions and loading behavior.
 - `urls.json`: route patterns, depths and query links.
 - `eeat.json`: candidate trust evidence, policy links and possible citations.
+
+`seo_reports/repo_context.json` is the repository-wide SEO context: project
+profile, routes, metadata, content, keywords, rendering mode, Core Web Vitals
+causes, crawl control, security headers, structured data, i18n, mobile and
+off-page/AI-search signals. Every record carries its file/line reference and the
+exact source code; referenced files are embedded in full.
 
 `.seo_agents/readme.md` documents the contract and JSON-only analysis command.
 These are static source observations. Runtime data, component props and dynamic
@@ -92,7 +98,7 @@ on the purpose of the page; missing candidate signals are not universal failures
 With seo-agents installed, run:
 
 ```sh
-python -m seo_agents.exploration.checks.json_analysis seo_reports/onpage
+python -m seo_agents.exploration.repo_analysis.json_analysis seo_reports/onpage
 ```
 
 This emits evidence-linked review findings without reading application source,
@@ -136,7 +142,8 @@ def run_or_fail(runner, env, command):
     return result.stdout.strip()
 
 
-def create_pr(runner, github_url, reports):
+def create_pr(runner, github_url, reports, extra_files=None):
+    """extra_files: optional {repo-relative path: text} published alongside the reports."""
     begun = start("PR on " + github_url)
     owner, repo, target = split_github_url(github_url)
     check_reports(reports)
@@ -167,7 +174,12 @@ def create_pr(runner, github_url, reports):
     for filename, content in payloads.items():
         runner.write(target + "/seo_reports/onpage/" + filename, content)
         added.append("seo_reports/onpage/" + filename)
-    log("staged " + str(len(REPORT_FILES)) + " report files")
+    for relative, content in (extra_files or {}).items():
+        if relative.startswith("/") or ".." in relative.split("/"):
+            raise ValueError("extra file path must stay inside the repository: " + relative)
+        runner.write(target + "/" + relative, content)
+        added.append(relative)
+    log("staged " + str(len(added) - 1) + " report files")
     run_or_fail(runner, env, "cd " + target + " && git add " + " ".join(added))
     if run_or_fail(runner, env, "cd " + target + " && git status --porcelain"):
         run_or_fail(runner, env, "cd " + target + " && git commit -q -m '" + PR_TITLE + "'")

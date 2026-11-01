@@ -9,11 +9,11 @@ import tempfile
 import time
 from unittest.mock import patch
 
-from seo_agents.exploration.checks.agents.repository import snapshot_repository
-from seo_agents.exploration.checks.agents.retrieval import encoded_size, repository_summary, repository_tools
-from seo_agents.exploration.checks.graph import run_onpage_graph
-from seo_agents.exploration.checks.tools import inventory
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
+from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
+from seo_agents.exploration.repo_analysis.tools.agent_retrieval import encoded_size, repository_summary, repository_tools
+from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
+from seo_agents.exploration.repo_analysis.tools import inventory
+from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
 
 
 def main():

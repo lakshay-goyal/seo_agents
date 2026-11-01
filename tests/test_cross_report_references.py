@@ -4,7 +4,7 @@ import copy
 import json
 import unittest
 
-from seo_agents.exploration.checks.agents.references import CrossReportReferenceError, validate_content_references
+from seo_agents.exploration.repo_analysis.agents.llm.references import CrossReportReferenceError, validate_content_references
 
 
 class CrossReportReferenceTests(unittest.TestCase):

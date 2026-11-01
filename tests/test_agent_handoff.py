@@ -3,9 +3,9 @@
 import json
 import unittest
 
-from seo_agents.exploration.checks.agents.handoff import PRIOR_WORK, build_handoff, handoff_summary
-from seo_agents.exploration.checks.agents.retrieval import OUTPUT_BYTES, encoded_size, repository_tools
-from seo_agents.exploration.checks.graph import CHECKS
+from seo_agents.exploration.repo_analysis.agents.llm.handoff import PRIOR_WORK, build_handoff, handoff_summary
+from seo_agents.exploration.repo_analysis.tools.agent_retrieval import OUTPUT_BYTES, encoded_size, repository_tools
+from seo_agents.exploration.repo_analysis.graph import CHECKS
 
 
 class AgentHandoffTests(unittest.TestCase):

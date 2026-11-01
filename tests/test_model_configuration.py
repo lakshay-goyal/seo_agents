@@ -4,8 +4,8 @@ import os
 import unittest
 from unittest.mock import patch
 
-from seo_agents.exploration.checks.graph import extraction_identity
-from seo_agents.exploration.checks.tools.llm import get_chat_model
+from seo_agents.exploration.repo_analysis.graph import extraction_identity
+from seo_agents.exploration.repo_analysis.tools.llm import get_chat_model
 from seo_agents.main import forward_env
 
 

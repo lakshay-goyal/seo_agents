@@ -3,9 +3,9 @@
 import json
 import unittest
 
-from seo_agents.exploration.checks.agents.context import SourceHTML
-from seo_agents.exploration.checks.evidence import query_evidence, source_relationships
-from seo_agents.exploration.checks.technical.runtime import observe_runtime
+from seo_agents.exploration.repo_analysis.tools.source_context import SourceHTML
+from seo_agents.exploration.repo_analysis.evidence import query_evidence, source_relationships
+from seo_agents.exploration.repo_analysis.tools.runtime import observe_runtime
 
 
 class EvidenceRelationshipsTests(unittest.TestCase):

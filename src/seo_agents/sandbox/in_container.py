@@ -31,9 +31,13 @@ def main():
     log("stage 2/3: analyze")
     state = repo_analysis(github_url, repo_path=target)
     artifacts = state.get("artifacts") or {}
+    extra_files = {}
+    if state.get("repo_context_path"):
+        with open(state["repo_context_path"]) as stream:
+            extra_files["seo_reports/repo_context.json"] = stream.read()
 
     log("stage 3/3: open PR")
-    pr_url = create_pr(runner, github_url, reports=artifacts)
+    pr_url = create_pr(runner, github_url, reports=artifacts, extra_files=extra_files)
     done("in-container pipeline", begun)
     print("SEO_PR_URL=" + pr_url, flush=True)
 

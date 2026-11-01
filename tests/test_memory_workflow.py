@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from seo_agents.exploration.checks.graph import run_onpage_graph
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
+from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
+from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
 from seo_agents.sandbox.pr import create_pr
 from seo_agents.sandbox.tools.docker import DockerSandbox
 from seo_agents.sandbox.tools.local import LocalResult
