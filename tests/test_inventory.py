@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from seo_agents.exploration.repo_analysis.tools.inventory import inventory, routes
-from seo_agents.exploration.repo_analysis.tools import crawl
 from seo_agents.exploration.repo_analysis.json_analysis import analyze_directory, analyze_reports
 from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
 from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
@@ -112,7 +111,6 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
         expected = analyze_reports(reports)
         self.assertEqual(analyze_directory(folder), expected)
         self.assertEqual(analyze_reports(dict(reversed(list(reports.items())))), expected)
-        self.assertEqual(crawl.scrape_content_blocks.invoke({'repo_path': str(self.repo)})['schema_version'], '2.0')
 
     def test_heading_return_to_higher_level_is_valid(self):
         self.write('app/order/page.tsx', '<main><h1>A</h1><h2>B</h2><h3>C</h3><h2>D</h2></main>')

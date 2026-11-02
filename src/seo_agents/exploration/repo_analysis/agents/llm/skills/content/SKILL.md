@@ -1,33 +1,31 @@
 ---
 name: explore-seo-content
-description: Extract page copy and content hierarchy from the observed frontend framework and local data.
+description: Extract all visible copy per page in composed order with section context and link/media references.
 ---
 
-Identify page routes and their entry components, layouts, local content/data imports,
-translation files and templates. Resolve static composition and enumerable maps from
-source, preserving order and provenance. Distinguish initial copy from alternate
-interaction states; do not combine mutually exclusive branches as one visible page.
+## Output per page
+- `blocks`: `[{file, line, source_id, tag, text, section}]` — `text`, `tag`, `section` are strings.
+  `section` is the semantic ancestor (main, nav, header, footer, aside, article, section) or "body".
+- `word_count`: int = sum of `len(text.split())` over emitted blocks.
+- `link_refs`: `[{source_id, report: "internal_links.json"}]`, `media_refs`: `[{source_id, report: "media.json"}]`.
+- Optional `sections` for hierarchy.
 
-Capture full literal copy, headings, navigation, buttons and accessible UI labels,
-with section context. Avoid double counting parent/child descendant text, counting
-code or treating expressions as user-facing strings. Keep link/media source IDs
-consistent with the shared contract. Compute word_count from emitted blocks.
-Report unresolved server/CMS data, bindings, conditionals and CSS visibility as gaps.
+## Hard rules
+1. Take text from text-bearing leaf elements (h1–h6, p, li, a, button, label, td, figcaption,
+   blockquote, span with literal text). Use `text_literal`; never emit both a parent and its child text.
+2. Data-backed copy (mapped arrays, front matter, JSON/YAML) -> one block per string with
+   `value_origin: "data"` and `origin_ref` = the `index["data"]` record id. Translated copy ->
+   `value_origin: "i18n"`, `origin_ref: {"i18n_key": key}` and the catalog value as `text`.
+3. Link/media references must reuse the exact `source_id` of the same occurrence in the
+   earlier internal_links/media report for the same url/template (`query_prior_report`).
+   If the earlier report lacks it, keep the block and add a limitation; omit the reference.
+4. Initial-state copy only; tabs/modals/conditional branches go to limitations.
 
-When earlier link/media reports are available, references are checked against those
-reports during your own verification. A reference must resolve for the same URL
-and template, not merely exist in another page or share a source line. Query the
-earlier links/items to check exact source IDs. Do not guess columns or use nearby
-elements as substitutes. If you observe content whose corresponding link/media
-record is missing from the earlier report, retain the copy in blocks and explain
-the unresolved reference in coverage.limitations; omit that unsupported reference.
-Do not remove content blocks to make reference validation pass.
-For a mapped link, the array row supplying its label/href and the rendered anchor
-template have different source locations. Match the earlier report's element
-occurrence for the reference; retain data-row provenance separately on the block.
+## Example
+Vue `<p>{{ $t('home.intro') }}</p>` with `locales/en.json` key `home.intro` = "Fresh tea daily"
+-> `{"tag": "p", "text": "Fresh tea daily", "section": "main", "file": "src/pages/index.vue",
+"line": 8, "source_id": "src/pages/index.vue:8:4:p", "value_origin": "i18n",
+"origin_ref": {"i18n_key": "home.intro"}}`.
 
-Every block's text, tag and section must be strings. A section is a semantic tag,
-not a section descriptor object or null. Use body as the fallback when no semantic
-parent is established, retain that uncertainty in coverage, and store richer
-hierarchy separately. Before submitting, inspect every emitted block's field types
-and compute word_count only from those literal text strings.
+## Done when
+`word_count` equals the block sum, every block's fields are strings, references resolve, `test_script` passes.

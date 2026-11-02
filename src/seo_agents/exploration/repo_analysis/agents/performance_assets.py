@@ -2,9 +2,8 @@
 
 from collections import Counter
 
+from seo_agents.exploration.repo_analysis.tools.page_inventory import LARGE_ASSET_BYTES  # 200 KiB
 from seo_agents.exploration.repo_analysis.tools.skill_runner import run_skill
-
-LARGE_ASSET_BYTES = 200_000
 
 
 def analyze_performance_assets(index, onpage=None, project=None):

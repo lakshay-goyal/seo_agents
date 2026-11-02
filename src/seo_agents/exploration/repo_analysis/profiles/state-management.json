@@ -1,0 +1,107 @@
+{
+  "$schema": "./schema.json",
+  "name": "state-management",
+  "signals": [
+    {
+      "id": "store",
+      "label": "Global store",
+      "regex": "configureStore\\s*\\(|createStore\\s*\\(|createSlice\\s*\\(|\\bcreate\\s*\\(\\s*\\(set|defineStore\\s*\\(|new\\s+Vuex\\.Store|createPinia\\s*\\(|makeAutoObservable|createSignal\\s*\\(|NgRx|StoreModule\\.forRoot",
+      "block": true,
+      "languages": [
+        "@templates"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "configureStore({",
+          "defineStore('cart', {",
+          "createPinia()"
+        ],
+        "no_match": [
+          "atom(0)",
+          "writable(0)"
+        ]
+      }
+    },
+    {
+      "id": "query-client",
+      "label": "Data-fetching cache layer",
+      "regex": "\\buseQuery\\s*\\(|\\buseSWR\\s*\\(|new\\s+QueryClient\\s*\\(|new\\s+ApolloClient\\s*\\(|createApi\\s*\\(|useFetch\\s*\\(|useAsyncData\\s*\\(",
+      "block": true,
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "useQuery({ queryKey: ['x'] })",
+          "useAsyncData("
+        ],
+        "no_match": [
+          "query(x)"
+        ]
+      }
+    },
+    {
+      "id": "server-prefetch",
+      "label": "Server prefetch / dehydrated state",
+      "regex": "dehydrate\\s*\\(|HydrationBoundary|initialData\\s*:|fallback\\s*:\\s*\\{|getDataFromTree|prefetchQuery\\s*\\(|TransferState",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "low",
+      "examples": {
+        "match": [
+          "dehydrate(queryClient)",
+          "HydrationBoundary"
+        ],
+        "no_match": [
+          "hydrate()"
+        ]
+      }
+    },
+    {
+      "id": "context-provider",
+      "label": "Context provider wrapping the app",
+      "regex": "createContext\\s*\\(|<\\w+\\.Provider\\b|\\b(?:app\\.)?provide\\s*\\(\\s*['\\\"][\\w-]+['\\\"]\\s*,|\\bsetContext\\s*\\(\\s*['\\\"]",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "createContext(null)",
+          "<ThemeContext.Provider value={x}>",
+          "provide('theme', theme)"
+        ],
+        "no_match": [
+          "this.provide(x)",
+          "providers: [AuthService]"
+        ]
+      }
+    },
+    {
+      "id": "atom-store",
+      "label": "Atom/store primitives (Jotai, Recoil, nanostores, Svelte stores)",
+      "regex": "\\b(?:atom|writable|readable|persistentAtom)\\s*[(<]",
+      "requires": "from\\s+['\\\"](?:jotai|recoil|nanostores|@nanostores/[\\w-]+|svelte/store)['\\\"]",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "block": true,
+      "examples": {
+        "match": [
+          "atom(0)",
+          "writable(0)"
+        ],
+        "no_match": [
+          "atomic(x)"
+        ]
+      }
+    }
+  ],
+  "gaps": [],
+  "framework_agnostic": true,
+  "execution_hint": "When page copy is read from a client store or client query, prefetch it on the server/build (dehydrate/initialData/useAsyncData/load) so it is part of the initial HTML."
+}

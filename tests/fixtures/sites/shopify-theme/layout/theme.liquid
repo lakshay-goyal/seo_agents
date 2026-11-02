@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="{{ request.locale.iso_code }}">
+  <head>
+    <title>{{ page_title }}</title>
+    {% render 'meta-tags' %}
+    {{ content_for_header }}
+  </head>
+  <body>
+    {% sections 'header-group' %}
+    <main id="MainContent">
+      {{ content_for_layout }}
+    </main>
+  </body>
+</html>

@@ -1,13 +1,14 @@
 """Reject unsafe scripts, invalid reports and non-repeatable extraction."""
 
 import hashlib
+import html
 import json
 import re
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 
-from seo_agents.exploration.repo_analysis.agents.llm.script_policy import validate_script
+from seo_agents.exploration.repo_analysis.agents.llm.script_policy import entry_arity, validate_script
 from seo_agents.exploration.repo_analysis.tools.source_context import strict_json
 from seo_agents.exploration.repo_analysis.tools.contracts import validate_report
 
@@ -19,9 +20,40 @@ class ObservationValidationError(ValueError):
         super().__init__('Invalid observations: ' + json.dumps(issues, ensure_ascii=True))
 
 
-def execute_script(source, snapshot, timeout=12):
-    validate_script(source)
-    payload = json.dumps({'source': source, 'files': snapshot['files'], 'assets': snapshot['assets']}, ensure_ascii=False)
+ELEMENT_FIELDS = ('id', 'line', 'col', 'end_line', 'tag', 'kind', 'attrs', 'text', 'text_literal', 'parent',
+                  'section', 'heading_level', 'component_ref', 'dynamic_attrs', 'spread_props', 'raw_text')
+
+
+def compact_index(element_index, budget_bytes=24_000_000):
+    """Plain-dict element index for generated scripts: elements grouped by file, plus data, i18n and refs."""
+    if not element_index:
+        return {}
+    by_file = {}
+    for element in element_index.get('elements', []):
+        by_file.setdefault(element['file'], []).append({key: element[key] for key in ELEMENT_FIELDS if key in element})
+    compact = {'elements_by_file': by_file,
+               'data': [{key: record.get(key) for key in ('id', 'file', 'pointer', 'line', 'value', 'kind', 'i18n_key', 'locale')}
+                        for record in element_index.get('data', [])],
+               'i18n': element_index.get('i18n', {}),
+               'refs': [{key: ref.get(key) for key in ('file', 'line', 'kind', 'spec', 'resolved')}
+                        for ref in element_index.get('refs', [])]}
+    if len(json.dumps(compact, ensure_ascii=False).encode()) > budget_bytes:
+        # Keep structure; drop the bulkiest optional fields first.
+        for elements in by_file.values():
+            for element in elements:
+                element.pop('text', None)
+                element.pop('raw_text', None)
+        compact['data'] = compact['data'][:20_000]
+    return compact
+
+
+def execute_script(source, snapshot, timeout=12, *, routes=None, index=None):
+    tree = validate_script(source)
+    payload = {'source': source, 'files': snapshot['files'], 'assets': snapshot['assets']}
+    if entry_arity(tree) == 4:
+        payload['routes'] = routes or []
+        payload['index'] = index if index is not None else {}
+    payload = json.dumps(payload, ensure_ascii=False)
     if len(payload.encode()) > 64_000_000:
         raise ValueError('Worker input exceeds 64 MB budget; reduce snapshot scope')
     try:
@@ -39,15 +71,118 @@ def execute_script(source, snapshot, timeout=12):
         report = output['report']
         if isinstance(report, dict) and isinstance(report.get('extraction'), dict):
             report['extraction']['script_access'] = {'files': output['accessed_files'],
-                'meaning': 'Source values accessed, not proof of semantic understanding',
                 'html_parsing': output['html_parsing']}
         return report
     except (ValueError, RecursionError) as error:
         raise ValueError('Extractor did not return valid JSON') from error
 
 
-def validate_observations(category, report, snapshot):
+GROUNDED_FIELDS = ('text', 'href', 'src', 'alt', 'anchor_text', 'title', 'content')
+VALUE_ORIGINS = {'expression', 'data', 'i18n', 'prop'}
+GROUNDING_WINDOW = 3
+GROUNDING_HINT = ('Cite the line where this literal value appears (±3 lines), or mark value_origin '
+                  '(expression|data|i18n|prop) with an origin_ref that resolves: a data/i18n record id (d_...), '
+                  'an element id (e_...), {file, pointer} for JSON data or {i18n_key}. Never cite an unrelated line.')
+
+
+def alnum(value, strip_tags=False):
+    """Normalised comparison form: unescaped, casefolded word characters only (optionally tag-free)."""
+    if strip_tags:
+        value = re.sub(r'<[^>]*>', ' ', value)
+    return re.sub(r'[\W_]+', '', html.unescape(value).casefold())
+
+
+def resolve_pointer(document, pointer):
+    value = document
+    for token in pointer.split('/')[1:]:
+        token = token.replace('~1', '/').replace('~0', '~')
+        if isinstance(value, list):
+            if not token.isascii() or not token.isdigit() or str(int(token)) != token:
+                raise ValueError('Invalid JSON array index')
+            value = value[int(token)]
+        elif isinstance(value, dict):
+            value = value[token]
+        else:
+            raise ValueError('JSON pointer traverses a scalar')
+    return value
+
+
+class Grounding:
+    """Checks that cited observation values exist at (or are supplied to) their cited source location."""
+
+    def __init__(self, snapshot, index=None):
+        self.files = snapshot['files']
+        self.snapshot = snapshot
+        self._index = index
+        self._windows = {}
+        self._json = {}
+
+    @property
+    def index(self):
+        if self._index is None:
+            from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+            self._index = build_element_index(self.snapshot)
+        return self._index
+
+    def window(self, file, line):
+        key = (file, line)
+        if key not in self._windows:
+            lines = self.files[file].splitlines()
+            low, high = max(0, line - 1 - GROUNDING_WINDOW), line + GROUNDING_WINDOW
+            text = ' '.join(lines[low:high])
+            self._windows[key] = (alnum(text), alnum(text, strip_tags=True))
+        return self._windows[key]
+
+    def origin_resolves(self, record):
+        ref = record.get('origin_ref')
+        if record.get('value_origin') not in VALUE_ORIGINS or ref in (None, '', {}):
+            return False
+        if isinstance(ref, str):
+            if ref.startswith('d_'):
+                return any(item['id'] == ref for item in self.index.get('data', []))
+            if ref.startswith('e_'):
+                return any(item['id'] == ref for item in self.index.get('elements', []))
+            return ref in self.index.get('i18n', {})
+        if isinstance(ref, dict):
+            if isinstance(ref.get('i18n_key'), str):
+                return ref['i18n_key'] in self.index.get('i18n', {})
+            file = ref.get('file')
+            if not isinstance(file, str) or file not in self.files:
+                return False
+            if isinstance(ref.get('pointer'), str) and ref['pointer'].startswith('/'):
+                try:
+                    if file not in self._json:
+                        self._json[file] = strict_json(self.files[file])
+                    resolve_pointer(self._json[file], ref['pointer'])
+                    return True
+                except (ValueError, KeyError, IndexError, TypeError, RecursionError):
+                    return any(item['file'] == file and item['pointer'] == ref['pointer'] for item in self.index.get('data', []))
+            line = ref.get('line')
+            return type(line) is int and 1 <= line <= len(self.files[file].splitlines())
+        return False
+
+    def check(self, record, pointer, issues):
+        file, line = record.get('file'), record.get('line')
+        if not isinstance(file, str) or file not in self.files or type(line) is not int:
+            return
+        for field in GROUNDED_FIELDS:
+            value = record.get(field)
+            if not isinstance(value, str):
+                continue
+            needle = alnum(value)[:60]
+            if not needle or any(needle in window for window in self.window(file, line)):
+                continue
+            if self.origin_resolves(record):
+                continue
+            issues.append({'pointer': pointer + '/' + field, 'file': file[:180], 'line': line, 'field': field,
+                           'problem': 'value not found within ±3 lines of the cited location', 'hint': GROUNDING_HINT})
+            return
+
+
+def validate_observations(category, report, snapshot, *, index=None, grounding=True):
     validate_report(category, report)
+    grounder = Grounding(snapshot, index) if grounding else None
+    ungrounded = []
     files = snapshot['files']
     if not report['pages']:
         raise ValueError('No pages discovered; investigate entry points instead of accepting an empty inventory')
@@ -104,10 +239,10 @@ def validate_observations(category, report, snapshot):
                 unresolved = True
         return unresolved
 
-    def evidence(value, *, page_root=False):
+    def evidence(value, *, page_root=False, pointer=''):
         if isinstance(value, list):
-            for item in value:
-                evidence(item)
+            for index, item in enumerate(value):
+                evidence(item, pointer=pointer + '/' + str(index))
         elif isinstance(value, dict):
             if 'file' in value:
                 file = value['file']
@@ -119,11 +254,13 @@ def validate_observations(category, report, snapshot):
                 if (type(line) is not int or not 1 <= line <= line_counts[file]
                         or not isinstance(value.get('source_id'), str) or not value['source_id']):
                     raise ValueError('Evidence requires an in-range line and stable source_id')
+                if grounder is not None and len(ungrounded) < 4:
+                    grounder.check(value, pointer, ungrounded)
             for key, child in value.items():
-                if key == 'coverage' or page_root and key == 'content_sources':
+                if key in {'coverage', 'origin_ref'} or page_root and key == 'content_sources':
                     continue
                 if isinstance(child, (list, dict)):
-                    evidence(child)
+                    evidence(child, pointer=pointer + '/' + key)
 
     def records(items, required, pointer, hint=None):
         hint = hint or 'Return observation objects with the required fields and source locations.'
@@ -232,21 +369,49 @@ def validate_observations(category, report, snapshot):
             records(page['citations'], ref | {'href'}, pointer + '/citations')
             if not isinstance(page['interpretation'], str):
                 raise ValueError('E-E-A-T interpretation must be a string')
-        evidence(page, page_root=True)
+        evidence(page, page_root=True, pointer=pointer)
+    if ungrounded:
+        raise ObservationValidationError(ungrounded[:4])
     json.dumps(report, allow_nan=False)
     return report
 
 
-def verify_and_extract(category, source, snapshot):
-    """Trial first; only then run the verified script and accept identical output."""
-    trial = validate_observations(category, execute_script(source, snapshot), snapshot)
-    result = validate_observations(category, execute_script(source, snapshot), snapshot)
+def record_key(item):
+    if isinstance(item, dict):
+        column = item.get('column', item.get('col'))
+        return (0, str(item.get('file', '')), item.get('line') if type(item.get('line')) is int else -1,
+                column if type(column) is int else -1, str(item.get('source_id', '')),
+                json.dumps(item, sort_keys=True, ensure_ascii=False, default=str))
+    return (1, '', -1, -1, '', json.dumps(item, sort_keys=True, ensure_ascii=False, default=str))
+
+
+def canonical(value):
+    """Order-independent form: source-located records sorted by (file, line, column, source_id)."""
+    if isinstance(value, dict):
+        return {key: canonical(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        items = [canonical(item) for item in value]
+        if items and all(isinstance(item, dict) and ('file' in item or 'source_id' in item) for item in items):
+            return sorted(items, key=record_key)
+        return items
+    return value
+
+
+def verify_and_extract(category, source, snapshot, *, routes=None, index=None, compact=None):
+    """Trial first; only then run the verified script and accept the same output (up to record order)."""
+    compact = compact if compact is not None else (compact_index(index) if index else None)
+    trial = validate_observations(category, execute_script(source, snapshot, routes=routes, index=compact), snapshot, index=index)
+    result = validate_observations(category, execute_script(source, snapshot, routes=routes, index=compact), snapshot, index=index)
     if result != trial:
-        raise ValueError('Extractor results changed between verification and extraction')
+        if canonical(result) != canonical(trial):
+            raise ValueError('Extractor results changed between verification and extraction')
+        result = canonical(result)
+        result['extraction']['record_order'] = 'canonicalised to source order (file, line, column); run order was not repeatable'
     result['extraction'].update(
         mode='static-source', engine='skill-guided-agent', verification='passed',
         script_sha256=hashlib.sha256(source.encode()).hexdigest(),
         snapshot_sha256=snapshot['sha256'],
         snapshot_limitations=snapshot['limitations'],
+        grounding='values checked within ±3 lines of cited source or via resolved value_origin/origin_ref',
     )
     return result

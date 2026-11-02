@@ -16,6 +16,7 @@ METHODS = {'get', 'items', 'keys', 'values', 'update', 'setdefault', 'append', '
            'count', 'removeprefix', 'removesuffix', 'isdigit', 'isalnum', 'index',
            'copy', 'add', 'pop', 'zfill', 'ljust', 'rjust', 'center', 'casefold',
            'partition', 'rpartition', 'insert', 'sort', 'reverse'}
+ENTRY_SIGNATURES = (['files', 'assets', 'routes', 'index'], ['files', 'assets'])
 NODES = {
     'Module', 'FunctionDef', 'arguments', 'arg', 'Return', 'Assign', 'AugAssign',
     'Expr', 'If', 'For', 'While', 'Break', 'Continue', 'Pass', 'Name', 'Load', 'Store',
@@ -43,7 +44,7 @@ def validate_script(source):
     top_functions = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
     functions = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
     if 'extract' not in top_functions:
-        reject('Missing def extract(files, assets)')
+        reject('Missing def extract(files, assets, routes, index)')
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef):
             reject('Script must contain only functions; move constants inside a function and remove imports', node, type(node).__name__)
@@ -69,9 +70,9 @@ def validate_script(source):
             elif not isinstance(node.func, ast.Attribute):
                 reject('Indirect calls are unavailable', node)
     entry = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'extract'), None)
-    if entry and ([a.arg for a in entry.args.args] != ['files', 'assets'] or entry.args.posonlyargs
+    if entry and ([a.arg for a in entry.args.args] not in ENTRY_SIGNATURES or entry.args.posonlyargs
             or entry.args.kwonlyargs or entry.args.vararg or entry.args.kwarg or entry.args.defaults):
-        reject('Entry point must be def extract(files, assets)', entry)
+        reject('Entry point must be def extract(files, assets, routes, index) (legacy: def extract(files, assets))', entry)
     if problems:
         descriptions = []
         for message, item in problems.items():
@@ -83,3 +84,9 @@ def validate_script(source):
             descriptions.append(str(len(problems) - len(descriptions)) + ' further violation kinds omitted')
         raise ValueError('Extractor policy violations: ' + '; '.join(descriptions) + '. Fix all listed violations before resubmitting.')
     return tree
+
+
+def entry_arity(tree):
+    """Number of positional parameters of the verified `extract` entry point (2 or 4)."""
+    entry = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'extract')
+    return len(entry.args.args)

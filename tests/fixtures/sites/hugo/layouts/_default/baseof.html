@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="{{ .Site.LanguageCode }}">
+  <head>
+    <title>{{ .Title }} | {{ .Site.Title }}</title>
+    <meta name="description" content="{{ .Description }}">
+  </head>
+  <body>
+    {{ partial "header.html" . }}
+    <main>{{ block "main" . }}{{ end }}</main>
+  </body>
+</html>

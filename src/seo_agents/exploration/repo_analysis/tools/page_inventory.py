@@ -14,6 +14,7 @@ from seo_agents.exploration.repo_analysis.tools.source_index import language_of,
 from seo_agents.exploration.repo_analysis.tools.skill_runner import evaluate_gaps, records_of, run_skill
 
 MAX_TEXT_BLOCKS_PER_FILE = 300
+LARGE_ASSET_BYTES = 204_800  # 200 KiB, shared with performance_assets
 ATTR = re.compile(r'''([:@\w.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*(`[^`]*`|"[^"]*"|'[^']*'|[^{}]*(?:\{[^{}]*\}[^{}]*)*)\s*\})''', re.S)
 TITLE = re.compile(r'<title\b[^>]*>(.*?)</title>', re.S | re.I)
 META = re.compile(r'<meta\b[^>]*?/?>', re.S | re.I)
@@ -21,7 +22,11 @@ LINK_TAG = re.compile(r'<link\b[^>]*?/?>', re.S | re.I)
 HTML_TAG = re.compile(r'<html\b[^>]*>', re.I)
 HEADING = re.compile(r'<h([1-6])\b[^>]*>(.*?)</h\1\s*>', re.S | re.I)
 MD_HEADING = re.compile(r'^(#{1,6})\s+(.+?)\s*#*\s*$', re.M)
-TEXT_NODE = re.compile(r'>([^<>{}]*[^\W\d_][^<>{}]*)<', re.S)
+TEXT_NODE = re.compile(r'>([^<>]*[^\W\d_][^<>]*)<', re.S)
+EXPRESSION = re.compile(r'\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}|\{[^{}]*\}', re.S)
+HEADING_COMPONENT = re.compile(r'<([A-Z][\w.]*)\b([^<>]*?)>(.{0,600}?)</\1\s*>', re.S)
+LABEL_TAGS = {'a', 'button', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'label', 'li', 'th', 'option', 'summary', 'title',
+              'figcaption', 'legend', 'dt', 'link', 'navlink', 'nuxtlink', 'routerlink', 'router-link', 'button'}
 ANCHOR = re.compile(r'<(a|Link|NuxtLink|RouterLink|router-link|NavLink|A)\b([^>]*?)(?:/>|>(.*?)</\1\s*>)', re.S)
 MD_LINK = re.compile(r'(?<!!)\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 MEDIA = re.compile(r'<(img|Image|NuxtImg|NuxtPicture|StaticImage|GatsbyImage|enhanced:img|picture|source|video|audio|iframe)\b([^>]*?)/?>', re.S)
@@ -41,6 +46,38 @@ def attributes(raw):
     for flag in re.findall(r'(?:^|\s)(priority|async|defer|download|hidden)(?=\s|$|/)', raw):
         found.setdefault(flag, {'value': True, 'dynamic': False})
     return found
+
+
+def literal_text(raw):
+    """(literal text, expressions) with framework/template expressions removed; None if code-like."""
+    value, expressions = raw, []
+    for _ in range(4):
+        found = EXPRESSION.findall(value)
+        if not found:
+            break
+        expressions.extend(found)
+        value = EXPRESSION.sub(' ', value)
+    if '{' in value or '}' in value:
+        return None, expressions
+    return ' '.join(html.unescape(value).split()), [' '.join(e.split())[:200] for e in expressions[:5]]
+
+
+def enclosing_tag(text, position):
+    start = text.rfind('<', 0, position)
+    match = re.match(r'<([A-Za-z][\w:.-]*)', text[start:start + 60]) if start >= 0 else None
+    return match.group(1).lower() if match else None
+
+
+def component_heading_level(name, attrs):
+    for key in ('level', 'order'):
+        value = str((attrs.get(key) or {}).get('value') or '')
+        if re.fullmatch(r'[1-6]', value) and re.search(r'(?i)head|title', name):
+            return int(value)
+    for key in ('variant', 'as', 'component', 'tag', 'el', 'is'):
+        value = str((attrs.get(key) or {}).get('value') or '')
+        if re.fullmatch(r'[hH][1-6]', value):
+            return int(value[1])
+    return None
 
 
 def plain(fragment):
@@ -117,6 +154,13 @@ def analyze_page_inventory(index):
         for match in HEADING.finditer(text):
             headings.append(index.evidence('heading', path, match.start(), match.end(), level=int(match.group(1)),
                                            text=plain(match.group(2)), dynamic=bool(re.search(r'\{', match.group(2)))))
+        if language not in CONTENT_LANGUAGES:
+            for match in HEADING_COMPONENT.finditer(text):
+                level = component_heading_level(match.group(1), attributes(match.group(2)))
+                if level:
+                    headings.append(index.evidence('heading', path, match.start(), match.end(), level=level,
+                                                   text=plain(match.group(3)), dynamic=bool(re.search(r'\{', match.group(3))),
+                                                   syntax='component', component=match.group(1)))
         if language in CONTENT_LANGUAGES:
             fm = front_matter(index, path)
             if fm:
@@ -145,11 +189,17 @@ def analyze_page_inventory(index):
         else:
             count = 0
             for match in TEXT_NODE.finditer(text):
-                value = ' '.join(html.unescape(match.group(1)).split())
-                if len(value.split()) < 2 or SKIP_TEXT.search(value) or count >= MAX_TEXT_BLOCKS_PER_FILE:
+                if count >= MAX_TEXT_BLOCKS_PER_FILE:
+                    break
+                value, expressions = literal_text(match.group(1))
+                if not value or not re.search(r'[^\W\d_]', value) or SKIP_TEXT.search(value):
+                    continue
+                # One-word labels matter on links, buttons and headings; elsewhere they are mostly code noise.
+                if len(value.split()) < 2 and enclosing_tag(text, match.start(1)) not in LABEL_TAGS:
                     continue
                 count += 1
-                text_blocks.append(index.evidence('text', path, match.start(1), match.end(1), text=value, syntax='markup'))
+                extra = {'has_expressions': True, 'expressions': expressions} if expressions else {'has_expressions': False}
+                text_blocks.append(index.evidence('text', path, match.start(1), match.end(1), text=value, syntax='markup', **extra))
         for match in ANCHOR.finditer(text):
             attrs = attributes(match.group(2))
             target = attrs.get('href') or attrs.get('to')
@@ -222,7 +272,7 @@ def image_issues(record):
     if not record['loading'] and not record['priority'] and record['tag'] in {'img', 'markdown-image'}:
         issues.append('no-loading-attribute')
     asset = record.get('local_asset') or {}
-    if asset.get('size_bytes', 0) > 200_000:
+    if asset.get('size_bytes', 0) > LARGE_ASSET_BYTES:
         issues.append('large-local-file (' + str(asset['size_bytes'] // 1024) + ' KiB, LCP)')
     if isinstance(record['src'], str) and re.search(r'\.(?:png|jpe?g|gif|bmp)(?:$|\?)', record['src'], re.I):
         issues.append('legacy-format (consider webp/avif)')

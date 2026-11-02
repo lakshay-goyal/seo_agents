@@ -51,6 +51,17 @@ def file_roles(path):
     return roles or ['implementation']
 
 
+VOLATILE_FIELDS = {'mtime_ns'}
+
+
+def content_identity(payload):
+    """Identity of the captured content only: timestamps are excluded so a fresh clone
+    of the same commit yields the same hash and checkpoint resume can match."""
+    stable = {key: payload[key] for key in ('files', 'assets', 'limitations', 'coverage')}
+    stable['inventory'] = [{k: v for k, v in row.items() if k not in VOLATILE_FIELDS} for row in payload['inventory']]
+    return hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()
+
+
 def secret_name(name):
     name = name.lower()
     return (name in SKIP_NAMES or name in {'.npmrc', '.pypirc', '.netrc'}
@@ -97,6 +108,9 @@ def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, 
             count += 1
             if path.suffix.lower() in ASSET_EXTS:
                 assets[relative] = {'size_bytes': info.st_size}
+                if info.st_size <= 10_000_000:
+                    # Content hash, not mtime: identity must survive a fresh clone.
+                    assets[relative]['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
                 if path.suffix.lower() in {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}:
                     from seo_agents.exploration.repo_analysis.tools.asset_probe import probe_asset
                     asset_probes += 1
@@ -162,6 +176,6 @@ def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, 
                 'denominator_note': 'All enumerated in-scope files; excluded subtree descendants are not counted. Listed/captured does not mean understood.'}
     payload = {'files': files, 'assets': assets, 'limitations': limitations,
                'inventory': sorted(inventory, key=lambda r: r['path']), 'coverage': coverage}
-    payload['sha256'] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    payload['sha256'] = content_identity(payload)
     payload['observed_at'] = datetime.now(timezone.utc).isoformat()
     return payload

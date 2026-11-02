@@ -7,6 +7,8 @@ import posixpath
 from pathlib import PurePosixPath
 import xml.etree.ElementTree as ET
 
+from seo_agents.exploration.repo_analysis.tools.safe_xml import XMLParseError, safe_xml_fromstring
+
 from tree_sitter import Language, Parser
 import tree_sitter_javascript
 import tree_sitter_typescript
@@ -211,7 +213,7 @@ def build_context(snapshot):
                                 'corpus_ref': '/source_corpus/' + file.replace('~', '~0').replace('/', '~1'),
                                 'method': 'raw-markdown-reference', 'page_visibility': 'unestablished'})
             elif 'sitemap' in PurePosixPath(file).name and suffix == '.xml':
-                root = ET.fromstring(source)
+                root = safe_xml_fromstring(source)
                 for element in root.iter():
                     if element.tag.rsplit('}', 1)[-1] == 'loc' and element.text:
                         records.append({'kind': 'sitemap-child' if root.tag.rsplit('}', 1)[-1] == 'sitemapindex' else 'sitemap-url',
@@ -220,7 +222,7 @@ def build_context(snapshot):
             elif PurePosixPath(file).name == 'robots.txt':
                 records.append({'kind': 'robots-declaration', 'file': file, 'line': 1,
                                 'raw': source, 'method': 'raw-source', 'deployed_behavior': 'unverified'})
-        except (ValueError, RecursionError, ET.ParseError, TypeError, AttributeError) as error:
+        except (ValueError, RecursionError, ET.ParseError, XMLParseError, TypeError, AttributeError) as error:
             parse_errors.append({'file': file, 'reason': type(error).__name__, 'detail': str(error)[:300]})
         coverage.append({'file': file, 'records': len(records) - before,
                          'status': 'partial-or-invalid' if parse_errors and parse_errors[-1]['file'] == file else

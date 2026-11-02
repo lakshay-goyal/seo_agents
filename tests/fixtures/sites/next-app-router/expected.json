@@ -1,0 +1,99 @@
+{
+  "framework": "next",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "title": "Home | Acme",
+        "description": "Welcome to Acme.",
+        "canonical": "https://acme.test/",
+        "h1": [
+          "Build faster with Acme"
+        ],
+        "headings": [
+          [
+            1,
+            "Build faster with Acme"
+          ]
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/pricing",
+            "Pricing"
+          ]
+        ],
+        "images": [
+          [
+            "/hero.png",
+            "Acme dashboard"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "app/page.tsx",
+          "line": 4
+        },
+        "h1": {
+          "file": "app/page.tsx",
+          "line": 12
+        }
+      }
+    },
+    {
+      "url": "/pricing",
+      "fields": {
+        "title": "Pricing | Acme",
+        "description": "Simple plans for every team.",
+        "h1": [
+          "Simple pricing"
+        ],
+        "headings": [
+          [
+            1,
+            "Simple pricing"
+          ],
+          [
+            2,
+            "Starter"
+          ]
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/pricing",
+            "Pricing"
+          ],
+          [
+            "/contact",
+            "Talk to sales"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "app/pricing/page.tsx",
+          "line": 2
+        },
+        "h1": {
+          "file": "app/pricing/page.tsx",
+          "line": 9
+        }
+      }
+    },
+    {
+      "url": "/blog/[slug]",
+      "alt_urls": [
+        "/blog/hello-world"
+      ],
+      "fields": {}
+    }
+  ]
+}

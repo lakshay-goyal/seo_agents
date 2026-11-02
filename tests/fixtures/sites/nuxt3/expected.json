@@ -1,0 +1,72 @@
+{
+  "framework": "nuxt",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "title": "Harbor Sailing",
+        "description": "Sailing lessons on the bay.",
+        "h1": [
+          "Learn to sail"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/courses",
+            "Courses"
+          ],
+          [
+            "/courses",
+            "See courses"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "pages/index.vue",
+          "line": 3
+        },
+        "h1": {
+          "file": "pages/index.vue",
+          "line": 10
+        }
+      }
+    },
+    {
+      "url": "/courses",
+      "fields": {
+        "title": "Courses",
+        "h1": [
+          "Courses"
+        ],
+        "headings": [
+          [
+            1,
+            "Courses"
+          ],
+          [
+            2,
+            "Beginner"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "pages/courses/index.vue",
+          "line": 2
+        },
+        "h1": {
+          "file": "pages/courses/index.vue",
+          "line": 7
+        }
+      }
+    },
+    {
+      "url": "/courses/[id]",
+      "fields": {}
+    }
+  ]
+}

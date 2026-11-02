@@ -1,0 +1,78 @@
+{
+  "framework": "sveltekit",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "title": "Pinecone Studio",
+        "description": "Handmade furniture from reclaimed wood.",
+        "h1": [
+          "Handmade furniture"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/gallery",
+            "Gallery"
+          ],
+          [
+            "/gallery",
+            "View the gallery"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "src/routes/+page.svelte",
+          "line": 2
+        },
+        "h1": {
+          "file": "src/routes/+page.svelte",
+          "line": 6
+        }
+      }
+    },
+    {
+      "url": "/gallery",
+      "fields": {
+        "title": "Gallery | Pinecone",
+        "h1": [
+          "Gallery"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/gallery",
+            "Gallery"
+          ]
+        ],
+        "images": [
+          [
+            "/table.jpg",
+            "Oak dining table"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "src/routes/gallery/+page.svelte",
+          "line": 2
+        },
+        "h1": {
+          "file": "src/routes/gallery/+page.svelte",
+          "line": 5
+        }
+      }
+    },
+    {
+      "url": "/blog/[slug]",
+      "fields": {}
+    }
+  ]
+}

@@ -19,16 +19,4 @@ Astro, Markdown/MDX, server templates) by structure, not by framework:
 Text inside `{expressions}` is dynamic and not resolved. The `code` of every
 record shows the exact markup, so an agent can rewrite copy in place.
 
-```json profile
-{
-  "name": "content",
-  "signals": [
-    {"id": "content-collection", "label": "Content collection / CMS schema", "regex": "defineCollection\\s*\\(|defineDocumentType\\s*\\(|createClient\\s*\\(\\s*\\{[^}]*(?:space|projectId|apiKey)", "block": true},
-    {"id": "cms-fetch", "label": "CMS / headless content fetch", "regex": "(?:contentful|sanity|strapi|prismic|storyblok|graphcms|hygraph|datocms|wordpress|ghost|directus|payload)[\\w.]*\\.(?:get|fetch|query)\\w*\\s*\\(|/wp-json/|groq`", "ignore_case": true, "block": true}
-  ],
-  "gaps": [
-    {"id": "no-h1", "label": "No literal <h1> or Markdown '# ' heading found in any template", "when_none_of": ["@heading:1"]}
-  ],
-  "edit_guidance": "Edit copy where the text record points (template markup, Markdown body or data file value). Content coming from CMS fetches must be changed in the CMS, not in code."
-}
-```
+Runtime profile: [`profiles/content.json`](../../profiles/content.json) (regex signals with scope, precision and match/no-match examples; validated by `profiles/schema.json` and `tests/test_skill_profiles.py`). This file is human documentation only.

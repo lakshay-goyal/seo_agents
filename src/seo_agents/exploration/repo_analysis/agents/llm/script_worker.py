@@ -120,7 +120,10 @@ def main():
                  'resolve_url': urljoin}
     exec(compile(tree, '<verified-extractor>', 'exec'), namespace)
     files = SourceFiles(payload['files'])
-    result = namespace['extract'](files, payload['assets'])
+    if policy.entry_arity(tree) == 4:
+        result = namespace['extract'](files, payload['assets'], payload.get('routes') or [], payload.get('index') or {})
+    else:
+        result = namespace['extract'](files, payload['assets'])
     output = json.dumps({'report': result, 'accessed_files': sorted(files.accessed),
                          'html_parsing': parse_stats}, ensure_ascii=False, allow_nan=False)
     if len(output.encode()) > 16_000_000:

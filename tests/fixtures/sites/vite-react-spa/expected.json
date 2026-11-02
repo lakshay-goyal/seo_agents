@@ -1,0 +1,60 @@
+{
+  "framework": "react-spa",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "title": "Trailhead - Find hikes near you",
+        "description": "Discover trails rated by local hikers.",
+        "h1": [
+          "Find your next hike"
+        ],
+        "links": [
+          [
+            "/about",
+            "About Trailhead"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "src/pages/Home.jsx",
+          "line": 8
+        },
+        "h1": {
+          "file": "src/pages/Home.jsx",
+          "line": 11
+        }
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "title": "About Trailhead",
+        "h1": [
+          "About"
+        ],
+        "images": [
+          [
+            "/team.jpg",
+            "The Trailhead team on a summit"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "src/pages/About.jsx",
+          "line": 7
+        },
+        "h1": {
+          "file": "src/pages/About.jsx",
+          "line": 9
+        }
+      }
+    },
+    {
+      "url": "/trails/:slug",
+      "fields": {}
+    }
+  ]
+}

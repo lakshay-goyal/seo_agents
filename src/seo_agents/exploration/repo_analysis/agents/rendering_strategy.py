@@ -22,7 +22,11 @@ def analyze_rendering_strategy(index, routes=None):
     csr_only = bool(modes['CSR']) and not any(modes[m] for m in ('SSR', 'SSG', 'ISR', 'hybrid', 'hydration', 'server-default'))
     result['mode_counts'] = dict(modes)
     result['project_modes'] = project_modes
-    result['initial_html_contains_content'] = (False if csr_only else True if project_modes else None)
+    # Source signals cannot prove what a crawler receives; only a client-only shell is a safe static verdict.
+    result['initial_html_contains_content'] = False if csr_only else None
+    result['per_route_verdict'] = 'requires-measurement'
+    result['verdict_note'] = ('Compare raw HTML (no JS) with the rendered DOM per URL to confirm initial content; '
+                              'project-level signals are hints, not per-route facts.')
     result['per_file_modes'] = {f: sorted(m) for f, m in sorted(per_file.items())}
     if routes is not None:
         result['route_modes'] = [{'route': r['route'], 'file': r['source']['location']['file'],

@@ -3,65 +3,49 @@ name: explore-routes
 description: Discover every page route in any codebase from file-system conventions and code-declared routers.
 ---
 
-Routes come from two places, and both are checked for every repository:
+Routes come from two places, and both are checked for every repository. Every row
+carries `route`, `kind` (page, content-page, template, layout, not-found, endpoint,
+server-route, route-prefix), `adapter` (the convention family), `is_dynamic` and
+the source evidence.
 
-1. **File-system conventions** (`conventions`): a path regex with a named
-   `route` group. Covers app/pages directories, `+page` files, `src/pages`,
-   `content/` trees, templates and plain `.html`/`.php` files. Route groups
-   `(group)`, slots `@slot`, `index`/`_index` and private `_` segments are
-   normalised away; `[param]`, `:param`, `$param`, `{param}` and `*` mark dynamic
-   routes. `dot_segments` turns `blog.$slug` into `/blog/:slug`.
-2. **Code declarations** (`declarations`): router configs and server handlers -
-   `<Route path>`, `{ path: '...' }` arrays, `@app.route`, `path('...')`,
-   `app.get('/...')`, `Route::get`, Rails `get`, front matter `permalink`.
-   `requires` limits a pattern to files that look like router code.
+1. **File-system conventions** (`conventions`): a path regex per adapter, first
+   match wins. A convention may be gated on a marker path (`requires_path`) and
+   may produce the URL from a named `route` group, a `route_map` keyed by the
+   captured template `name`, or a `route_template` using captured groups.
+   - Next.js app/pages (`next-app`, `file-pages`), SvelteKit, Remix flat routes,
+     Nuxt/Astro `pages/` (including `[...slug]`), TanStack file routes.
+   - Shopify themes (`shopify-theme`, gated on `layout/theme.liquid`):
+     `templates/product.json` → `/products/:handle`, `collection` →
+     `/collections/:handle`, `page.<variant>` → `/pages/:handle` (variant kept),
+     `article` → `/blogs/:blog/:article`, `customers/login` → `/account/login`, 404.
+   - WordPress classic (`wordpress-template-hierarchy`, gated on `functions.php`)
+     and block themes (`wordpress-block-theme`, gated on `theme.json`):
+     front-page/home/index → `/`, single → `/:post`, page → `/:page`,
+     `page-{slug}` → `/{slug}`, `single-{cpt}`, `archive-{cpt}`, category, tag,
+     author, search, 404; header/footer/parts are layouts; template-parts ignored.
+   - Ghost (`.hbs`), Hugo (`layouts/`, `content/` with `_index`), Jekyll
+     (`_posts`, root Markdown pages), server template/view folders (Django/Jinja,
+     Twig, ERB, EJS, Handlebars, Blade), Angular component templates, plain HTML/PHP.
+   Route groups `(group)`, slots `@slot`, `index`/`_index` and private `_`
+   segments are normalised away; `[param]`, `:param`, `$param`, `{param}` and `*`
+   mark dynamic routes. `dot_segments` turns `blog.$slug` into `/blog/:slug`.
+2. **Code declarations** (`declarations`): router configs and server handlers.
+   Structural `parser`s keep nesting: `jsx-routes` (nested `<Route>` trees, index
+   routes), `object-routes` (`{ path, children: [...] }` in React Router, Vue
+   Router, Angular `Routes`), `django-urls` (`include()` prefixes),
+   `rails-routes` (`root`, `get`, `resources`/`resource`, `namespace`, `scope`,
+   nested resources). Regex declarations cover Express/Fastify, NestJS,
+   Flask/FastAPI, Laravel (`Route::get`, `Route::resource`), Gatsby `createPage`
+   and front-matter `permalink`/`url`. `requires` limits router-object parsing to
+   files that look like router code.
+
+Next.js `basePath` and `i18n.locales` from `next.config.*` are applied to Next
+routes (`file_route` keeps the file-derived path; `locale_variants` lists
+non-default locale URLs).
 
 Record the source file of each route so an agent can edit the page itself.
 Layout/template rows are the shared shells that wrap pages.
 
-```json profile
-{
-  "name": "routes",
-  "conventions": [
-    {"pattern": "^(?:src/)?app/(?P<route>(?:.*/)?)page\\.(?:tsx|jsx|ts|js|mdx|md)$", "kind": "page"},
-    {"pattern": "^(?:src/)?app/(?P<route>(?:.*/)?)layout\\.(?:tsx|jsx|ts|js)$", "kind": "layout"},
-    {"pattern": "^(?:src/)?app/(?P<route>(?:.*/)?)(?:not-found|error)\\.(?:tsx|jsx|ts|js)$", "kind": "not-found"},
-    {"pattern": "^(?:src/)?app/(?P<route>(?:.*/)?)route\\.(?:ts|js)$", "kind": "endpoint"},
-    {"pattern": "^(?:src/)?pages/api/(?P<route>.+)\\.(?:tsx|jsx|ts|js)$", "kind": "endpoint"},
-    {"pattern": "^(?:src/|app/)?pages/(?P<route>.+)\\.(?:tsx|jsx|ts|js|mdx|md|vue|astro|svelte|html)$", "kind": "page", "exclude": "(?:^|/)_(?:app|document|error)$|^(?:404|500)$|^api/"},
-    {"pattern": "^(?:src/|app/)?pages/(?P<route>404|500)\\.\\w+$", "kind": "not-found"},
-    {"pattern": "^src/routes/(?P<route>(?:.*/)?)\\+page\\.svelte$", "kind": "page"},
-    {"pattern": "^src/routes/(?P<route>(?:.*/)?)\\+layout\\.svelte$", "kind": "layout"},
-    {"pattern": "^src/routes/(?P<route>(?:.*/)?)\\+server\\.(?:ts|js)$", "kind": "endpoint"},
-    {"pattern": "^app/routes/(?P<route>[^/]+?)(?:/route)?\\.(?:tsx|jsx|ts|js|mdx)$", "kind": "page", "dot_segments": true},
-    {"pattern": "^(?:src/)?routes/(?P<route>[^+]+)\\.(?:tsx|jsx)$", "kind": "page", "exclude": "(?:^|/)__root$|\\.lazy$"},
-    {"pattern": "^(?:src/|app/)?layouts?/(?P<route>.+)\\.(?:vue|astro|svelte|tsx|jsx|html|njk|liquid)$", "kind": "layout"},
-    {"pattern": "^(?:src/)?_(?:includes|layouts)/(?P<route>.+)\\.(?:html|njk|liquid)$", "kind": "layout"},
-    {"pattern": "^_posts/\\d{4}-\\d{2}-\\d{2}-(?P<route>.+)\\.(?:md|markdown|html)$", "kind": "page"},
-    {"pattern": "^(?:src/)?content/(?P<route>.+?)(?:/_?index)?\\.(?:md|mdx|markdown)$", "kind": "content-page"},
-    {"pattern": "^(?:docs|blog|posts)/(?P<route>.+?)\\.(?:md|mdx)$", "kind": "content-page"},
-    {"pattern": "^(?:.*/)?templates/(?P<route>.+)\\.(?:html|jinja|j2|twig)$", "kind": "template"},
-    {"pattern": "^(?:.*/)?views/(?P<route>(?!layouts/|partials/|components/).+?)(?:\\.html)?\\.(?:erb|haml|slim|ejs|pug|hbs|handlebars|njk)$", "kind": "template"},
-    {"pattern": "^resources/views/(?P<route>(?!layouts/|components/|partials/).+?)\\.blade\\.php$", "kind": "template"},
-    {"pattern": "^(?:public/|static/|src/|docs/|site/|www/|dist/)?(?P<route>(?![^/]*/node_modules/)[^.]+?)\\.html?$", "kind": "page", "exclude": "(?:^|/)(?:_|partials/|includes/|components/|layouts?/|templates/|views/)|(?:^|/)(?:README|LICENSE)$"},
-    {"pattern": "^(?:public/)?(?P<route>(?!vendor/|app/|config/|routes/|resources/|database/|tests?/|src/|lib/|includes?/)[^./]+)\\.php$", "kind": "page", "exclude": "^(?:functions|wp-config|header|footer|sidebar)$"}
-  ],
-  "declarations": [
-    {"glob": "*.[jt]sx", "regex": "<Route\\b[^>]*?\\bpath\\s*=\\s*[{]?\\s*['\"`]([^'\"`]*)['\"`]", "kind": "page"},
-    {"glob": "*.[jt]s*", "regex": "\\bpath\\s*:\\s*['\"`](/?[^'\"`]*)['\"`]", "kind": "page", "requires": "(?:createBrowserRouter|createHashRouter|createMemoryRouter|useRoutes|RouteObject|createRoute|createRouter|VueRouter|RouteRecordRaw|Routes\\b|RouterModule|provideRouter)"},
-    {"glob": "*.vue", "regex": "\\bpath\\s*:\\s*['\"`](/?[^'\"`]*)['\"`]", "kind": "page", "requires": "createRouter"},
-    {"glob": "*.[jt]s", "regex": "\\b(?:app|router|server|fastify|api)\\.(?:get|all)\\s*\\(\\s*['\"`](/[^'\"`]*)['\"`]", "kind": "server-route"},
-    {"glob": "*.ts", "regex": "@Get\\s*\\(\\s*['\"`]([^'\"`]*)['\"`]", "kind": "server-route"},
-    {"glob": "*.py", "regex": "@\\w+\\.(?:route|get|api_route)\\s*\\(\\s*['\"]([^'\"]*)['\"]", "kind": "server-route"},
-    {"glob": "urls.py", "regex": "\\b(?:re_)?path\\s*\\(\\s*r?['\"]([^'\"]*)['\"]", "kind": "server-route"},
-    {"glob": "routes.rb", "regex": "^\\s*(?:get|resources?|root)\\s*\\(?\\s*['\":]?([\\w/:\\-#]+)", "kind": "server-route"},
-    {"glob": "web.php", "regex": "Route::(?:get|any|match|view)\\s*\\(\\s*['\"]([^'\"]*)['\"]", "kind": "server-route"},
-    {"glob": "gatsby-node.*", "regex": "createPage\\s*\\(\\s*\\{[^}]*?path\\s*:\\s*[`'\"]([^`'\"]+)", "kind": "page"},
-    {"glob": "*.md*", "regex": "^permalink:\\s*['\"]?([^'\"\\n]+)", "kind": "page"},
-    {"glob": "*.njk", "regex": "^permalink:\\s*['\"]?([^'\"\\n]+)", "kind": "page"}
-  ],
-  "signals": [],
-  "gaps": [],
-  "edit_guidance": "Edit the route's source file for page-specific SEO; edit layout rows for site-wide head, header and footer changes. Code-declared routes point at the component/view rendered for that URL."
-}
-```
+Runtime profile: [`profiles/routes.json`](../../profiles/routes.json), validated by
+`profiles/schema.json`; behaviour is tested in `tests/test_skill_profiles.py`.
+This file is human documentation only.

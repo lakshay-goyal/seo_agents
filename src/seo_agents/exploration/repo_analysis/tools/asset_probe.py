@@ -10,6 +10,8 @@ import struct
 import subprocess
 import xml.etree.ElementTree as ET
 
+from seo_agents.exploration.repo_analysis.tools.safe_xml import safe_xml_fromstring
+
 
 _READ_LIMIT = 1024 * 1024
 _VIDEO_SUFFIXES = {'.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.mpeg', '.mpg'}
@@ -76,7 +78,7 @@ def _dimensions(data, suffix):
         # Reject DTDs/entities before parsing; never resolve external resources.
         if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
             return None, None
-        root = ET.fromstring(data)
+        root = safe_xml_fromstring(data)
         if root.tag not in ('svg', '{http://www.w3.org/2000/svg}svg'):
             return None, None
         def length(value):

@@ -27,10 +27,10 @@ class RepoContextTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
 
-    def build(self):
+    def build(self, include_content='none'):
         with redirect_stdout(io.StringIO()):
             index = SourceIndex(snapshot_repository(self.repo))
-            return build_repo_context(index, explore_codebase(index), repo_path=self.repo)
+            return build_repo_context(index, explore_codebase(index), repo_path=self.repo, include_content=include_content)
 
     def test_every_skill_profile_loads(self):
         skills = load_skills()
@@ -51,7 +51,7 @@ class RepoContextTests(unittest.TestCase):
         self.write('app/blog/[slug]/page.tsx', "export async function generateMetadata({ params }) {\n"
                    "  return { title: 'Post' }\n}\nexport default function P() {\n"
                    '  return <main><h1>Jasmine tea guide</h1><img src="/hero.png" /></main>\n}\n')
-        context = self.build()
+        context = self.build('referenced')
         routes = {(r['route'], r['kind']) for r in context['agents']['routes']}
         self.assertIn(('/blog/[slug]', 'page'), routes)
         self.assertIn(('/', 'layout'), routes)

@@ -159,20 +159,25 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertIn('DONE agent content: verify and extract', output)
         self.assertNotIn('Observed heading', output)  # Source text is not a progress message.
 
-    def test_graph_emits_each_report_before_starting_the_next_agent(self):
+    def test_graph_runs_agents_on_dependency_dag_after_their_prerequisites(self):
+        from seo_agents.exploration.repo_analysis.graph import DEPENDENCIES
+        import threading
         terminal = io.StringIO()
-        called = []
+        called, lock = [], threading.Lock()
         reports = {key: execute_script(generated_script(key), self.snapshot) for key in CHECKS}
 
         def extract(category, **kwargs):
-            if called:
-                self.assertIn('report ready: ' + REPORT_FILES[called[-1]], terminal.getvalue())
-                self.assertIn('on-page progress: ' + str(len(called)) + '/7', terminal.getvalue())
-            called.append(category)
-            self.assertEqual(tuple(called), CHECKS[:len(called)])
+            with lock:
+                for prerequisite in DEPENDENCIES[category]:
+                    self.assertIn(prerequisite, called)
+                    self.assertIn('report ready: ' + REPORT_FILES[prerequisite], terminal.getvalue())
+                called.append(category)
             self.assertEqual(set(kwargs['handoff']), set(PRIOR_WORK[category]))
             for key, entry in kwargs['handoff'].items():
                 self.assertIs(entry['report'], reports[key])
+            self.assertIn('element_index', kwargs)
+            if category == 'urls':
+                self.assertEqual(kwargs['route_candidates'][0]['template'], 'index.html')
             if category == 'content':
                 self.assertIn('internal_links', kwargs['handoff'])
                 self.assertIn('media', kwargs['handoff'])
@@ -180,11 +185,21 @@ class ExplorationAgentTests(unittest.TestCase):
 
         with patch('seo_agents.exploration.repo_analysis.graph.run_exploration_agent', side_effect=extract), redirect_stdout(terminal):
             run_onpage_graph(self.repo, mode='agent')
-        self.assertEqual(tuple(called), CHECKS)
+        self.assertEqual(set(called), set(CHECKS))
+        self.assertEqual((called[0], called[-2], called[-1]), ('urls', 'content', 'eeat'))
         output = terminal.getvalue()
         self.assertIn('on-page progress: 7/7', output)
         self.assertIn('agent content: page "/" completed', output)
         self.assertIn('DONE cross-report validation', output)
+
+    def test_graph_reuses_a_precomputed_snapshot_instead_of_capturing_again(self):
+        reports = {key: execute_script(generated_script(key), self.snapshot) for key in CHECKS}
+        with patch('seo_agents.exploration.repo_analysis.graph.run_exploration_agent',
+                   side_effect=lambda category, **kwargs: {'report': reports[category], 'run': {}}), patch(
+                'seo_agents.exploration.repo_analysis.graph.snapshot_repository') as capture, redirect_stdout(io.StringIO()):
+            state = run_onpage_graph(self.repo, mode='agent', snapshot=self.snapshot)
+        capture.assert_not_called()
+        self.assertIs(state['snapshot'], self.snapshot)
 
     def test_agent_can_consult_prior_evidence_then_independently_inspect_source(self):
         links = execute_script(generated_script('internal_links'), self.snapshot)
@@ -242,10 +257,14 @@ class ExplorationAgentTests(unittest.TestCase):
                 elif self._calls == 2:
                     name, args = 'ExtractionPlan', {'framework': 'html', 'notes': 'data-row reference', 'source': invalid}
                 elif self._calls == 3:
+                    # Repairs get a small fresh tool budget (read/grep/draft tools and prior reports).
                     test.assertIn('query_prior_report', self._available)
-                    test.assertNotIn('read_source', self._available)
-                    test.assertNotIn('search_sources', self._available)
+                    test.assertIn('read', self._available)
+                    test.assertIn('edit_file', self._available)
+                    test.assertIn('test_script', self._available)
                     test.assertTrue(any('/pages/0/link_refs/0' in str(m.content) for m in messages))
+                    # Fresh compact repair turn: the discovery transcript is not resent.
+                    test.assertFalse(any(isinstance(m, ToolMessage) and m.name == 'read_source' for m in messages))
                     name, args = 'query_prior_report', {'category': 'internal_links', 'url': '/', 'field': 'links'}
                 else:
                     self._saw_prior = any(isinstance(m, ToolMessage) and m.name == 'query_prior_report' and 'source_id' in m.content for m in messages)
@@ -257,7 +276,7 @@ class ExplorationAgentTests(unittest.TestCase):
         result = run_exploration_agent('content', snapshot=self.snapshot, model=model, handoff=handoff, max_discovery_rounds=1)
         self.assertTrue(model._saw_prior)
         self.assertEqual(result['run']['attempts'], 2)
-        self.assertEqual(result['run']['metrics']['repair_context_model_calls'], 2)
+        self.assertEqual(result['run']['metrics']['repair_model_calls'], 2)
         self.assertEqual(result['report']['pages'][0]['link_refs'][0]['source_id'], reports['internal_links']['pages'][0]['links'][0]['source_id'])
         self.assertEqual(result['report']['pages'][0]['blocks'][0]['text'], 'Observed heading')
 
@@ -284,7 +303,7 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertTrue(any('references remain unresolved' in limitation for limitation in page['coverage']['limitations']))
         self.assertEqual(result['run']['attempts'], 2)
 
-    def test_persistent_content_mismatch_stops_before_metadata_or_eeat(self):
+    def test_persistent_content_mismatch_stops_before_eeat(self):
         called = []
 
         def factory(**kwargs):
@@ -302,8 +321,11 @@ class ExplorationAgentTests(unittest.TestCase):
                 'seo_agents.exploration.repo_analysis.agents.llm.extractor.get_chat_model', return_value=Mock()):
             with self.assertRaises(ExplorationIncomplete) as caught:
                 run_onpage_graph(self.repo, mode='agent')
-        self.assertEqual(called, ['urls', 'page_structure', 'internal_links', 'media', 'content'])
-        self.assertEqual(caught.exception.checkpoint['checkpoint']['completed'], ['urls', 'page_structure', 'internal_links', 'media'])
+        self.assertEqual(called[0], 'urls')
+        self.assertEqual(set(called), {'urls', 'page_structure', 'internal_links', 'media', 'metadata', 'content'})
+        self.assertEqual(called[-1], 'content')  # eeat never starts.
+        self.assertEqual(caught.exception.checkpoint['checkpoint']['completed'],
+                         ['urls', 'page_structure', 'internal_links', 'media', 'metadata'])
         self.assertIn('Unmatched cross-report reference', caught.exception.checkpoint['agent_runs']['content']['previous_errors'][0])
 
     def test_invalid_discovery_budgets_are_rejected_before_model_use(self):
@@ -514,8 +536,15 @@ class ExplorationAgentTests(unittest.TestCase):
         failure = ExtractionFailed('page_structure', {'category': 'page_structure', 'verification': 'failed',
             'script': 'rejected script', 'previous_errors': ['bad section']})
         checkpoints = []
-        with patch('seo_agents.exploration.repo_analysis.graph.run_exploration_agent',
-                   side_effect=[{'report': urls, 'run': {'verification': 'passed'}}, failure]):
+        def extract(category, **kwargs):
+            if category == 'urls':
+                return {'report': urls, 'run': {'verification': 'passed'}}
+            if category == 'page_structure':
+                raise failure
+            __import__('time').sleep(0.3)  # Parallel siblings finish after the failure is raised.
+            return {'report': execute_script(generated_script(category), self.snapshot), 'run': {'verification': 'passed'}}
+
+        with patch('seo_agents.exploration.repo_analysis.graph.run_exploration_agent', side_effect=extract):
             with self.assertRaises(ExplorationIncomplete) as caught:
                 run_onpage_graph(self.repo, mode='agent', on_checkpoint=checkpoints.append)
         checkpoint = caught.exception.checkpoint
@@ -711,6 +740,8 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertTrue(any(p.endswith('/skills/content/SKILL.md') for p in paths))
         self.assertTrue(any(p.endswith('/agents/llm/script_worker.py') for p in paths))
         self.assertTrue(any(p.endswith('/repo_analysis/skills/routes/SKILL.md') for p in paths))
+        self.assertTrue(any(p.endswith('/pyproject.toml') for p in paths))
+        self.assertFalse(any('__pycache__' in p for p in paths))
 
 
 if __name__ == '__main__':

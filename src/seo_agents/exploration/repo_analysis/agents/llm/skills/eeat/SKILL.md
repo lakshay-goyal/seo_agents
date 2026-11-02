@@ -1,27 +1,27 @@
 ---
 name: explore-seo-eeat
-description: Collect candidate authorship, experience, expertise and trust evidence with source and page context.
+description: Harvest candidate E-E-A-T evidence (authorship, dates, credentials, contact, policies, citations) per page.
 ---
 
-Trace visible page copy, bylines, author/profile components, dates, case studies,
-qualifications, reviews and policies through the actual template/data conventions.
-Inspect surrounding section context before classifying an ambiguous word. Record
-candidate signals for authorship, experience, expertise, trust, reviews and dates.
+## Output per page
+- `signals`: `[{signal, status, evidence: [{file, line, source_id, text}]}]` for signals
+  authorship, publish_date, updated_date, credentials, experience, contact, about, policies,
+  reviews. `status`: candidate_evidence | not_observed_in_static_content (then `evidence: []`).
+- `trust_links`: `[{file, line, source_id, href}]` to about/contact/privacy/terms/editorial pages.
+- `citations`: `[{file, line, source_id, href}]` external references inside main content.
+- `interpretation`: string — what was and was not observable statically.
 
-Capture contact/about/editorial/privacy/terms links and potential external citations
-with original href and source evidence. Observing a credential, review or company
-claim does not verify its truth. Use candidate_evidence when evidence is present,
-otherwise not_observed_in_static_content; never equate static absence with runtime
-absence. Keep interpretation explicit about these limits and page-purpose context.
+## Hard rules
+1. Evidence items are source-backed records with literal `text` at the cited line.
+2. Look in bylines (`rel="author"`, `.author`, `the_author()`, `article.author`), `<time datetime>`,
+   front matter (`author`, `date`), JSON-LD Person/Organization, footers (contact, policies).
+3. Runtime values (CMS author, WordPress `the_author()`) are candidates with
+   `value_origin: "expression"`; mention them in `interpretation`.
+4. You collect candidates; you do not judge credibility.
 
-Each signal's evidence is a list of observation objects, never strings, source IDs
-alone, or explanations of missing evidence. Build each observed item from its
-source location: `{file, line, source_id, text}` with literal `text` as a string.
-For example, a parsed byline can use `dict(ref, text=node['text'])`, where `ref`
-contains the actual file, line and stable source_id described in the contract.
-For an absent signal return
-`{"signal": "authorship", "status": "not_observed_in_static_content", "evidence": []}`.
-Put absence explanations and unresolved semantics in `interpretation` or
-`coverage.limitations`; do not invent a location or text to fill an evidence item.
-Trust links and citations are separate observation objects with
-`{file, line, source_id, href}`; they do not replace signal evidence objects.
+## Example
+`<time datetime="2024-05-01">May 1, 2024</time>` at `content/post.md` rendered by
+`_layouts/post.html:7` -> signal `publish_date`, evidence `{"text": "May 1, 2024", "line": 7, ...}`.
+
+## Done when
+Every listed signal has a status, absent ones use `evidence: []`, `test_script` passes.

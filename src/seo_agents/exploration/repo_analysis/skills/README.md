@@ -1,25 +1,35 @@
 # Repository-analysis agent skills
 
-One skill per analysis agent. Skills are **framework-agnostic**: each lists the
-patterns for its concern across every ecosystem at once (React/Next, Vue/Nuxt,
-Svelte, Astro, Angular, static site generators, plain HTML, Django/Flask, Rails,
-Laravel/PHP, Express, ...). An agent never needs to know which framework a
-repository uses; whatever matches is recorded with its file reference and the
-exact source code.
+One skill per deterministic analysis agent. Skills are **framework-agnostic**: each
+lists the patterns for its concern across every ecosystem at once (React/Next,
+Vue/Nuxt, Svelte, Astro, Angular, Shopify Liquid, WordPress PHP, Hugo/Jekyll,
+Ghost, Django/Jinja, Rails ERB, Laravel Blade, Express, plain HTML, ...). An agent
+never needs to know which framework a repository uses.
 
-Each `<agent>/SKILL.md` has prose guidance (read by LLM agents) and one fenced
-` ```json profile ` block (applied by `seo_agents.exploration.repo_analysis.tools.skill_runner`).
+- `skills/<agent>/SKILL.md` — human documentation only (not read at runtime).
+- `profiles/<agent>.json` — the runtime configuration applied by
+  `tools/skill_runner.py`, validated on load against `profiles/schema.json`.
 
-Profile fields:
+Signal fields:
 
 | Field | Meaning |
 | --- | --- |
-| `name` | Agent name. |
-| `signals` | `{id, label, regex, glob?, block?, ignore_case?, value_group?, files_only?}`. `regex` runs in multiline mode over captured source. `block: true` captures the whole balanced `{...}`/`(...)` construct after the match. `value_group` extracts a value. `files_only` matches the regex against file paths instead of content and records the whole file. |
-| `gaps` | `{id, label, when_none_of: [signal ids]}`: recorded when none of those signals matched anywhere. A gap is a lead, not proof of absence (runtime/CMS code may still provide it). |
-| `edit_guidance` | Where an agent should make a change for this concern, by pattern of code found. |
+| `id`, `label` | Stable id and human label. |
+| `regex` | Python regex, multiline mode (`ignore_case` adds re.I). |
+| `precision` | `high` / `medium` / `low`: how often a match is the real thing. Weigh low-precision signals accordingly. |
+| `examples` | `{match: [...], no_match: [...]}`; executed by `tests/test_skill_profiles.py`. Add a `no_match` for every false positive you fix. |
+| scope | At least one of `files_only` (match paths), `glob` (list) or `languages` (names from `source_index.language_of` or groups `@markup`, `@scripts`, `@templates`, `@content`, `@data`, `@styles`, `@server`, `@config`). |
+| `exclude`, `requires` | Path regex to skip; regex that must appear in a file before the signal runs on it. |
+| `exclude_comments` | Skip matches inside comments. README/CHANGELOG/LICENSE files are always skipped unless `include_docs`. |
+| `block`, `value_group`, `mode`, `tags` | Capture the balanced construct, extract a value, rendering mode, Web Vitals tags. |
 
-Agent-specific profile keys (`conventions`, `declarations`, `framework_markers`,
-`weights`) are documented in the corresponding skill.
+Every signal result reports `count` (records returned), `total_matches` and
+`truncated` (true when the per-file/per-signal caps dropped records).
 
-Add a pattern by editing JSON; no Python change is needed.
+`gaps` are `{id, label, when_none_of, only_if_any?}`: leads, not proof of absence.
+`execution_hint` is guidance for the execution phase and is never emitted in
+exploration output. Route discovery uses `conventions` (path regex + `adapter`,
+optional `requires_path`, `route_map`, `route_template`) and `declarations`
+(optional structural `parser`); see `skills/routes/SKILL.md`.
+
+Add a pattern by editing JSON plus examples; no Python change is needed.

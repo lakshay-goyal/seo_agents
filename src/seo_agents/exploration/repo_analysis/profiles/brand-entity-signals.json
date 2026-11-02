@@ -1,0 +1,175 @@
+{
+  "$schema": "./schema.json",
+  "name": "brand-entity-signals",
+  "signals": [
+    {
+      "id": "entity-schema",
+      "label": "Organization/Person/WebSite schema",
+      "regex": "['\"]@type['\"]\\s*:\\s*['\"](Organization|Person|WebSite|Corporation|Brand|ProfilePage|NewsMediaOrganization)['\"]",
+      "value_group": 1,
+      "block": false,
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "\"@type\": \"Organization\""
+        ],
+        "no_match": [
+          "\"@type\": \"Product\""
+        ]
+      }
+    },
+    {
+      "id": "same-as",
+      "label": "sameAs profile list",
+      "regex": "['\"]?sameAs['\"]?\\s*:",
+      "block": true,
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "\"sameAs\": [",
+          "sameAs: ["
+        ],
+        "no_match": [
+          "sameAsBefore: 1"
+        ]
+      }
+    },
+    {
+      "id": "social-profile",
+      "label": "Social profile link",
+      "regex": "https?://(?:www\\.)?(?:twitter\\.com|x\\.com|linkedin\\.com/(?:in|company)|github\\.com|facebook\\.com|instagram\\.com|youtube\\.com|tiktok\\.com|medium\\.com|dribbble\\.com|behance\\.net|threads\\.net|mastodon\\.\\w+|bsky\\.app)/[\\w@./-]+",
+      "ignore_case": true,
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "exclude": "(?:^|/)(?:package(?:-lock)?\\.json|composer\\.json|[^/]*\\.lock|README[^/]*|CHANGELOG[^/]*|LICENSE[^/]*|CONTRIBUTING[^/]*)$",
+      "exclude_comments": true,
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "https://twitter.com/acme",
+          "https://www.linkedin.com/company/acme"
+        ],
+        "no_match": [
+          "https://example.com/twitter"
+        ]
+      }
+    },
+    {
+      "id": "author",
+      "label": "Author/byline declaration",
+      "regex": "name\\s*=\\s*['\\\"]author['\\\"]|\\bauthors?\\s*:\\s*['\\\"\\[{]|^author:\\s*\\S|rel\\s*=\\s*['\\\"]author['\\\"]|itemprop\\s*=\\s*['\\\"]author|class(?:Name)?\\s*=\\s*['\\\"][^'\\\"]*byline|\\bthe_author(?:_posts_link)?\\s*\\(|\\{\\{-?\\s*(?:article|post)\\.author\\b|\\{\\{#?primary_author\\b",
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "<meta name=\"author\" content=\"Jane\">",
+          "author: Jane Doe",
+          "<?php the_author(); ?>",
+          "{{ article.author }}"
+        ],
+        "no_match": [
+          "authorization: Bearer x"
+        ]
+      }
+    },
+    {
+      "id": "site-name",
+      "label": "Site/brand name declaration",
+      "regex": "og:site_name|siteName\\s*:|applicationName\\s*:|application-name|\\bsite_?[Nn]ame\\s*[:=]|\\bshop\\.name\\b|\\bget_bloginfo\\s*\\(\\s*['\\\"]name|\\bbloginfo\\s*\\(\\s*['\\\"]name|\\.Site\\.Title\\b|\\bsite\\.title\\b|@site\\.title",
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "og:site_name",
+          "{{ shop.name }}",
+          "<?php bloginfo('name'); ?>",
+          "{{ .Site.Title }}"
+        ],
+        "no_match": [
+          "const name = 1"
+        ]
+      }
+    },
+    {
+      "id": "logo",
+      "label": "Logo asset/declaration",
+      "regex": "['\"]logo['\"]\\s*:|(?:^|/)logo[\\w-]*\\.(?:svg|png|webp|jpg)|alt\\s*=\\s*['\"][^'\"]*logo",
+      "ignore_case": true,
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "alt=\"Acme logo\"",
+          "\"logo\": \"/logo.png\"",
+          "src=\"/img/logo-dark.svg\""
+        ],
+        "no_match": [
+          "logout()"
+        ]
+      }
+    },
+    {
+      "id": "about-page",
+      "label": "About/team/company page",
+      "regex": "(?:^|/|-|\\.)(?:about|about-us|team|company|our-story|who-we-are)(?:/|\\.|$)",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "src/pages/about.astro",
+          "page-about.php",
+          "templates/page.about.json"
+        ],
+        "no_match": [
+          "src/components/AboutCard.tsx"
+        ]
+      }
+    }
+  ],
+  "gaps": [
+    {
+      "id": "no-entity-schema",
+      "label": "No Organization/Person schema found",
+      "when_none_of": [
+        "entity-schema"
+      ]
+    },
+    {
+      "id": "no-same-as",
+      "label": "Social profiles linked but no sameAs found",
+      "when_none_of": [
+        "same-as"
+      ],
+      "only_if_any": [
+        "social-profile"
+      ]
+    }
+  ],
+  "framework_agnostic": true,
+  "execution_hint": "Add one Organization (or Person) JSON-LD in the root layout with name, url, logo and sameAs listing the social profile URLs found; keep brand name identical in og:site_name, titles and schema; add author bylines linking to author pages."
+}

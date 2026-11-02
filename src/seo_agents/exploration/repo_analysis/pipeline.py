@@ -1,14 +1,18 @@
-"""Repository analysis: the one place where every codebase-exploration agent is called.
+"""Repository analysis: the one place where every codebase-exploration stage is called.
 
 `repo_analysis()`:
-1. snapshots the repository once (`tools/repository_snapshot.py`);
-2. runs every skill-driven agent in `explore_codebase()` (no model needed);
-3. writes `seo_reports/repo_context.json` (`context_builder.py`): every record holds
-   the file reference *and* the exact source code; referenced files are embedded in full;
-4. optionally runs the 7 LLM agents through `graph.py` (verified per-page reports).
+1. snapshots the repository ONCE (`tools/repository_snapshot.py`, content-hash identity);
+2. runs every deterministic skill runner in `explore_codebase()` (no model);
+3. writes `seo_reports/repo_context.json` (`context_builder.py`; references, not file copies);
+4. builds the page-centric SEO site model (`site_model.explore_site`, LangGraph orchestrator):
+   framework fingerprint -> element index -> URL manifest -> raw/rendered/Lighthouse lenses
+   (when a site_url, pre-built HTML or SEO_BUILD is available) -> attribution -> cheap-model gap
+   workers -> `seo_reports/site_model/{index.json, site.json, pages/<id>.json}`;
+5. optionally (SEO_RUN_LLM_AGENTS=1 / --with-llm-agents) runs the seven legacy LLM category
+   extractors through `graph.py`, reusing the same snapshot, context and element index.
 
 CLI (no clone, no PR):
-    python -m seo_agents.exploration.repo_analysis /path/to/site -o /tmp/repo_context.json
+    python -m seo_agents.exploration.repo_analysis /path/to/site [--site-url URL] [--render] [--build]
 """
 
 import argparse
@@ -40,6 +44,7 @@ from seo_agents.exploration.repo_analysis.agents.ai_search_readiness import anal
 from seo_agents.log import done, log, progress, start
 
 DEFAULT_OUTPUT = 'seo_reports/repo_context.json'
+DEFAULT_SITE_MODEL = 'seo_reports/site_model'
 
 
 def explore_codebase(index):
@@ -77,67 +82,96 @@ def explore_codebase(index):
     return results
 
 
-def run_llm_agents(repo_path=None):
-    """7 LLM agents via graph.py (urls, page_structure, internal_links, media, content, metadata, eeat)."""
+def run_llm_agents(repo_path=None, *, snapshot=None, element_index=None, routes=None):
+    """Seven legacy LLM category extractors via graph.py, reusing the pipeline's single snapshot."""
     from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
+    from seo_agents.exploration.repo_analysis.tools.source_context import build_context
 
-    return run_onpage_graph(repo_path=repo_path)
+    context = build_context(snapshot) if snapshot is not None else None
+    return run_onpage_graph(repo_path=repo_path, snapshot=snapshot, context=context,
+                            element_index=element_index, routes=routes)
 
 
 def repo_analysis(github_url=None, repo_path=None, *, output_path=None, run_agents=None,
-                  include_content='referenced'):
-    """Explore the whole codebase and write the SEO context JSON.
+                  include_content='none', site_url=None, render=None, build=None, site_model=True,
+                  site_model_dir=None):
+    """Explore the whole codebase and write the SEO context JSON plus the page-centric site model.
 
-    output_path: where to write the JSON (default `<repo>/seo_reports/repo_context.json`;
-        pass False to skip writing).
-    run_agents: also run the 7 LLM agents (default: env SEO_RUN_LLM_AGENTS, else true;
-        set to 0 to run without a model).
-    include_content: 'referenced' (full content of every file with a record), 'all', or 'none'.
+    output_path: repo_context.json path (default `<repo>/seo_reports/repo_context.json`; False skips writing).
+    site_model_dir: site model directory (default `<repo>/seo_reports/site_model`).
+    site_url/render/build: runtime lenses (see `site_model.explore_site`); env SEO_SITE_URL/SEO_RENDER/SEO_BUILD.
+    run_agents: also run the 7 legacy LLM category extractors (default: env SEO_RUN_LLM_AGENTS, else off;
+        the site model already covers their data, with gap workers resolving only what code cannot).
+    include_content: 'none' (references + hashes), 'referenced' or 'all' for repo_context.json.
 
-    Returns the LLM graph state (or a minimal state) with `repo_context` and
-    `repo_context_path` added. The context file is written before the LLM agents
-    start, so it survives an agent failure.
+    Returns the state with `repo_context`, `repo_context_path`, `site_model` and `site_model_dir`.
+    Each artifact is written as soon as it exists, so a later failure keeps earlier outputs.
     """
     label = "repo analysis: " + (github_url or str(repo_path or Path.cwd()))
     begun = start(label)
     root = Path(repo_path or Path.cwd())
-    with progress('repository snapshot'):
-        index = SourceIndex(snapshot_repository(root))
+    with progress('repository snapshot (single capture shared by every stage)'):
+        snapshot = snapshot_repository(root)
+        index = SourceIndex(snapshot)
     results = explore_codebase(index)
     context = build_repo_context(index, results, repo_path=root, github_url=github_url,
                                  include_content=include_content)
     path = None
     if output_path is not False:
         path = write_repo_context(context, output_path or root / DEFAULT_OUTPUT)
-    if run_agents is None:
-        run_agents = os.getenv('SEO_RUN_LLM_AGENTS', '1') != '0'
     state = {}
+    model, model_dir = None, None
+    if site_model:
+        from seo_agents.exploration.repo_analysis.site_model import explore_site
+        model_dir = Path(site_model_dir or root / DEFAULT_SITE_MODEL)
+        model = explore_site(root, site_url=site_url, render=render, build=build, snapshot=snapshot,
+                             deterministic=results, output_dir=model_dir if output_path is not False or site_model_dir else None)
+        context['site_model'] = {'directory': str(model_dir), 'pages': len(model['pages']),
+                                 'framework': model['site']['framework']['primary'],
+                                 'note': 'Page-centric model: index.json, site.json, pages/<id>.json.'}
+    if run_agents is None:
+        run_agents = os.getenv('SEO_RUN_LLM_AGENTS', '0') == '1'
     if run_agents:
-        state = run_llm_agents(repo_path=repo_path)
+        element_index = None
+        if model is not None:
+            from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+            element_index = build_element_index(snapshot)
+        state = run_llm_agents(repo_path=repo_path, snapshot=snapshot, element_index=element_index,
+                               routes=results.get('routes'))
         artifacts = state.get("artifacts") or {}
         log("LLM agent reports in memory: " + str(sorted(artifacts)))
         context['llm_agent_reports'] = {'categories': sorted(artifacts),
                                         'note': 'Verified LLM reports are published separately under seo_reports/onpage/.'}
-        if path:
-            write_repo_context(context, path)
+    if path:
+        write_repo_context(context, path)
     state = dict(state)
     state['repo_context'] = context
     state['repo_context_path'] = str(path) if path else None
+    state['site_model'] = model
+    state['site_model_dir'] = str(model_dir) if model is not None and (output_path is not False or site_model_dir) else None
     done(label, begun)
     return state
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Write the SEO repository context JSON for a local checkout.')
+    parser = argparse.ArgumentParser(description='Write the SEO repository context JSON and site model for a local checkout.')
     parser.add_argument('path', type=Path, help='Repository checkout to analyze')
-    parser.add_argument('-o', '--output', type=Path, help='Output JSON path (default: <path>/' + DEFAULT_OUTPUT + ')')
-    parser.add_argument('--with-llm-agents', action='store_true', help='Also run the 7 LLM agents')
-    parser.add_argument('--content', choices=['referenced', 'all', 'none'], default='referenced',
-                        help='Which file contents to embed in the JSON')
+    parser.add_argument('-o', '--output', type=Path, help='repo_context.json path (default: <path>/' + DEFAULT_OUTPUT + ')')
+    parser.add_argument('--site-model-dir', type=Path, help='Site model directory (default: <path>/' + DEFAULT_SITE_MODEL + ')')
+    parser.add_argument('--site-url', help='Deployed or preview origin to measure (raw HTML, rendered DOM, Lighthouse, links)')
+    parser.add_argument('--render', action='store_true', help='Render pages with Playwright (desktop + mobile)')
+    parser.add_argument('--build', action='store_true', help='Install, build and serve the repository first (runs its code)')
+    parser.add_argument('--no-site-model', action='store_true', help='Only write repo_context.json')
+    parser.add_argument('--with-llm-agents', action='store_true', help='Also run the 7 legacy LLM category extractors')
+    parser.add_argument('--content', choices=['none', 'referenced', 'all'], default='none',
+                        help='Which file contents to embed in repo_context.json')
     args = parser.parse_args(argv)
     state = repo_analysis(repo_path=args.path, output_path=args.output, run_agents=args.with_llm_agents,
-                          include_content=args.content)
+                          include_content=args.content, site_url=args.site_url, render=args.render or None,
+                          build=args.build or None, site_model=not args.no_site_model, site_model_dir=args.site_model_dir)
     print(state['repo_context_path'])
+    if state.get('site_model_dir'):
+        print(state['site_model_dir'])
     return 0
 
 

@@ -1,0 +1,10 @@
+---
+import Base from "../../layouts/Base.astro";
+export function getStaticPaths() {
+  return [{ params: { slug: "first-light" } }];
+}
+const { slug } = Astro.params;
+---
+<Base title={slug} description="A post.">
+  <h1>{slug}</h1>
+</Base>

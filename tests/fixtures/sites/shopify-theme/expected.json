@@ -1,0 +1,33 @@
+{
+  "framework": "shopify-theme",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Shop sustainable goods"
+        ],
+        "links": [
+          [
+            "/collections/all",
+            "Shop all"
+          ]
+        ]
+      },
+      "attribution": {
+        "h1": {
+          "file": "locales/en.default.json",
+          "line": 4
+        }
+      }
+    },
+    {
+      "url": "/products/:handle",
+      "fields": {}
+    },
+    {
+      "url": "/collections/:handle",
+      "fields": {}
+    }
+  ]
+}

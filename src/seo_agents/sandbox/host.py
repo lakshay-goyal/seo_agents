@@ -4,21 +4,43 @@ The host never clones the client repo. It only provisions the
 container, ships this package into it, and starts the driver.
 """
 
+import os
 import re
 import shlex
+import tomllib
 from pathlib import Path
 
 from seo_agents.log import done, log, start
 
 CONTAINER_SRC = "/opt/seo_agents/src"
-RUNTIME_MARKER = "/opt/seo_agents/.runtime_ready_agents_v2"
-PIP_DEPS = ["langchain>=1.0,<2.0", "langchain-core>=1.0,<2.0", "langgraph>=1.0,<2.0", "langchain-openai>=1.0", "python-dotenv", "tree-sitter==0.25.2", "tree-sitter-javascript==0.25.0", "tree-sitter-typescript==0.23.2"]
+RUNTIME_MARKER = "/opt/seo_agents/.runtime_ready_agents_v3"
+RENDER_MARKER = "/opt/seo_agents/.runtime_ready_render_v1"
+SYNC_SUFFIXES = {'.py', '.md', '.json'}
 
 PR_URL_RE = re.compile(r"SEO_PR_URL=(\S+)")
 
 
 def host_src_dir():
     return Path(__file__).resolve().parents[2]
+
+
+def project_dependencies(pyproject=None):
+    """`[project].dependencies` from pyproject.toml: the single source of truth for the container."""
+    path = Path(pyproject) if pyproject else host_src_dir().parent / "pyproject.toml"
+    with path.open("rb") as stream:
+        return list(tomllib.load(stream)["project"]["dependencies"])
+
+
+PIP_DEPS = project_dependencies()
+
+# Best-effort optional runtime for building, rendering and Lighthouse. Each step may fail
+# (e.g. no network for apt/npm); the pipeline then falls back to source-only lenses.
+RENDER_STEPS = [
+    ("system packages (node, npm)", "apt-get update -qq && apt-get install -y -qq nodejs npm"),
+    ("playwright python package", shlex.join(["python3", "-m", "pip", "install", "--quiet", "--break-system-packages", "playwright>=1.48"])),
+    ("chromium for playwright", "python3 -m playwright install --with-deps chromium"),
+    ("lighthouse CLI", "npm install -g --silent lighthouse"),
+]
 
 
 def ensure_container_runtime(sandbox):
@@ -35,29 +57,59 @@ def ensure_container_runtime(sandbox):
     done("provisioning container runtime (pip install)", begun)
 
 
+def render_runtime_requested(env=None):
+    env = env if env is not None else os.environ
+    return any(str(env.get(key, '')).lower() in {'1', 'true', 'yes'} for key in ('SEO_RENDER', 'SEO_BUILD'))
+
+
+def ensure_render_runtime(sandbox):
+    """Install node/npm, Playwright + Chromium and Lighthouse. Never fails the run."""
+    if sandbox.run("test -f " + RENDER_MARKER).success:
+        log("render runtime already provisioned.")
+        return True
+    begun = start("provisioning render runtime (node, playwright, lighthouse)")
+    ok = True
+    for label, command in RENDER_STEPS:
+        result = sandbox.run(command)
+        if not result.success:
+            ok = False
+            log("WARNING: render runtime step failed (" + label + "); continuing with reduced lenses: "
+                + (result.stderr or result.stdout or '')[-400:].strip())
+    if ok:
+        sandbox.run("mkdir -p /opt/seo_agents && touch " + RENDER_MARKER)
+    done("provisioning render runtime", begun)
+    return ok
+
+
 def sync_sources(sandbox):
     begun = start("syncing sources into container")
     src = host_src_dir()
     count = 0
     for path in sorted(src.rglob("*")):
-        if not path.is_file() or path.suffix not in {'.py', '.md'} or "__pycache__" in path.parts:
+        if not path.is_file() or path.suffix not in SYNC_SUFFIXES or "__pycache__" in path.parts:
             continue
         dest = CONTAINER_SRC + "/" + str(path.relative_to(src))
         sandbox.write(dest, path.read_bytes())
         count = count + 1
+    pyproject = src.parent / "pyproject.toml"
+    if pyproject.is_file():
+        sandbox.write("/opt/seo_agents/pyproject.toml", pyproject.read_bytes())
+        count += 1
     done("syncing " + str(count) + " source files into container", begun)
     return count
 
 
-def run_pipeline_in_sandbox(sandbox, github_url, env=None):
+def run_pipeline_in_sandbox(sandbox, github_url, env=None, site_url=None):
     begun = start("full pipeline in sandbox")
+    env = dict(env or {})
     ensure_container_runtime(sandbox)
+    if render_runtime_requested(env):
+        ensure_render_runtime(sandbox)
     sync_sources(sandbox)
     driver = CONTAINER_SRC + "/seo_agents/sandbox/in_container.py"
     log("running driver inside the sandbox for " + github_url)
-    if env is None:
-        env = {}
-    result = sandbox.run("python3 -u " + driver + " " + github_url, env=env, stream=True)
+    command = ["python3", "-u", driver, github_url] + ([site_url] if site_url else [])
+    result = sandbox.run(shlex.join(command), env=env, stream=True)
     if not result.success:
         raise RuntimeError("Container pipeline failed (exit " + str(result.exit_code) +
                            "); see the streamed output above.")

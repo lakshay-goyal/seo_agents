@@ -1,43 +1,70 @@
 # SEO Agents
 
-Analyzes a GitHub frontend repository and opens a reports PR through the existing
-sandbox pipeline. Reports live in `seo_reports/onpage/` in the target repository.
-Seven independent agents inspect the actual framework and generate extraction
-scripts rather than relying on one fixed React/Next.js parser.
+Explores any website repository — Next/Nuxt/SvelteKit/Astro/Remix/Gatsby, React/Vue/
+Svelte/Angular SPAs, Shopify themes, WordPress themes, Hugo/Jekyll/Eleventy, Django,
+Flask, Laravel, Rails, Express, ASP.NET Razor, Ghost or plain HTML — and produces one
+edit-ready JSON model of the site for an SEO execution agent. Every value carries where
+it came from and exactly where to change it. A reports PR is opened through the sandbox.
 
-## Repository analysis (`repo_analysis`)
+Design: [`docs/seo-agents-analysis.html`](docs/seo-agents-analysis.html). Output contract:
+[`docs/site-model.md`](docs/site-model.md).
 
-`seo_agents.exploration.repo_analysis` is one package holding every agent, tool and
-skill used to explore a codebase; see its [layout map](src/seo_agents/exploration/repo_analysis/README.md).
-`repo_analysis()` is the entry point, and `pipeline.explore_codebase()` lists every
-agent call in run order. Before any LLM agent runs, it applies the framework-agnostic
-skills in [`repo_analysis/skills/`](src/seo_agents/exploration/repo_analysis/skills)
-to one source snapshot and writes `seo_reports/repo_context.json`:
-
-- `agents`: every agent result by name: `code_exploration`, `routes`, `page_inventory`,
-  `keywords`, `sitemap_robots`, `canonicals_redirects`, `rendering_strategy`,
-  `client_diagnostics`, `state_management`, `performance_web_vitals`,
-  `https_security_headers`, `structured_data`, `mobile_parity`, `hreflang_i18n`,
-  `shareability_link_assets`, `brand_entity_signals`, `local_business_presence`,
-  `ai_search_readiness`
-- `pages`: per-route titles, descriptions, headings, links, media issues, keywords,
-  rendering mode and inherited layout metadata
-- `edit_guide`, `gaps`: where to change each concern; missing signals (leads, not proof)
-- `files`: full content of every referenced file
-
-Every record has `location` (file, line range, JSON pointer into `files`), `code`
-(the exact source of the construct, whole function/object bodies for APIs) and
-`context` (surrounding lines). Skills are per agent, not per framework: each
-`SKILL.md` lists patterns for every ecosystem in a `json profile` block, so a new
-pattern is a JSON edit. The context file is written before the LLM agents start;
-set `SEO_RUN_LLM_AGENTS=0` to skip them.
+## Install and run
 
 ```sh
-python -m seo_agents.exploration.repo_analysis /path/to/site -o /tmp/repo_context.json
-python -m seo_agents.exploration.repo_analysis /path/to/site --with-llm-agents   # plus the 7 LLM reports
+uv sync                                   # or: pip install -e .
+uv pip install -e '.[render]'             # optional: Playwright for rendered-DOM lenses
+seo-agents https://github.com/<owner>/<repo> [--site-url https://example.com] [--render] [--build] [--llm-agents]
+
+# Local checkout, no clone/PR:
+python -m seo_agents.exploration.repo_analysis /path/to/site [--site-url URL] [--render] [--build]
 ```
 
-## Skill-guided exploration (default)
+Requires Docker and `GITHUB_TOKEN` (classic PAT, `repo` scope) for the PR flow. Only
+plain `https://github.com/<owner>/<repo>` URLs are accepted; every shell argument in the
+clone/PR steps is quoted. Container dependencies are read from `pyproject.toml`.
+`--render`/`--build` (or `SEO_RENDER=1`/`SEO_BUILD=1`) provision node, Playwright
+Chromium and Lighthouse in the sandbox on a best-effort basis; failures only reduce the
+available lenses, and the reason is recorded. See `.env.example` for every setting.
+
+The PR publishes `seo_reports/site_model/` (index.json, site.json, pages/*.json) and
+`seo_reports/repo_context.json`; with `--llm-agents`, also the seven legacy
+`seo_reports/onpage/*.json` reports.
+
+## How exploration works
+
+Deterministic code produces the facts; cheap models resolve only what code cannot.
+
+| Stage | What happens | Module |
+| --- | --- | --- |
+| A acquire | one snapshot (content-hash identity) → framework fingerprint → unified element index (JSX/TSX via tree-sitter; Vue/Svelte/Astro; HTML and every server template language with directives masked offset-for-offset; Markdown; JSON/YAML/TOML/PO data and i18n catalogs; composition edges incl. Liquid sections/snippets, `get_template_part`, `{% extends %}`, `@include`, partials, imports with tsconfig/Vite aliases) | `tools/framework.py`, `tools/element_index.py` |
+| B build/serve | `site_url`, else pre-built static HTML (SPA fallback when the host rewrites to index.html), else opt-in install+build+serve, else source-only | `runtime/build_serve.py` |
+| C URL manifest | framework adapters (file routes, router configs incl. nested children, Shopify JSON templates, WordPress template hierarchy, Django/Laravel/Rails/Flask/Express routes) ∪ literal static params ∪ content collections ∪ sitemaps ∪ build output ∪ crawl, with provenance | `tools/adapters.py`, `url_manifest.py` |
+| D measure | per URL in parallel (LangGraph `Send`): raw HTML + headers/redirects, rendered DOM desktop+mobile (Playwright), mobile parity, Lighthouse/PSI (mobile+desktop, median of N), link status, served-behaviour probes (robots, soft 404, trailing slash, http→https, security headers); BFS crawl gives click depth | `runtime/*`, `site_graph.py` |
+| E attribute | every served value → file:line:col + edit kind: lens agreement, exact literal, data/i18n match, composed data+template match; ties → gap queue | `source_lens.py`, `attribution.py` |
+| F gap workers | small-model task packets with candidate IDs + enums; validator → fresh retry → mid-tier escalation; 3-vote self-consistency for topic/intent and E-E-A-T; learned declarative adapters for unknown stacks, cached | `gap_workers.py`, `agents/gap/skills/` |
+| G assemble | index.json (planning), site.json (site facts, duplicates via SimHash, hreflang reciprocity, orphans, crawl errors, coverage ledger, model cost), pages/<id>.json; validators: schema, grounding, lens agreement | `site_model.py` |
+
+Accuracy is measured, not assumed: `scripts/score_fixtures.py` scores 13 golden fixture
+repos (one per major stack, `tests/fixtures/sites/`) for URL recall/precision, head-field
+accuracy, heading/link/image precision+recall and edit-attribution accuracy against the
+doc targets (≥98% URL recall, ≥97% head fields, ≥90% attribution).
+
+```sh
+PYTHONPATH=src .venv/bin/python scripts/score_fixtures.py --misses
+```
+
+## Repository context (`repo_context.json`)
+
+The deterministic skill runners (`pipeline.explore_codebase()`, profiles in
+[`repo_analysis/profiles/`](src/seo_agents/exploration/repo_analysis/profiles)) still write
+`seo_reports/repo_context.json`: per-concern signals (sitemap/robots, canonicals/redirects,
+rendering, client diagnostics, state, Core Web Vitals causes, security headers,
+structured data, mobile, i18n, shareability, brand/entity, local business, AI-search
+readiness) with precision labels, truncation flags and file references + content hashes
+(no file copies by default). Its summaries also feed `site.json`.
+
+## Legacy LLM category extractors (opt-in: `--llm-agents` / `SEO_RUN_LLM_AGENTS=1`)
 
 Each category has its own LangChain agent and packaged
 [`SKILL.md`](src/seo_agents/exploration/repo_analysis/agents/llm/skills): URLs, content, page

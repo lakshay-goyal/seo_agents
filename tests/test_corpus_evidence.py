@@ -253,10 +253,15 @@ class CorpusEvidenceTests(unittest.TestCase):
         with patch.object(inventory, 'inventory', side_effect=interrupt), self.assertRaises(ExplorationIncomplete) as caught:
             self.state()
         checkpoint = caught.exception.checkpoint
-        self.assertEqual(checkpoint['checkpoint']['completed'], ['urls', 'page_structure', 'internal_links', 'media', 'content'])
+        completed = checkpoint['checkpoint']['completed']
+        # metadata runs in the parallel stage after urls; content/eeat depend on it and never start.
+        self.assertEqual(completed[0], 'urls')
+        self.assertTrue(set(completed) <= {'urls', 'page_structure', 'internal_links', 'media'})
         with patch.object(inventory, 'inventory', wraps=original) as extract:
             resumed = run_onpage_graph(self.repo, mode='static', resume=checkpoint)
-        self.assertEqual([call.args[1] for call in extract.call_args_list], ['metadata', 'eeat'])
+        self.assertEqual({call.args[1] for call in extract.call_args_list},
+                         {'urls', 'page_structure', 'internal_links', 'media', 'content', 'metadata', 'eeat'} - set(completed))
+        self.assertEqual(len(extract.call_args_list), 7 - len(completed))
         self.assertEqual(len(resumed['artifacts']), 7)
         self.write('shared/layout.ts', 'export const changed = true;')
         with self.assertRaisesRegex(ValueError, 'identity changed'):

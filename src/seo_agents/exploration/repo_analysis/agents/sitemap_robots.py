@@ -1,8 +1,8 @@
 """Sitemap/robots sources (static files and generators) plus parsed robots groups and sitemap URLs."""
 
 import re
-import xml.etree.ElementTree as ET
 
+from seo_agents.exploration.repo_analysis.tools.safe_xml import XMLParseError, safe_xml_fromstring
 from seo_agents.exploration.repo_analysis.tools.skill_runner import records_of, run_skill
 
 
@@ -42,11 +42,12 @@ def check_sitemap_and_robots(index):
         if path not in index.files:
             continue
         try:
-            root = ET.fromstring(index.files[path])
+            root = safe_xml_fromstring(index.files[path])
             urls = [e.text.strip() for e in root.iter() if e.tag.rsplit('}', 1)[-1] == 'loc' and e.text]
             sitemaps.append({'file': path, 'record_id': record['id'], 'type': root.tag.rsplit('}', 1)[-1],
-                             'url_count': len(urls), 'urls': urls[:500]})
-        except ET.ParseError as error:
+                             'url_count': len(urls), 'urls': urls[:500],
+                             'urls_truncated': len(urls) > 500})
+        except XMLParseError as error:
             sitemaps.append({'file': path, 'record_id': record['id'], 'parse_error': str(error)})
     result['robots_files'] = robots
     result['sitemap_files'] = sitemaps

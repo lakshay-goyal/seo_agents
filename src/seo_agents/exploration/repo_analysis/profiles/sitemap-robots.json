@@ -1,0 +1,179 @@
+{
+  "$schema": "./schema.json",
+  "name": "sitemap-robots",
+  "signals": [
+    {
+      "id": "sitemap-file",
+      "label": "Static sitemap file",
+      "regex": "(?:^|/)sitemap[\\w-]*\\.xml$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "public/sitemap.xml",
+          "sitemap-index.xml"
+        ],
+        "no_match": [
+          "sitemaps.md"
+        ]
+      }
+    },
+    {
+      "id": "robots-file",
+      "label": "Static robots.txt",
+      "regex": "(?:^|/)robots\\.txt$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "public/robots.txt"
+        ],
+        "no_match": [
+          "robots.md"
+        ]
+      }
+    },
+    {
+      "id": "sitemap-generator",
+      "label": "Sitemap generator code/plugin",
+      "regex": "next-sitemap|@astrojs/sitemap|gatsby-plugin-sitemap|@nuxtjs/sitemap|vite-plugin-sitemap|sitemap_generator|jekyll-sitemap|laravel-sitemap|django\\.contrib\\.sitemaps|MetadataRoute\\.Sitemap|SitemapStream|\\bwp_sitemaps\\w*|WP_Sitemaps|['\\\"`/]sitemap(?:\\.xml)?['\\\"`]",
+      "block": true,
+      "languages": [
+        "@templates",
+        "@data",
+        "@server"
+      ],
+      "exclude_comments": true,
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "import sitemap from '@astrojs/sitemap'",
+          "MetadataRoute.Sitemap",
+          "'/sitemap.xml'"
+        ],
+        "no_match": [
+          "site map"
+        ]
+      }
+    },
+    {
+      "id": "sitemap-route-file",
+      "label": "Sitemap route/endpoint file",
+      "regex": "(?:^|/)sitemap(?:\\.xml)?(?:/\\+server|/route)?\\.(?:ts|js|tsx|jsx|py|rb|php)$|(?:^|/)sitemap\\[\\.\\]xml",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "app/sitemap.ts",
+          "src/routes/sitemap.xml/+server.ts"
+        ],
+        "no_match": [
+          "src/sitemapUtils.ts"
+        ]
+      }
+    },
+    {
+      "id": "robots-generator",
+      "label": "Robots generator code/plugin",
+      "regex": "MetadataRoute\\.Robots|gatsby-plugin-robots-txt|@nuxtjs/robots|enableRobotsTXT|['\"`/]robots\\.txt['\"`]",
+      "block": true,
+      "languages": [
+        "@templates",
+        "@data",
+        "@server"
+      ],
+      "exclude_comments": true,
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "MetadataRoute.Robots",
+          "'/robots.txt'"
+        ],
+        "no_match": [
+          "robots"
+        ]
+      }
+    },
+    {
+      "id": "robots-route-file",
+      "label": "Robots route/endpoint file",
+      "regex": "(?:^|/)robots(?:\\.txt)?(?:/\\+server|/route)?\\.(?:ts|js|py|rb|php)$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "app/robots.ts"
+        ],
+        "no_match": [
+          "robots.md"
+        ]
+      }
+    },
+    {
+      "id": "noindex",
+      "label": "noindex / nofollow directive",
+      "regex": "\\bnoindex\\b|\\bnofollow\\b|\\bindex\\s*:\\s*false\\b|X-Robots-Tag|\\bwp_robots_no_robots\\b|\\bblog_public\\b",
+      "ignore_case": true,
+      "languages": [
+        "@markup",
+        "@scripts",
+        "@server",
+        "server-config",
+        "text",
+        "@data"
+      ],
+      "exclude_comments": true,
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "<meta name=\"robots\" content=\"noindex\">",
+          "robots: { index: false }",
+          "Header set X-Robots-Tag noindex"
+        ],
+        "no_match": [
+          "robots: { index: true }",
+          "indexOf(x)"
+        ]
+      }
+    },
+    {
+      "id": "feed",
+      "label": "RSS/Atom feed",
+      "regex": "(?:^|/)(?:rss|feed|atom)(?:\\.xml)?(?:/\\+server|/route)?\\.(?:xml|ts|js)$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "public/rss.xml",
+          "src/pages/feed.xml.ts",
+          "src/routes/rss.xml/+server.ts"
+        ],
+        "no_match": [
+          "feedback.ts"
+        ]
+      }
+    }
+  ],
+  "gaps": [
+    {
+      "id": "no-sitemap",
+      "label": "No sitemap file or generator found",
+      "when_none_of": [
+        "sitemap-file",
+        "sitemap-generator",
+        "sitemap-route-file"
+      ]
+    },
+    {
+      "id": "no-robots",
+      "label": "No robots.txt or generator found",
+      "when_none_of": [
+        "robots-file",
+        "robots-generator",
+        "robots-route-file"
+      ]
+    }
+  ],
+  "framework_agnostic": true,
+  "execution_hint": "Prefer generating the sitemap from the same route/content source the app uses so new pages are included automatically; reference the sitemap URL from robots.txt; remove noindex from pages that should rank."
+}

@@ -36,7 +36,10 @@ def probe(config):
         with response:
             status = response.code
             headers = {key.lower(): value for key, value in response.headers.items()
-                       if key.lower() in {'content-type', 'content-language', 'x-robots-tag', 'cache-control', 'location'}}
+                       if key.lower() in {'content-type', 'content-language', 'x-robots-tag', 'cache-control', 'location',
+                                           'strict-transport-security', 'content-security-policy', 'x-frame-options',
+                                           'x-content-type-options', 'referrer-policy', 'permissions-policy', 'link',
+                                           'vary', 'content-encoding', 'server', 'age', 'x-cache', 'etag', 'last-modified'}}
             if status in {301, 302, 303, 307, 308}:
                 location = headers.get('location')
                 if not location:

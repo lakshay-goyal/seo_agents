@@ -20,8 +20,7 @@ def page_records(records, offset=0, limit=100, budget=OUTPUT_BYTES):
         if encoded_size(selected + [row]) > budget - 1500:
             if not selected:
                 selected.append({'record_id': row.get('record_id', offset), 'oversized_record': True,
-                                 'preview_json': json.dumps(row, ensure_ascii=False)[:800],
-                                 'recovery': 'Use read_index_record or the corresponding artifact JSON pointer'})
+                                 'preview_json': json.dumps(row, ensure_ascii=False)[:800]})
             break
         selected.append(row)
     return {'records': selected, 'total': len(records),
@@ -54,13 +53,14 @@ def repository_summary(snapshot, context):
             'package_count': len(context['packages']),
             'context_records': len(context['records']), 'parse_errors': len(context['parse_errors']),
             'coverage': snapshot.get('coverage', {}),
-            'tools': 'list_files, read_sources, search_sources, query_context, read_context_record, list_routes'}
+            'tools': 'list_files, read, grep, query_index, find_definition, resolve_import, list_routes, write_file, edit_file, test_script'}
     while encoded_size(summary) > OUTPUT_BYTES and summary['packages']:
         summary['packages'].pop()
     return summary
 
 
-def repository_tools(snapshot, inspected=None, *, context=None, routes=None, metrics=None, on_progress=None, handoff=None):
+def repository_tools(snapshot, inspected=None, *, context=None, routes=None, metrics=None, on_progress=None, handoff=None,
+                     element_index=None, draft=None, tester=None):
     files = snapshot['files']
     context = context or {'records': []}
     metrics = metrics if metrics is not None else {}
@@ -85,7 +85,7 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
             on_progress(name, details)
         return result
 
-    def read(path, start_line=1, max_lines=150, start_column=0, budget=OUTPUT_BYTES):
+    def read_range(path, start_line=1, max_lines=150, start_column=0, budget=OUTPUT_BYTES):
         if path not in files:
             return {'error': 'Source unavailable; query list_files for its capture status', 'path': path[:500]}
         metrics['source_read_requests'] += 1
@@ -116,7 +116,8 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
     def list_files(prefix: str = '', offset: int = 0, role: str = '', status: str = '') -> dict:
         """Page through file capture states and candidate roles, including omissions/exclusions."""
         inventory = snapshot.get('inventory') or [{'path': p, 'status': 'captured'} for p in files]
-        rows = [{**r, 'record_id': i} for i, r in enumerate(inventory) if r['path'].startswith(prefix)
+        rows = [{'record_id': i, 'path': r['path'], 'status': r.get('status'), 'roles': r.get('roles', [])}
+                for i, r in enumerate(inventory) if r['path'].startswith(prefix)
                 and (not role or role in r.get('roles', [])) and (not status or r['status'] == status)]
         result = page_records(rows, offset, budget=6500)
         result['paths'] = [r['path'] for r in result['records'] if 'path' in r]
@@ -125,14 +126,14 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
     @tool
     def read_source(path: str, start_line: int = 1, max_lines: int = 150, start_column: int = 0) -> dict:
         """Read source within a byte budget. Continue at next_line AND next_column, including long lines."""
-        return emit('read_source', read(path, start_line, max_lines, start_column))
+        return emit('read_source', read_range(path, start_line, max_lines, start_column))
 
     @tool
     def read_sources(paths: list[str]) -> dict:
         """Batch up to eight known related paths. Each result has a recovery cursor."""
         selected = paths[:8]
         budget = max(800, (OUTPUT_BYTES - 2000) // max(1, len(selected)))
-        result = {'results': [read(path, budget=budget) for path in selected],
+        result = {'results': [read_range(path, budget=budget) for path in selected],
                   'pending_count': max(0, len(paths) - 8), 'pending_indices': list(range(8, min(len(paths), 16)))}
         # Extremely long requested paths should not consume an unbounded response.
         while encoded_size(result) > OUTPUT_BYTES and result['results']:
@@ -153,8 +154,7 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
                 if positions:
                     column = min(positions)
                     matches.append({'file': path, 'line': index, 'column_hint': column,
-                                    'preview': line[max(0, column - 80):column + 300],
-                                    'recovery': 'read_source at line; column_hint is approximate after Unicode case folding'})
+                                    'preview': line[max(0, column - 80):column + 200]})
         result = page_records(matches, offset, limit=60)
         if not needles:
             result['error'] = 'Search text must not be empty'
@@ -178,9 +178,8 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         rows = []
         for index, record in enumerate(context['records']):
             if (not kind or record['kind'] == kind) and record['file'].startswith(prefix):
-                preview = json.dumps(record, ensure_ascii=False)[:900]
-                rows.append({'record_id': index, 'kind': record['kind'], 'file': record['file'],
-                             'preview': preview, 'recovery': 'read_context_record'})
+                preview = json.dumps(record, ensure_ascii=False)[:400]
+                rows.append({'record_id': index, 'kind': record['kind'], 'file': record['file'], 'preview': preview})
         result = page_records(rows, offset, limit=30)
         result.update(kind=kind, prefix=prefix, offset=offset)
         if not rows:
@@ -240,7 +239,6 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         for row in result['records']:
             if row.get('oversized_record'):
                 row['pointer'] = rows[row['record_id']]['pointer']
-                row['recovery'] = 'read_prior_report using this category and pointer'
         return emit('query_prior_report', result)
 
     @tool
@@ -265,8 +263,176 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         return emit('read_prior_report', text_chunk(json.dumps(value, ensure_ascii=False), offset,
                     {'category': category, 'pointer': pointer[:500]}, field='json_text'))
 
-    tools = [list_files, read_source, read_sources, search_source, search_sources,
-             query_context, read_context_record, list_routes, read_index_record]
+    # ---- compact surface (preferred): read, grep, symbols, find_definition, resolve_import, query_index
+    @tool
+    def read(path: str, start_line: int = 1, end_line: int = 0) -> dict:
+        """Read source as line-numbered text (`N| code`). end_line=0 reads up to the byte budget; continue at next_line."""
+        if path not in files:
+            return emit('read', {'error': 'Source unavailable; check list_files status', 'path': path[:300]})
+        lines = files[path].splitlines()
+        start = max(1, start_line)
+        stop = len(lines) if end_line <= 0 else min(len(lines), end_line)
+        out, size, number = [], 0, start
+        while number <= stop:
+            row = str(number) + '| ' + lines[number - 1][:2000]
+            if size + len(row.encode()) + 1 > OUTPUT_BYTES - 400:
+                break
+            out.append(row)
+            size += len(row.encode()) + 1
+            number += 1
+        metrics['source_read_requests'] += 1
+        read_paths.add(path)
+        metrics['unique_source_files_requested'] = len(read_paths)
+        if inspected is not None and out:
+            inspected.add(path)
+        return emit('read', {'path': path, 'total_lines': len(lines), 'start_line': start,
+                             'text': '\n'.join(out), 'next_line': number if number <= stop else None})
+
+    @tool
+    def grep(pattern: str, regex: bool = False, glob: str = '', cursor: int = 0) -> dict:
+        """Search captured source (literal by default, case-insensitive; regex=True for Python regex). glob filters paths (e.g. '*.liquid', 'src/**')."""
+        import fnmatch
+        try:
+            compiled = re.compile(pattern if regex else re.escape(pattern), re.I)
+        except re.error as error:
+            return emit('grep', {'error': 'Invalid regex: ' + str(error)[:200]})
+        if not pattern:
+            return emit('grep', {'error': 'Pattern must not be empty'})
+        matches = []
+        for path in sorted(files):
+            if glob and not (fnmatch.fnmatch(path, glob) or fnmatch.fnmatch(path.rsplit('/', 1)[-1], glob)):
+                continue
+            for number, line in enumerate(files[path].splitlines(), 1):
+                found = compiled.search(line)
+                if found:
+                    matches.append({'file': path, 'line': number, 'col': found.start(),
+                                    'preview': line[max(0, found.start() - 60):found.start() + 140]})
+        result = page_records(matches, cursor, limit=60)
+        result['matches'] = result.pop('records')
+        result['next_cursor'] = result.pop('next_offset')
+        return emit('grep', result)
+
+    def index_value():
+        nonlocal element_index
+        if element_index is None:
+            from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+            element_index = build_element_index(snapshot)
+        return element_index
+
+    @tool
+    def symbols(file: str) -> dict:
+        """Declarations and composition facts of one file: imports/includes (with resolved files), components used, headings, links."""
+        if file not in files:
+            return emit('symbols', {'error': 'Source unavailable', 'file': file[:300]})
+        index_data = index_value()
+        declared = []
+        for number, line in enumerate(files[file].splitlines(), 1):
+            match = re.match(r'\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|def)\s+([A-Za-z_$][\w$]*)', line)
+            if match:
+                declared.append({'name': match.group(1), 'line': number})
+        refs = [{'line': r['line'], 'kind': r['kind'], 'spec': r['spec'], 'resolved': r.get('resolved')}
+                for r in index_data['refs'] if r['file'] == file]
+        elements = [e for e in index_data['elements'] if e['file'] == file]
+        result = {'file': file, 'declarations': declared[:120], 'refs': refs[:120],
+                  'components': sorted({e['tag'] for e in elements if e['kind'] == 'component'})[:80],
+                  'element_count': len(elements),
+                  'status': index_data['files'].get(file, {})}
+        while encoded_size(result) > OUTPUT_BYTES and result['declarations']:
+            result['declarations'] = result['declarations'][:len(result['declarations']) // 2]
+        return emit('symbols', result)
+
+    @tool
+    def find_definition(name: str, from_file: str = '') -> dict:
+        """Where a component/function/variable is defined. Follows from_file's imports first, then searches declarations."""
+        index_data = index_value()
+        candidates = []
+        if from_file:
+            for ref in index_data['refs']:
+                if ref['file'] == from_file and ref.get('resolved') and re.search(r'\b' + re.escape(name) + r'\b', ref.get('names', '') or ref.get('spec', '')):
+                    candidates.append({'file': ref['resolved'], 'line': 1, 'via': 'import ' + ref['spec']})
+        declaration = re.compile(r'(?:function\*?|class|const|let|var|def|interface|type)\s+' + re.escape(name) + r'\b|^\s*' + re.escape(name) + r'\s*[:=]\s*(?:\(|function|\{)', re.M)
+        for path in sorted(files):
+            stem = path.rsplit('/', 1)[-1].split('.')[0]
+            if stem == name:
+                candidates.append({'file': path, 'line': 1, 'via': 'file name'})
+            for match in declaration.finditer(files[path]):
+                candidates.append({'file': path, 'line': files[path].count('\n', 0, match.start()) + 1, 'via': 'declaration'})
+                if len(candidates) > 40:
+                    break
+        unique = list({(c['file'], c['line']): c for c in candidates}.values())[:30]
+        return emit('find_definition', {'name': name[:120], 'candidates': unique, 'total': len(unique)})
+
+    @tool
+    def resolve_import(from_file: str, specifier: str) -> dict:
+        """Resolve an import/include specifier from a file, honouring tsconfig/jsconfig paths and Vite/webpack aliases."""
+        from seo_agents.exploration.repo_analysis.tools.element_index import load_aliases, resolve_module
+        resolved = resolve_module(from_file, specifier, files, load_aliases(files))
+        return emit('resolve_import', {'from_file': from_file[:300], 'specifier': specifier[:300], 'resolved': resolved,
+                                       'external_package': resolved is None and not specifier.startswith(('.', '/'))})
+
+    @tool
+    def query_index(kind: str = 'element', file: str = '', page: str = '', tag: str = '', cursor: int = 0) -> dict:
+        """Query precomputed records. kind: element | route | ref | data | i18n. Filter by file prefix, page url (its composed files) or element tag."""
+        index_data = index_value()
+        scope = None
+        if page:
+            from seo_agents.exploration.repo_analysis.tools.element_index import page_composition
+            template = next((r.get('template') for r in (routes or []) if r.get('url') == page), None)
+            scope = set(page_composition(index_data, template)) if template else set()
+        def keep(path):
+            return path.startswith(file) and (scope is None or path in scope)
+        if kind == 'element':
+            rows = [{k: e[k] for k in ('id', 'file', 'line', 'col', 'tag', 'kind', 'attrs', 'text_literal', 'section',
+                                         'heading_level', 'component_ref', 'parent') if k in e}
+                    for e in index_data['elements'] if keep(e['file']) and (not tag or e['tag'].lower() == tag.lower())]
+        elif kind == 'route':
+            rows = [dict(r) for r in (routes or [])]
+        elif kind == 'ref':
+            rows = [{k: r.get(k) for k in ('file', 'line', 'kind', 'spec', 'resolved')} for r in index_data['refs'] if keep(r['file'])]
+        elif kind == 'data':
+            rows = [{k: d.get(k) for k in ('id', 'file', 'pointer', 'line', 'value', 'kind', 'i18n_key')} for d in index_data['data'] if keep(d['file'])]
+        elif kind == 'i18n':
+            rows = [{'key': key, 'values': values[:3]} for key, values in sorted(index_data['i18n'].items()) if not file or key.startswith(file)]
+        else:
+            return emit('query_index', {'error': 'kind must be element, route, ref, data or i18n'})
+        result = page_records(rows, cursor, limit=40)
+        result['next_cursor'] = result.pop('next_offset')
+        result['kind'] = kind
+        return emit('query_index', result)
+
+    draft_tools = []
+    if draft is not None:
+        @tool
+        def write_file(path: str, content: str) -> dict:
+            """Write the whole draft extractor (path must be extractor.py). Build it incrementally; submit ExtractionPlan without source to use it."""
+            if path != 'extractor.py':
+                return emit('write_file', {'error': 'Only extractor.py is writable'})
+            draft['extractor.py'] = content
+            return emit('write_file', {'path': path, 'bytes': len(content.encode()), 'lines': content.count('\n') + 1})
+
+        @tool
+        def edit_file(path: str, old: str, new: str) -> dict:
+            """Replace one exact, unique occurrence of `old` with `new` in the draft extractor.py (a patch, not a rewrite)."""
+            text = draft.get(path)
+            if path != 'extractor.py' or text is None:
+                return emit('edit_file', {'error': 'Only extractor.py is editable'})
+            count = text.count(old) if old else 0
+            if count != 1:
+                return emit('edit_file', {'error': 'old text must occur exactly once; found ' + str(count)})
+            draft[path] = text.replace(old, new, 1)
+            return emit('edit_file', {'path': path, 'bytes': len(draft[path].encode())})
+
+        @tool
+        def test_script() -> dict:
+            """Run the current draft extractor.py through policy, the worker and report validation now. Fix errors before submitting."""
+            if not draft.get('extractor.py'):
+                return emit('test_script', {'error': 'Draft is empty; write_file extractor.py first'})
+            return emit('test_script', tester(draft['extractor.py']) if tester else {'error': 'Testing unavailable'})
+
+        draft_tools = [write_file, edit_file, test_script]
+
+    tools = [read, grep, symbols, find_definition, resolve_import, query_index, list_files, list_routes, *draft_tools,
+             read_source, read_sources, search_source, search_sources, query_context, read_context_record, read_index_record]
     if handoff:
         tools.extend([query_prior_report, read_prior_report])
     return tools

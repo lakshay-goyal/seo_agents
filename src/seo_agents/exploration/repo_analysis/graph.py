@@ -1,4 +1,9 @@
-"""Seven sequential skill-guided agents, followed by cross-report validation."""
+"""Seven skill-guided agents on a dependency DAG, followed by cross-report validation.
+
+DAG: urls -> {page_structure, internal_links, media, metadata} (parallel) -> content -> eeat.
+The snapshot, source context and element index are computed once (or passed in by the
+pipeline) and shared by every agent.
+"""
 
 import os
 import hashlib
@@ -6,7 +11,8 @@ import json
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TypedDict
+import threading
+from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -23,10 +29,14 @@ from seo_agents.exploration.repo_analysis.evidence import build_evidence
 from seo_agents.exploration.repo_analysis.agents.page_latency import measure_page_latency
 from seo_agents.exploration.repo_analysis.tools.runtime import validate_runtime_config
 
+def merge_dicts(left, right):
+    return {**(left or {}), **(right or {})}
+
+
 class OnpageState(TypedDict, total=False):
     repo_path: str
-    artifacts: dict
-    agent_runs: dict
+    artifacts: Annotated[dict, merge_dicts]
+    agent_runs: Annotated[dict, merge_dicts]
     snapshot: dict
     context: dict
     evidence: dict
@@ -34,6 +44,9 @@ class OnpageState(TypedDict, total=False):
 
 
 CHECKS = ('urls', 'page_structure', 'internal_links', 'media', 'content', 'metadata', 'eeat')
+PARALLEL_STAGE = ('page_structure', 'internal_links', 'media', 'metadata')
+DEPENDENCIES = {'urls': (), 'page_structure': ('urls',), 'internal_links': ('urls',), 'media': ('urls',),
+                'metadata': ('urls',), 'content': ('urls',) + PARALLEL_STAGE, 'eeat': ('content',)}
 
 
 class ExplorationIncomplete(RuntimeError):
@@ -74,7 +87,7 @@ def prepare(state):
     return {'snapshot': snapshot, 'context': build_context(snapshot)}
 
 
-def make_node(key, mode, cache):
+def make_node(key, mode, cache, shared):
     def node(state):
         saved = dict(state.get("artifacts") or {})
         label = 'check ' + str(CHECKS.index(key) + 1) + '/' + str(len(CHECKS)) + ': ' + key
@@ -88,11 +101,10 @@ def make_node(key, mode, cache):
                       for p in route_pages] if route_pages is not None else None
             handoff = build_handoff(key, saved, state.get('agent_runs') or {})
             extraction = run_exploration_agent(key, snapshot=state['snapshot'], routes=routes, context=state['context'],
-                                                handoff=handoff)
-            saved[key] = extraction['report']
-            runs = dict(state.get('agent_runs') or {})
-            runs[key] = extraction['run']
-            result = {'artifacts': saved, 'agent_runs': runs}
+                                               handoff=handoff, element_index=shared.get('element_index'),
+                                               route_candidates=shared.get('route_candidates') if key == 'urls' else None)
+            report = extraction['report']
+            result = {'artifacts': {key: report}, 'agent_runs': {key: extraction['run']}}
         else:
             # Explicit legacy/offline mode; never a silent fallback from a failed agent.
             from seo_agents.exploration.repo_analysis.tools.inventory import inventory
@@ -100,12 +112,13 @@ def make_node(key, mode, cache):
             from seo_agents.exploration.repo_analysis.tools.helpers import resolve_repo_path
             repo = resolve_repo_path(state.get('repo_path'))
             identity = (str(repo), state['snapshot']['sha256'])
-            if cache.get('identity') != identity:
-                cache['pages'] = pages(repo)
-                cache['identity'] = identity
-            saved[key] = inventory(repo, key, page_inventory=cache['pages'])
-            result = {'artifacts': saved}
-        report = saved[key]
+            with cache['lock']:
+                if cache.get('identity') != identity:
+                    cache['pages'] = pages(repo)
+                    cache['identity'] = identity
+                page_inventory = cache['pages']
+            report = inventory(repo, key, page_inventory=page_inventory)
+            result = {'artifacts': {key: report}}
         log('report ready: ' + REPORT_FILES[key] + ' (' + str(len(report['pages'])) + ' pages; retained in memory)')
         for page in report['pages']:
             counts = {field: len(page[field]) if isinstance(page[field], list) else page[field]
@@ -113,7 +126,6 @@ def make_node(key, mode, cache):
             counts['limitations'] = len(page['coverage']['limitations'])
             log('agent ' + key + ': page ' + json.dumps(page['url']) + ' completed ' + json.dumps(counts))
         done(label, begun)
-        log('on-page progress: ' + str(len(saved)) + '/' + str(len(CHECKS)) + ' reports completed')
         return result
     return node
 
@@ -130,27 +142,36 @@ def validate_artifact_links(state):
     return {}
 
 
-def build_onpage_graph(mode=None, *, site_url=None, max_runtime_pages=100, runtime_timeout=12):
+def build_onpage_graph(mode=None, *, site_url=None, max_runtime_pages=100, runtime_timeout=12, shared=None):
     mode = mode or os.getenv('SEO_EXPLORATION_MODE', 'agent')
     if mode not in {'agent', 'static'}:
         raise ValueError('SEO_EXPLORATION_MODE must be agent or static')
+    if mode == 'static':
+        log('DEPRECATED: static mode (React/Next-only legacy extractor). The framework-agnostic site model '
+            '(site_model.explore_site) is the offline, no-LLM path; static mode remains for offline graph tests only.')
     validate_runtime_config(site_url, max_runtime_pages, runtime_timeout)
+    shared = shared if shared is not None else {}
     graph = StateGraph(OnpageState)
-    cache = {}
+    cache = {'lock': threading.Lock()}
     graph.add_node('prepare', prepare)
     graph.add_edge(START, 'prepare')
-    graph.add_edge('prepare', CHECKS[0])
     for key in CHECKS:
-        graph.add_node(key, make_node(key, mode, cache))
+        graph.add_node(key, make_node(key, mode, cache, shared))
+    # Fan-out / fan-in edges follow DEPENDENCIES.
+    graph.add_edge('prepare', 'urls')
+    for key in PARALLEL_STAGE:
+        graph.add_edge('urls', key)
+    graph.add_edge(list(PARALLEL_STAGE), 'content')
+    graph.add_edge('content', 'eeat')
     if mode == 'agent':
         def validate_node(state):
             with progress('cross-report validation'):
                 return validate_artifact_links(state)
         graph.add_node('validate_artifacts', validate_node)
-        graph.add_edge(CHECKS[-1], 'validate_artifacts')
+        graph.add_edge('eeat', 'validate_artifacts')
         graph.add_edge('validate_artifacts', 'evidence')
     else:
-        graph.add_edge(CHECKS[-1], 'evidence')
+        graph.add_edge('eeat', 'evidence')
     def evidence_node(state):
         with progress('build combined evidence'):
             bundle = build_evidence(state, site_url=site_url)
@@ -159,22 +180,60 @@ def build_onpage_graph(mode=None, *, site_url=None, max_runtime_pages=100, runti
         return {'evidence': bundle}
     graph.add_node('evidence', evidence_node)
     graph.add_edge('evidence', END)
-    for i in range(len(CHECKS) - 1):
-        graph.add_edge(CHECKS[i], CHECKS[i + 1])
     return graph.compile()
 
 
+def deterministic_route_candidates(snapshot):
+    """File-convention/router candidates for the URL agent (and its script's `routes` input)."""
+    try:
+        from seo_agents.exploration.repo_analysis.tools.routes import discover_routes
+        from seo_agents.exploration.repo_analysis.tools.source_index import SourceIndex
+        rows = discover_routes(SourceIndex(snapshot))
+    except Exception as error:  # Candidates are optional leads; never block the agent.
+        log('route candidates unavailable: ' + type(error).__name__ + ': ' + str(error)[:200])
+        return None
+    candidates, seen = [], set()
+    for row in rows:
+        if row.get('kind') not in {'page', 'content-page', 'template'}:
+            continue
+        template = row['source']['location']['file']
+        identity = (row['route'], template)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        candidates.append({'url': row['route'], 'template': template, 'is_dynamic': row['is_dynamic'],
+                           'kind': row['kind'], 'method': row['method']})
+    return candidates
+
+
 def run_onpage_graph(repo_path=None, *, mode=None, site_url=None, max_runtime_pages=100,
-                     runtime_timeout=12, resume=None, on_checkpoint=None):
+                     runtime_timeout=12, resume=None, on_checkpoint=None, snapshot=None, context=None,
+                     element_index=None, routes=None, max_concurrency=None):
+    """Run the seven categories. Pass `snapshot`/`context`/`element_index` to reuse the pipeline's single capture."""
     begun = start("on-page graph (7 checks)")
-    log('on-page execution: sequential (one agent at a time)')
+    max_concurrency = int(os.getenv('SEO_AGENT_CONCURRENCY', '4')) if max_concurrency is None else max_concurrency
+    if type(max_concurrency) is not int or not 1 <= max_concurrency <= 16:
+        raise ValueError('SEO_AGENT_CONCURRENCY must be an integer from 1 to 16')
+    log('on-page execution: DAG urls -> {page_structure, internal_links, media, metadata} -> content -> eeat '
+        '(max_concurrency=' + str(max_concurrency) + ')')
     mode = mode or os.getenv('SEO_EXPLORATION_MODE', 'agent')
-    graph = build_onpage_graph(mode, site_url=site_url, max_runtime_pages=max_runtime_pages, runtime_timeout=runtime_timeout)
-    with progress('repository snapshot'):
-        snapshot = snapshot_repository(repo_path)
+    shared = {}
+    graph = build_onpage_graph(mode, site_url=site_url, max_runtime_pages=max_runtime_pages,
+                               runtime_timeout=runtime_timeout, shared=shared)
+    if snapshot is None:
+        with progress('repository snapshot'):
+            snapshot = snapshot_repository(repo_path)
     log('repository captured: ' + str(len(snapshot['files'])) + ' source files, ' + str(len(snapshot['assets'])) + ' assets')
-    with progress('repository context'):
-        context = build_context(snapshot)
+    if context is None:
+        with progress('repository context'):
+            context = build_context(snapshot)
+    if mode == 'agent' and snapshot['files']:
+        if element_index is None:
+            with progress('element index'):
+                from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+                element_index = build_element_index(snapshot)
+        shared['element_index'] = element_index
+        shared['route_candidates'] = routes if routes is not None else deterministic_route_candidates(snapshot)
     header = {'snapshot_sha256': snapshot['sha256'], 'extraction_identity': extraction_identity(mode),
               'mode': mode, 'completed': []}
     start_state = {'artifacts': {}, 'snapshot': snapshot, 'context': context, 'checkpoint': header}
@@ -195,10 +254,17 @@ def run_onpage_graph(repo_path=None, *, mode=None, site_url=None, max_runtime_pa
     try:
         if not snapshot['files']:
             raise ValueError('No textual source captured; inventory is retained for diagnosing scope/capture gaps')
-        for update in graph.stream(start_state, config={'max_concurrency': 1}, stream_mode='updates'):
+        for update in graph.stream(start_state, config={'max_concurrency': max_concurrency}, stream_mode='updates'):
             for values in update.values():
-                if values:
-                    result.update(values)
+                if not values:
+                    continue
+                for key, value in values.items():
+                    if key in {'artifacts', 'agent_runs'}:
+                        result[key] = merge_dicts(result.get(key), value)
+                    else:
+                        result[key] = value
+                if 'artifacts' in values:
+                    log('on-page progress: ' + str(len(result['artifacts'])) + '/' + str(len(CHECKS)) + ' reports completed')
             result['checkpoint'] = {**header, 'completed': [key for key in CHECKS if key in result['artifacts']],
                                     'agent_runs': result.get('agent_runs', {})}
             if on_checkpoint:
@@ -213,6 +279,7 @@ def run_onpage_graph(repo_path=None, *, mode=None, site_url=None, max_runtime_pa
             if on_checkpoint:
                 on_checkpoint(dict(result))
         raise ExplorationIncomplete(error, result) from error
+    result['artifacts'] = result['evidence']['reports']  # One shared object for reports and evidence.
     result['evidence']['checkpoint'] = result['checkpoint']
     done("on-page graph (7 checks)", begun)
     return result

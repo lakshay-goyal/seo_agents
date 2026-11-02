@@ -1,0 +1,154 @@
+{
+  "$schema": "./schema.json",
+  "name": "client-diagnostics",
+  "signals": [
+    {
+      "id": "effect-fetch",
+      "label": "Data fetched after mount (effect/mounted hook)",
+      "regex": "(?:\\b(?:useEffect|useLayoutEffect|onMounted|onMount)\\s*\\(|\\b(?:mounted|ngOnInit|componentDidMount)\\s*\\(\\s*\\)\\s*\\{)[\\s\\S]{0,300}?\\b(?:fetch|axios|\\$http|httpClient|\\.get)\\s*[(<]",
+      "block": true,
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "useEffect(() => { fetch('/api') })"
+        ],
+        "no_match": [
+          "useEffect(() => { setOpen(true) })"
+        ]
+      }
+    },
+    {
+      "id": "runtime-head",
+      "label": "Runtime head mutation",
+      "regex": "document\\.title\\s*=|document\\.head\\.appendChild|setAttribute\\s*\\(\\s*['\"]content['\"]",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "document.title = 'x'"
+        ],
+        "no_match": [
+          "const title = 'x'"
+        ]
+      }
+    },
+    {
+      "id": "raw-html",
+      "label": "Raw HTML injection",
+      "regex": "dangerouslySetInnerHTML|v-html=|\\{@html\\b|\\[innerHTML\\]|\\.innerHTML\\s*=",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "dangerouslySetInnerHTML={{__html: x}}",
+          "v-html=\"x\"",
+          "{@html body}"
+        ],
+        "no_match": [
+          "innerText"
+        ]
+      }
+    },
+    {
+      "id": "browser-global",
+      "label": "Browser-only global access",
+      "regex": "typeof\\s+window\\s*[!=]==?|\\bwindow\\.(?:location|innerWidth|localStorage)|\\blocalStorage\\.getItem",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "typeof window !== 'undefined'",
+          "window.location.href"
+        ],
+        "no_match": [
+          "windowSize"
+        ]
+      }
+    },
+    {
+      "id": "nondeterministic-render",
+      "label": "Non-deterministic value (hydration mismatch risk)",
+      "regex": "\\{(?![^{}\\n]*(?:=>|\\bfunction\\b|\\breturn\\b))[^{}\\n]*(?:Math\\.random\\s*\\(|new\\s+Date\\s*\\(\\s*\\)\\.(?:toLocale\\w*|get\\w+)\\s*\\(|Date\\.now\\s*\\()[^{}\\n]*\\}",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "low",
+      "examples": {
+        "match": [
+          "<p>© {new Date().getFullYear()}</p>",
+          "{{ Math.random() }}"
+        ],
+        "no_match": [
+          "onClick={() => track(Date.now())}",
+          "const t = Date.now();"
+        ]
+      }
+    },
+    {
+      "id": "hash-router",
+      "label": "Hash-based routing",
+      "regex": "createHashRouter|HashRouter|createWebHashHistory|useHash\\s*:\\s*true|withHashLocation|mode\\s*:\\s*['\"]hash['\"]",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "createHashRouter(",
+          "mode: 'hash'"
+        ],
+        "no_match": [
+          "createBrowserRouter("
+        ]
+      }
+    },
+    {
+      "id": "js-navigation",
+      "label": "Navigation via JS click handler instead of link",
+      "regex": "onClick\\s*=\\s*\\{[^}]*(?:navigate|router\\.push|history\\.push|location\\.href)|@click\\s*=\\s*['\\\"][^'\\\"]*(?:router\\.push|\\$router)|on:click=\\{[^}]*goto|\\(click\\)\\s*=\\s*['\\\"][^'\\\"]*router\\.navigate",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "onClick={() => navigate('/x')}",
+          "(click)=\"router.navigate(['/x'])\""
+        ],
+        "no_match": [
+          "<Link to=\"/x\">"
+        ]
+      }
+    },
+    {
+      "id": "lazy-content",
+      "label": "Content behind lazy/conditional client rendering",
+      "regex": "React\\.lazy\\s*\\(|\\blazy\\s*\\(\\s*\\(\\)\\s*=>|defineAsyncComponent\\s*\\(|next/dynamic",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "React.lazy(() => import('./X'))",
+          "import dynamic from 'next/dynamic'"
+        ],
+        "no_match": [
+          "lazyLoad = true"
+        ]
+      }
+    }
+  ],
+  "gaps": [],
+  "framework_agnostic": true,
+  "execution_hint": "Move content data loading to the server/build step (loader, getStaticProps, server component, load function), replace JS-only navigation with real links, use history-mode routing, set head tags through the framework head API rather than document.title, and render random/date values only after hydration."
+}
