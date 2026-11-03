@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "seo-agents/skill-profile/1.0",
+  "title": "Deterministic skill profile",
+  "description": "Regex signals applied by tools/skill_runner.py. Enforced at load time by skill_runner.validate_profile and tested by tests/test_skill_profiles.py.",
+  "type": "object",
+  "required": ["name", "signals", "gaps"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {"type": "string"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "framework_agnostic": {"type": "boolean"},
+    "execution_hint": {"type": "string", "description": "Guidance for the execution phase; never emitted in exploration output."},
+    "framework_markers": {"type": "object"},
+    "weights": {"type": "object"},
+    "limits": {"type": "object"},
+    "conventions": {"type": "array", "items": {"$ref": "#/$defs/convention"}},
+    "declarations": {"type": "array", "items": {"$ref": "#/$defs/declaration"}},
+    "signals": {"type": "array", "items": {"$ref": "#/$defs/signal"}},
+    "gaps": {"type": "array", "items": {"$ref": "#/$defs/gap"}}
+  },
+  "$defs": {
+    "examples": {
+      "type": "object", "required": ["match", "no_match"], "additionalProperties": false,
+      "properties": {
+        "match": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "no_match": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+      }
+    },
+    "signal": {
+      "type": "object",
+      "required": ["id", "label", "regex", "precision", "examples"],
+      "additionalProperties": false,
+      "anyOf": [{"required": ["files_only"]}, {"required": ["glob"]}, {"required": ["languages"]}],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "label": {"type": "string"},
+        "regex": {"type": "string", "description": "Python regex; compiled with re.M (+ re.I when ignore_case)."},
+        "precision": {"enum": ["high", "medium", "low"]},
+        "examples": {"$ref": "#/$defs/examples"},
+        "files_only": {"type": "boolean", "description": "Match against file paths instead of file contents."},
+        "glob": {"type": "array", "items": {"type": "string"}},
+        "languages": {"type": "array", "items": {"type": "string"}, "description": "source_index.language_of names or @groups (@markup, @scripts, @templates, @content, @data, @styles, @server, @config)."},
+        "exclude": {"type": "string", "description": "Regex on the file path; matching files are skipped."},
+        "requires": {"type": "string", "description": "Regex that must occur somewhere in the file before the signal runs on it."},
+        "exclude_comments": {"type": "boolean"},
+        "include_docs": {"type": "boolean"},
+        "ignore_case": {"type": "boolean"},
+        "block": {"type": "boolean"},
+        "value_group": {"type": "integer", "minimum": 1},
+        "mode": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "gap": {
+      "type": "object", "required": ["id", "label", "when_none_of"], "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"}, "label": {"type": "string"},
+        "when_none_of": {"type": "array", "items": {"type": "string"}},
+        "only_if_any": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "convention": {
+      "type": "object", "required": ["pattern", "kind", "adapter"], "additionalProperties": false,
+      "properties": {
+        "pattern": {"type": "string", "description": "Path regex; group `route`, `name` (with route_map) or any group used by route_template."},
+        "kind": {"type": "string"}, "adapter": {"type": "string"},
+        "exclude": {"type": "string"}, "dot_segments": {"type": "boolean"},
+        "requires_path": {"type": "string", "description": "Convention applies only when some repository path matches."},
+        "route_map": {"type": "object", "additionalProperties": {"type": "string"}},
+        "route_template": {"type": "string"}, "route_default": {"type": "string"}
+      }
+    },
+    "declaration": {
+      "type": "object", "required": ["glob", "regex", "kind", "adapter"], "additionalProperties": false,
+      "properties": {
+        "glob": {"type": "string"}, "regex": {"type": "string"}, "kind": {"type": "string"}, "adapter": {"type": "string"},
+        "requires": {"type": "string"},
+        "parser": {"enum": ["jsx-routes", "object-routes", "django-urls", "rails-routes"]},
+        "resource": {"type": "boolean"}
+      }
+    }
+  }
+}
