@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from seo_agents.sandbox.clone import clone_command, clone_repo
+from seo_agents.sandbox.clone import clone_command, clone_repo, repo_folder
 from seo_agents.sandbox.in_container import site_model_files
 from seo_agents.sandbox.pr import create_pr, safe_relative
 from seo_agents.sandbox.tools.local import LocalResult
@@ -38,8 +38,8 @@ class ShellQuotingTests(unittest.TestCase):
         hostile_target = "/tmp/x; echo INJECTED > pwned"
         command = clone_command('https://github.com/a/b', hostile_target)
         with tempfile.TemporaryDirectory() as directory:
-            # Replace git/test with echo so nothing touches the network or filesystem.
-            script = 'test() { return 1; }\ngit() { printf "%s\\0" "$@"; }\n' + command
+            # Replace rm/mkdir/git with stubs so nothing touches the network or filesystem.
+            script = 'rm() { :; }\nmkdir() { :; }\ngit() { printf "%s\\0" "$@"; }\n' + command
             result = subprocess.run(['bash', '-c', script], cwd=directory, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertEqual(list(Path(directory).iterdir()), [])
@@ -69,7 +69,15 @@ class ShellQuotingTests(unittest.TestCase):
         add = next(args[0] for args, _ in runner.run.call_args_list if ' git add ' in args[0])
         self.assertIn("'seo_reports/site_model/pages/p_1 $(id).json'", add)
         writes = [args[0] for args, _ in runner.write.call_args_list]
-        self.assertIn('/tmp/example-site/seo_reports/site_model/index.json', writes)
+        self.assertIn(repo_folder('https://github.com/example-owner/example-site') + '/seo_reports/site_model/index.json', writes)
+        self.assertNotIn('.seo_agents/readme.md', ' '.join(writes))
+        push = next(args[0] for args, _ in runner.run.call_args_list if ' git push ' in args[0])
+        self.assertNotIn('--force', push)
+        self.assertIn('HEAD:refs/heads/seo-agents/', push)
+
+    def test_same_repo_name_under_two_owners_never_shares_a_checkout(self):
+        self.assertNotEqual(repo_folder('https://github.com/alice/site'), repo_folder('https://github.com/bob/site'))
+        self.assertIn('rm -rf', clone_command('https://github.com/alice/site', repo_folder('https://github.com/alice/site')))
 
     def test_site_model_files_are_mapped_under_seo_reports(self):
         with tempfile.TemporaryDirectory() as directory:

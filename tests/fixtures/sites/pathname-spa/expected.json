@@ -1,0 +1,13 @@
+{
+  "framework": "react-spa",
+  "pages": [
+    {"url": "/", "fields": {"title": "Asha Rao — Software Engineer",
+                            "description": "Asha Rao is a software engineer building mobile and web products."},
+     "attribution": {"title": {"file": "index.html", "line": 7}, "description": {"file": "index.html", "line": 6}}},
+    {"url": "/about", "fields": {}},
+    {"url": "/bookshelf", "fields": {}},
+    {"url": "/blog", "fields": {}},
+    {"url": "/blog/:slug", "fields": {}},
+    {"url": "/blog/deploying-with-vercel", "fields": {}}
+  ]
+}

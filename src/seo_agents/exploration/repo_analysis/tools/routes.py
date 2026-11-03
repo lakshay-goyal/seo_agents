@@ -34,7 +34,9 @@ def normalize_route(raw, dot_segments=False):
         route = re.sub(r'(^|/)\$$', r'\1*', route)
     parts = []
     for part in route.split('/'):
-        if not part or re.fullmatch(r'\(.*\)', part) or part.startswith('@'):
+        if re.match(r'^\((?:\.{1,3}|\.\.\)\(\.\.)\)', part):
+            return None  # Next intercepting route `(.)photo`: not a URL of its own
+        if not part or re.fullmatch(r'\([^()]*\)', part) or part.startswith('@'):
             continue
         if dot_segments and part.startswith('_') and part != '_index':
             continue
@@ -61,7 +63,10 @@ def _convention_route(rule, match):
     if rule.get('route_template'):
         values = dict(groups)
         if 'route' in values:
-            values['route'] = normalize_route(values['route'], rule.get('dot_segments', False)).strip('/')
+            normalized = normalize_route(values['route'], rule.get('dot_segments', False))
+            if normalized is None:
+                return None
+            values['route'] = normalized.strip('/')
         try:
             route = rule['route_template'].format(**values)
         except (KeyError, IndexError):
@@ -131,12 +136,16 @@ def parse_jsx_routes(text):
 
 
 OBJECT_TOKENS = re.compile(r'''children\s*:\s*\[|\bpath\s*:\s*(['"`])([^'"`]*)\1|[\[\]{}]''')
+ROUTE_OBJECT_KEYS = re.compile(r'''\b(?:element|component|Component|lazy|loadComponent|loadChildren|children|redirectTo|redirect|index|errorElement|components)\s*:''')
 
 
 def parse_object_routes(text):
-    """(start, end, full_path) for `{ path, children: [...] }` route objects at any depth."""
+    """(start, end, full_path) for `{ path, children: [...] }` route objects at any depth.
+
+    Only router-shaped objects count: `{ path: '/api/v1' }` without element/component/children/... is
+    configuration, not a page."""
     found = []
-    objects = []      # stack of {'prefix': str, 'path': full or None}
+    objects = []      # stack of {'prefix': str, 'path': full or None, 'start': offset, 'hit': (s, e, full) | None}
     brackets = []     # stack of ('children', prefix) | ('plain', None)
     for match in OBJECT_TOKENS.finditer(text):
         token = match.group(0)
@@ -152,18 +161,21 @@ def parse_object_routes(text):
                 brackets.pop()
         elif token == '{':
             prefix = next((p for kind, p in reversed(brackets) if kind == 'children'), '')
-            objects.append({'prefix': prefix, 'path': None})
+            objects.append({'prefix': prefix, 'path': None, 'start': match.start(), 'hit': None})
         elif token == '}':
             if objects:
-                objects.pop()
+                current = objects.pop()
+                if current['hit'] and ROUTE_OBJECT_KEYS.search(text[current['start']:match.end()]):
+                    found.append(current['hit'])
         else:
             value = match.group(2)
-            current = objects[-1] if objects else {'prefix': '', 'path': None}
+            current = objects[-1] if objects else {'prefix': '', 'path': None, 'start': 0, 'hit': None}
             if current['path'] is not None:
                 continue  # only the object's own first `path:` key
             full = join_route(current['prefix'], value)
             current['path'] = full
-            found.append((match.start(), match.end(), full))
+            current['hit'] = (match.start(), match.end(), full)
+    found.sort()
     return found
 
 

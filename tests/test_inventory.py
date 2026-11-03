@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from seo_agents.exploration.repo_analysis.tools.inventory import inventory, routes
-from seo_agents.exploration.repo_analysis.json_analysis import analyze_directory, analyze_reports
 from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
 from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
 
@@ -84,9 +83,6 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
         self.assertIsNone(items[2]['effective_loading'])
         self.assertIn('alt', items[2]['unresolved_attributes'])
         self.assertEqual(items[3]['preload'], 'metadata')
-        analysis = analyze_reports({'media': inventory(self.repo, 'media')})
-        self.assertFalse(any(f['code'] == 'alt_not_observed' for f in analysis['findings']))
-        self.assertTrue(any(f['code'] == 'large_source_asset' for f in analysis['findings']))
 
     def test_eeat_requires_visible_evidence_not_variable_names(self):
         self.write('app/fake/page.tsx', 'const author = "contact us"; export default function Fake() { return <p>Hello</p> }')
@@ -108,14 +104,7 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
             self.assertNotIn('repo', report)
             self.assertNotIn('ai', report)
             (folder / filename).write_text(json.dumps(report))
-        expected = analyze_reports(reports)
-        self.assertEqual(analyze_directory(folder), expected)
-        self.assertEqual(analyze_reports(dict(reversed(list(reports.items())))), expected)
-
-    def test_heading_return_to_higher_level_is_valid(self):
-        self.write('app/order/page.tsx', '<main><h1>A</h1><h2>B</h2><h3>C</h3><h2>D</h2></main>')
-        report = analyze_reports({'page_structure': inventory(self.repo, 'page_structure')})
-        self.assertFalse(any(f['url'] == '/order' and f['code'] == 'heading_level_skipped' for f in report['findings']))
+        self.assertEqual(json.loads((folder / REPORT_FILES['media']).read_text()), reports['media'])
 
     def test_imported_assets_literal_constants_and_literal_expression_text(self):
         self.write('app/assets/page.tsx', '''import photo from '../../public/hero.png';

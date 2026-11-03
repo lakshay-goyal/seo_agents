@@ -220,7 +220,7 @@
     {
       "id": "build-config",
       "label": "Build/bundler configuration file",
-      "regex": "(?:^|/)(?:vite|webpack|rollup|next|nuxt|astro|svelte|gatsby-config|angular|tsconfig|babel|postcss|tailwind|hugo|eleventy|\\.eleventy|docusaurus\\.config|remix\\.config|quasar\\.config)[\\w.-]*\\.(?:js|cjs|mjs|ts|json|toml|ya?ml)$|(?:^|/)_config\\.ya?ml$|(?:^|/)config/settings_schema\\.json$|(?:^|/)theme\\.json$|(?:^|/)shopify\\.theme\\.toml$",
+      "regex": "(?:^|/)(?:vite|webpack|rollup|next|nuxt|astro|svelte|gatsby-config|gatsby-node|angular|hugo|eleventy|\\.eleventy|docusaurus\\.config|remix\\.config|react-router\\.config|quasar\\.config|vike\\.config)[\\w.-]*\\.(?:js|cjs|mjs|ts|json|toml|ya?ml)$|(?:^|/)config/_default/[\\w.-]+\\.(?:toml|ya?ml|json)$|(?:^|/)_config\\.ya?ml$|(?:^|/)config/settings_schema\\.json$|(?:^|/)theme\\.json$|(?:^|/)shopify\\.theme\\.toml$",
       "files_only": true,
       "precision": "high",
       "examples": {
@@ -229,10 +229,33 @@
           "next.config.mjs",
           "hugo.toml",
           "_config.yml",
-          "config/settings_schema.json"
+          "config/settings_schema.json",
+          "react-router.config.ts",
+          "config/_default/hugo.toml"
         ],
         "no_match": [
-          "src/config.ts"
+          "src/config.ts",
+          "tsconfig.json",
+          "tailwind.config.js",
+          "postcss.config.cjs",
+          "babel.config.js"
+        ]
+      }
+    },
+    {
+      "id": "hosting-config",
+      "label": "Hosting/deployment configuration (redirects, rewrites, headers live here)",
+      "regex": "(?:^|/)(?:vercel\\.json|netlify\\.toml|_headers|_redirects|firebase\\.json|wrangler\\.toml|wrangler\\.jsonc?|staticwebapp\\.config\\.json|app\\.yaml|render\\.yaml|fly\\.toml|amplify\\.yml|\\.htaccess|nginx[\\w.-]*\\.conf|Caddyfile)$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "vercel.json",
+          "wrangler.toml",
+          "public/_headers"
+        ],
+        "no_match": [
+          "src/vercel.ts"
         ]
       }
     }

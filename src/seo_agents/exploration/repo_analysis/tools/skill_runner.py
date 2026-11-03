@@ -8,6 +8,7 @@ Jinja/Django, Hugo/Go templates, plain HTML), so no framework detection is neede
 `skills/<name>/SKILL.md` is human documentation only and is not read at runtime.
 """
 
+from bisect import bisect_right
 from functools import lru_cache
 import hashlib
 import json
@@ -155,7 +156,8 @@ def signal_paths(index, signal):
             continue
         if exclude and exclude.search(path):
             continue
-        if not signal.get('include_docs') and not signal.get('files_only') and DOC_FILES.search(path):
+        if not signal.get('include_docs') and not signal.get('files_only') and (
+                DOC_FILES.search(path) or (hasattr(index, 'is_doc') and index.is_doc(path))):
             continue
         paths.append(path)
     return paths
@@ -164,34 +166,103 @@ def signal_paths(index, signal):
 _paths_for = signal_paths  # backwards-compatible private name
 
 
-HASH_COMMENT_LANGUAGES = {'python', 'ruby', 'yaml', 'toml', 'server-config', 'text', 'other', 'dockerfile', 'makefile', 'procfile', 'php'}
-STAR_COMMENT_LANGUAGES = {'javascript', 'typescript', 'css', 'scss', 'sass', 'less', 'php', 'java', 'kotlin', 'csharp', 'go', 'rust'}
+HASH_COMMENT_LANGUAGES = {'python', 'ruby', 'yaml', 'toml', 'server-config', 'text', 'other', 'dockerfile', 'makefile',
+                          'procfile', 'gemfile'}
+SLASH_COMMENT_LANGUAGES = {'javascript', 'typescript', 'java', 'kotlin', 'csharp', 'go', 'rust', 'dart', 'scss', 'less'}
+CSS_LANGUAGES = {'css', 'sass'}
+MARKUP_LANGUAGES = {'html', 'vue', 'svelte', 'astro', 'mdx', 'markdown', 'erb', 'php', 'blade', 'twig', 'liquid',
+                    'nunjucks', 'handlebars', 'ejs', 'pug', 'razor', 'jinja', 'xml'}
+# Template-language comment delimiters. Svelte `{#if}` / Handlebars `{{#each}}` are blocks, not comments.
+TEMPLATE_COMMENTS = {
+    'twig': (('{#', '#}'),), 'nunjucks': (('{#', '#}'),), 'jinja': (('{#', '#}'),),
+    'liquid': (('{% comment %}', '{% endcomment %}'), ('{%- comment -%}', '{%- endcomment -%}'), ('{% comment -%}', '{%- endcomment %}')),
+    'handlebars': (('{{!--', '--}}'), ('{{!', '}}')), 'blade': (('{{--', '--}}'),), 'erb': (('<%#', '%>'),),
+    'ejs': (('<%#', '%>'),), 'razor': (('@*', '*@'),),
+}
+SCRIPT_BLOCK = re.compile(r'<script\b[^>]*>(.*?)</script\s*>|<\?php\b(.*?)(?:\?>|\Z)', re.S | re.I)
+STYLE_BLOCK = re.compile(r'<style\b[^>]*>(.*?)</style\s*>', re.S | re.I)
+ASTRO_FRONTMATTER = re.compile(r'\A---\s*\n(.*?)\n---', re.S)
+
+
+def _code_comments(text, start, end, *, slash=True, hash_=False, block=True):
+    """Comment ranges in [start, end) of C-like or hash-comment code. Strings are skipped; '/" strings
+    end at a newline (so prose apostrophes in JSX text cannot swallow following lines)."""
+    ranges, i = [], start
+    while i < end:
+        char = text[i]
+        if char in '"\'`':
+            quote, i = char, i + 1
+            while i < end and text[i] != quote:
+                if text[i] == '\\':
+                    i += 1
+                elif text[i] == '\n' and quote != '`':
+                    break
+                i += 1
+            i += 1
+        elif block and text.startswith('/*', i):
+            close = text.find('*/', i + 2, end)
+            stop = end if close < 0 else close + 2
+            ranges.append((i, stop))
+            i = stop
+        elif (slash and text.startswith('//', i) and not (i > 0 and text[i - 1] == ':')) or (hash_ and char == '#'):
+            close = text.find('\n', i, end)
+            stop = end if close < 0 else close
+            ranges.append((i, stop))
+            i = stop
+        else:
+            i += 1
+    return ranges
+
+
+def _delimited(text, pairs, start=0, end=None):
+    end = len(text) if end is None else end
+    ranges = []
+    for opener, closer in pairs:
+        position = text.find(opener, start, end)
+        while position >= 0:
+            close = text.find(closer, position + len(opener), end)
+            stop = end if close < 0 else close + len(closer)
+            ranges.append((position, stop))
+            position = text.find(opener, stop, end)
+    return ranges
+
+
+@lru_cache(maxsize=256)
+def comment_ranges(text, language=None):
+    """Sorted (start, end) comment spans using the real comment syntax of `language`."""
+    if language in SLASH_COMMENT_LANGUAGES:
+        ranges = _code_comments(text, 0, len(text))
+    elif language in CSS_LANGUAGES:
+        ranges = _code_comments(text, 0, len(text), slash=False)
+    elif language == 'python':
+        ranges = _code_comments(text, 0, len(text), slash=False, hash_=True, block=False)
+    elif language in HASH_COMMENT_LANGUAGES:
+        ranges = [(m.start(1), m.end(1)) for m in re.finditer(r'(?m)^[ \t]*(#.*)$', text)]
+        ranges += [(m.start(1), m.end(1)) for m in re.finditer(r'(?m)(?<=\s)(#.*)$', text)
+                   if language in {'ruby', 'yaml', 'toml', 'server-config', 'text'}]
+    elif language in MARKUP_LANGUAGES:
+        ranges = _delimited(text, (('<!--', '-->'),)) + _delimited(text, TEMPLATE_COMMENTS.get(language, ()))
+        for match in SCRIPT_BLOCK.finditer(text):
+            group = 1 if match.group(1) is not None else 2
+            ranges += _code_comments(text, match.start(group), match.end(group), hash_=group == 2)
+        for match in STYLE_BLOCK.finditer(text):
+            ranges += _code_comments(text, match.start(1), match.end(1), slash=False)
+        if language in {'astro', 'mdx'}:
+            front = ASTRO_FRONTMATTER.match(text)
+            if front:
+                ranges += _code_comments(text, front.start(1), front.end(1))
+    else:
+        ranges = []
+    return tuple(sorted(ranges))
 
 
 def in_comment(text, offset, language=None):
-    """True when `offset` sits inside a comment: `//`, `/* */`, `<!-- -->`, Liquid/Jinja/Handlebars
-    comments, and `#`/`*` line prefixes only for languages where those start comments."""
-    line_start = text.rfind('\n', 0, offset) + 1
-    segment = text[line_start:offset]
-    prefix = segment.lstrip()
-    if prefix.startswith(('//', '/*', '<!--', '{#', '{{!', '{%- comment', '{% comment')):
-        return True
-    if prefix.startswith('#') and language in HASH_COMMENT_LANGUAGES:
-        return True
-    if prefix.startswith('*') and language in STAR_COMMENT_LANGUAGES:
-        return True
-    for match in re.finditer('//', segment):
-        before = segment[:match.start()]
-        if before.endswith(':'):
-            continue  # URL scheme, not a comment
-        if before.count('"') % 2 == 0 and before.count("'") % 2 == 0 and before.count('`') % 2 == 0:
-            return True
-    window = text[max(0, offset - 4000):offset]
-    for opener, closer in (('<!--', '-->'), ('/*', '*/'), ('{% comment %}', '{% endcomment %}'), ('{#', '#}')):
-        position = window.rfind(opener)
-        if position >= 0 and window.find(closer, position + len(opener)) < 0:
-            return True
-    return False
+    """True when `offset` sits inside a comment of the file's own language (`//`, `/* */`, `<!-- -->`,
+    `{# #}` only for Jinja-family, `{% comment %}` for Liquid, `#` only for hash-comment languages).
+    Strings are skipped, so `'src/**/*.js'` and Svelte `{#if}` do not open a comment."""
+    ranges = comment_ranges(text, language)
+    position = bisect_right(ranges, (offset, float('inf'))) - 1
+    return position >= 0 and ranges[position][0] <= offset < ranges[position][1]
 
 
 def run_signal(index, signal, stats=None):

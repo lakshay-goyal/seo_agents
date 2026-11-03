@@ -43,6 +43,10 @@ class _Summary(HTMLParser):
         self.title_parts = None
         self.script = None
         self.body_text, self.main_text = [], []
+        self.landmarks = {'main': 0, 'nav': 0, 'issues': [], 'inside': {}}
+
+    def under_main_excluding(self, node):
+        return any((n['tag'] == 'main' or n['attrs'].get('role') == 'main') for n in self.stack if n is not node)
 
     def path(self):
         return ' > '.join(f"{n['tag']}:nth-of-type({n['nth']})" for n in self.stack[-6:])
@@ -50,9 +54,19 @@ class _Summary(HTMLParser):
     def section(self):
         return next((n['tag'] for n in reversed(self.stack) if n['tag'] in SEMANTIC), 'body')
 
+    def in_chrome(self):
+        return any(n['tag'] in CHROME for n in self.stack)
+
+    def under_main(self):
+        return any(n['tag'] == 'main' or n['attrs'].get('role') == 'main' for n in self.stack)
+
     def in_main(self):
-        tags = {n['tag'] for n in self.stack}
-        return not tags & CHROME
+        """Placeholder resolved in `summarize_html` once we know whether the page has a <main>:
+        literal <main> ancestry when it does, otherwise "outside header/nav/footer/aside"."""
+        return {'under_main': self.under_main(), 'in_chrome': self.in_chrome()}
+
+    def src_hint(self, attrs):
+        return source_hint(attrs)
 
     def handle_starttag(self, tag, attrs):
         attrs = {k.lower(): (v if v is not None else '') for k, v in attrs}
@@ -82,7 +96,8 @@ class _Summary(HTMLParser):
                                        'loading': attrs.get('loading'), 'decoding': attrs.get('decoding'),
                                        'fetchpriority': attrs.get('fetchpriority'), 'srcset': attrs.get('srcset'),
                                        'sizes': attrs.get('sizes'), 'section': self.section(), 'in_main': self.in_main(),
-                                       'path': self.path() + f' > img:nth-of-type({siblings[tag]})'})
+                                       'path': self.path() + f' > img:nth-of-type({siblings[tag]})',
+                                       'src_hint': source_hint(attrs)})
             for ancestor in self.stack:
                 if ancestor['tag'] == 'a' and attrs.get('alt'):
                     ancestor.setdefault('img_alt', []).append(attrs['alt'])
@@ -96,9 +111,20 @@ class _Summary(HTMLParser):
             node['link'] = {'href': attrs.get('href'), 'resolved': self._resolve(attrs.get('href')), 'text': None,
                             'aria_label': attrs.get('aria-label'), 'title': attrs.get('title'), 'rel': attrs.get('rel'),
                             'target': attrs.get('target'), 'section': self.section(), 'in_main': self.in_main(),
-                            'path': self.path()}
+                            'path': self.path(), 'src_hint': source_hint(attrs)}
         if re.fullmatch(r'h[1-6]', tag):
-            node['heading'] = {'level': int(tag[1]), 'text': None, 'section': self.section(), 'path': self.path()}
+            node['heading'] = {'level': int(tag[1]), 'text': None, 'section': self.section(), 'in_main': self.in_main(),
+                               'path': self.path(), 'src_hint': source_hint(attrs)}
+        if tag == 'main' or attrs.get('role') == 'main':
+            self.landmarks['main'] += 1
+            if self.in_chrome():
+                self.landmarks['issues'].append({'issue': 'main-inside-chrome', 'path': self.path()})
+        elif tag in CHROME:
+            if self.under_main_excluding(node):
+                key = tag + '-inside-main'
+                self.landmarks['inside'][key] = self.landmarks['inside'].get(key, 0) + 1
+        if tag == 'nav':
+            self.landmarks['nav'] += 1
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -135,7 +161,7 @@ class _Summary(HTMLParser):
         if node['tag'] in BLOCK_TAGS and text and not any(n['tag'] in BLOCK_TAGS for n in self.stack[:-1] if n is not node):
             self.out['blocks'].append({'tag': node['tag'], 'text': text[:2000], 'section': next(
                 (n['tag'] for n in reversed(self.stack) if n['tag'] in SEMANTIC and n is not node), 'body'),
-                'in_main': self.in_main(), 'path': self.path()})
+                'in_main': self.in_main(), 'path': self.path(), 'src_hint': source_hint(node['attrs'])})
 
     def handle_data(self, data):
         if self.title_parts is not None:
@@ -152,7 +178,7 @@ class _Summary(HTMLParser):
             node['text'].append(data)
         if data.strip() and 'body' in tags | {'body'}:
             self.body_text.append(data)
-            if self.in_main():
+            if not self.in_chrome():
                 self.main_text.append(data)
 
     def _resolve(self, href):
@@ -162,6 +188,23 @@ class _Summary(HTMLParser):
             return urljoin(self.base, href.strip())
         except ValueError:
             return None
+
+
+SOURCE_LOCATION = re.compile(r'^[^\s:"\'<>]+\.[A-Za-z0-9]+:\d+:\d+$')
+
+
+def source_hint(attrs):
+    """Build-instrumentation source location ("file:line:col") when the element carries one:
+    data-seo-src (our Vite plugin), data-src only when it looks like a location (lazy-loaders use
+    data-src for image URLs), react-dev-inspector and vite-plugin-vue-inspector attributes."""
+    for key in ('data-seo-src', 'data-src', 'data-v-inspector'):
+        value = attrs.get(key)
+        if value and SOURCE_LOCATION.match(value):
+            return value
+    path, line = attrs.get('data-inspector-relative-path'), attrs.get('data-inspector-line')
+    if path and line and str(line).isdigit():
+        return f"{path}:{line}:{attrs.get('data-inspector-column') or 1}"
+    return None
 
 
 def parse_json_ld(raw):
@@ -198,6 +241,18 @@ def summarize_html(html, url):
     for node in reversed(parser.stack):
         parser._close(node)
     out = parser.out
+    has_main = parser.landmarks['main'] > 0
+    for key in ('headings', 'links', 'images', 'blocks'):
+        for row in out[key]:
+            where = row.get('in_main')
+            if isinstance(where, dict):
+                row['in_chrome'] = where['in_chrome']
+                row['in_main'] = where['under_main'] if has_main else not where['in_chrome']
+    issues = list(parser.landmarks['issues'])
+    if parser.landmarks['main'] > 1:
+        issues.insert(0, {'issue': 'multiple-main', 'count': parser.landmarks['main']})
+    issues += [{'issue': key, 'count': count} for key, count in sorted(parser.landmarks['inside'].items())]
+    out['landmarks'] = {'main': parser.landmarks['main'], 'nav': parser.landmarks['nav'], 'issues': issues}
     out['word_count'] = words(' '.join(parser.body_text))
     out['main_word_count'] = words(' '.join(parser.main_text))
     return finalize(out)

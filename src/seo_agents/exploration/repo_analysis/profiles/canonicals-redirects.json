@@ -5,7 +5,7 @@
     {
       "id": "canonical",
       "label": "Canonical declaration",
-      "regex": "rel\\s*[=:]\\s*['\\\"]canonical['\\\"]|\\bcanonical\\s*[:=]|\\bcanonical_url\\b|\\brel_canonical\\b|\\bwp_get_canonical_url\\b|\\.Permalink\\b",
+      "regex": "rel\\s*[=:]\\s*['\"{]?\\s*['\"]?canonical['\"]|\\bcanonical\\s*[:=]|\\bcanonical_url\\b|\\brel_canonical\\b|\\bwp_get_canonical_url\\b",
       "ignore_case": true,
       "languages": [
         "@templates",
@@ -21,7 +21,8 @@
           "{{ canonical_url }}"
         ],
         "no_match": [
-          "canonicalize(x)"
+          "canonicalize(x)",
+          "{{ .Permalink }}"
         ]
       }
     },
@@ -49,7 +50,7 @@
     {
       "id": "redirect-file",
       "label": "Redirect rules file",
-      "regex": "(?:^|/)(?:_redirects|\\.htaccess|nginx[\\w.-]*\\.conf|vercel\\.json|netlify\\.toml|staticwebapp\\.config\\.json)$",
+      "regex": "(?:^|/)(?:_redirects|\\.htaccess|nginx[\\w.-]*\\.conf|vercel\\.json|netlify\\.toml|staticwebapp\\.config\\.json|firebase\\.json)$",
       "files_only": true,
       "precision": "high",
       "examples": {
@@ -141,6 +142,27 @@
         "no_match": [
           "src/lib/errors.ts",
           "src/utils/error.ts"
+        ]
+      }
+    },
+    {
+      "id": "spa-catch-all",
+      "label": "Client-side catch-all route (soft-404 risk unless the host answers 404)",
+      "regex": "\\bpath\\s*[:=]\\s*\\{?\\s*['\"]\\*{1,2}['\"]|['\"]/:pathMatch\\(\\.\\*\\)\\*?['\"]",
+      "precision": "medium",
+      "languages": [
+        "@templates"
+      ],
+      "exclude_comments": true,
+      "examples": {
+        "match": [
+          "<Route path=\"*\" element={<NotFound />} />",
+          "{ path: '**', component: NotFound }",
+          "{ path: '/:pathMatch(.*)*' }"
+        ],
+        "no_match": [
+          "<Route path=\"/about\" />",
+          "path: '/blog/*'"
         ]
       }
     }

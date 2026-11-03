@@ -21,38 +21,94 @@ python -m seo_agents.exploration.repo_analysis /path/to/site [--site-url URL] [-
 ```
 
 Requires Docker and `GITHUB_TOKEN` (classic PAT, `repo` scope) for the PR flow. Only
-plain `https://github.com/<owner>/<repo>` URLs are accepted; every shell argument in the
-clone/PR steps is quoted. Container dependencies are read from `pyproject.toml`.
+plain `https://github.com/<owner>/<repo>` URLs are accepted (anything else exits with code 2).
 `--render`/`--build` (or `SEO_RENDER=1`/`SEO_BUILD=1`) provision node, Playwright
 Chromium and Lighthouse in the sandbox on a best-effort basis; failures only reduce the
 available lenses, and the reason is recorded. See `.env.example` for every setting.
 
-The PR publishes `seo_reports/site_model/` (index.json, site.json, pages/*.json) and
-`seo_reports/repo_context.json`; with `--llm-agents`, also the seven legacy
-`seo_reports/onpage/*.json` reports.
+Security: each run uses a fresh, uniquely named `--rm` container with CPU/memory/pid limits
+and a fresh clone keyed by `owner/repo`; the analysed commit SHA is recorded and used as the
+PR base. Clone + analysis run **without** `GITHUB_TOKEN`; only the PR phase gets it, and it
+runs no repository code. `npm/yarn/pnpm install`, build and preview get an allowlisted
+environment (no tokens or API keys), run as an unprivileged user in their own process
+group, and are killed as a group on timeout. Secrets reach `docker exec` through a 0600
+`--env-file`, never `-e KEY=VALUE`.
+
+Each run pushes its own branch (`seo-agents/<date>-<sha7>`, no force-push). The PR commits
+only the compact planner files (`seo_reports/exploration/manifest.json`, `summary.json`)
+and on-page proposals within a 50 KB budget (`SEO_PR_COMMIT_BUDGET`; `SEO_PR_COMMIT_FULL=1`
+commits everything), and puts the summary in the PR body.
 
 ## How exploration works
 
-Deterministic code produces the facts; cheap models resolve only what code cannot.
+Deterministic code produces the facts; cheap models resolve only what code cannot. Works on
+any stack: the rendered site (when available) is ground truth, framework adapters are seeds.
 
 | Stage | What happens | Module |
 | --- | --- | --- |
-| A acquire | one snapshot (content-hash identity) → framework fingerprint → unified element index (JSX/TSX via tree-sitter; Vue/Svelte/Astro; HTML and every server template language with directives masked offset-for-offset; Markdown; JSON/YAML/TOML/PO data and i18n catalogs; composition edges incl. Liquid sections/snippets, `get_template_part`, `{% extends %}`, `@include`, partials, imports with tsconfig/Vite aliases) | `tools/framework.py`, `tools/element_index.py` |
-| B build/serve | `site_url`, else pre-built static HTML (SPA fallback when the host rewrites to index.html), else opt-in install+build+serve, else source-only | `runtime/build_serve.py` |
-| C URL manifest | framework adapters (file routes, router configs incl. nested children, Shopify JSON templates, WordPress template hierarchy, Django/Laravel/Rails/Flask/Express routes) ∪ literal static params ∪ content collections ∪ sitemaps ∪ build output ∪ crawl, with provenance | `tools/adapters.py`, `url_manifest.py` |
-| D measure | per URL in parallel (LangGraph `Send`): raw HTML + headers/redirects, rendered DOM desktop+mobile (Playwright), mobile parity, Lighthouse/PSI (mobile+desktop, median of N), link status, served-behaviour probes (robots, soft 404, trailing slash, http→https, security headers); BFS crawl gives click depth | `runtime/*`, `site_graph.py` |
-| E attribute | every served value → file:line:col + edit kind: lens agreement, exact literal, data/i18n match, composed data+template match; ties → gap queue | `source_lens.py`, `attribution.py` |
-| F gap workers | small-model task packets with candidate IDs + enums; validator → fresh retry → mid-tier escalation; 3-vote self-consistency for topic/intent and E-E-A-T; learned declarative adapters for unknown stacks, cached | `gap_workers.py`, `agents/gap/skills/` |
-| G assemble | index.json (planning), site.json (site facts, duplicates via SimHash, hreflang reciprocity, orphans, crawl errors, coverage ledger, model cost), pages/<id>.json; validators: schema, grounding, lens agreement | `site_model.py` |
+| A acquire | one snapshot (source dirs first; assets have their own budget; build output skipped; README/docs tagged `role: doc` and never treated as page content) → framework fingerprint (every framework above threshold, per package root for monorepos) → unified element index (JSX/TSX via tree-sitter; Vue/Svelte/Astro; HTML and every server template language; Markdown; JSON/YAML/TOML/PO data and i18n catalogs; composition edges). Every value has an exact span (`line, col, end_line, end_col`), content-anchored ids, same-file constant / prop / namespaced-i18n data flow, loop context (`in_loop`, `template_n`, `data_source` JSON pointers) and `shared`/`used_by` flags | `tools/framework.py`, `tools/element_index.py` |
+| B build/serve | `site_url`, else opt-in install+build+serve (per-tool port flags, yarn berry/corepack, workspace-root installs, readiness = 2xx), else pre-built HTML (flagged possibly stale), else source-only (degraded-mode banner in `manifest.json`). `SEO_INSTRUMENT=1` stamps `data-seo-src="file:line:col"` on rendered Vite/React elements for exact attribution | `runtime/build_serve.py` |
+| C URL manifest | adapters for every detected framework (file routes, router configs incl. route constants, pathname-switch SPAs, nav arrays, Next intercepting/parallel/`[locale]`, Remix v1, Gatsby `createPage`, Shopify, WordPress, Hugo/Jekyll/11ty front matter incl. TOML/aliases, Django/Laravel/Rails/Flask/Express/Razor) ∪ static params ∪ content collections ∪ sitemaps ∪ build output ∪ crawl ∪ gap-worker suggestions; every row has `discovered_by[]`; catch-all rewrites / client not-found views recorded as soft-404 risks | `tools/adapters.py`, `url_manifest.py`, `tools/head_recipes.py` |
+| D measure | canonical host resolved first (apex→www, http→https chain), then per URL in parallel: raw HTML + headers, rendered DOM desktop+mobile (pooled Chromium), Lighthouse (parallel, partial runs kept), link status (`ok/broken/blocked/error`), served probes on the final host (robots/sitemap incl. `spa-shell-fallback`, soft 404, trailing slash on a real route, HSTS, X-Robots-Tag) | `runtime/*`, `site_graph.py` |
+| E attribute | served value → file:line:col: `data-seo-src` hint → lens agreement → exact literal → data/i18n → composed; links match href + anchor + DOM order; no `line:1` placeholders (unresolved → gap) | `source_lens.py`, `attribution.py` |
+| F gap workers | typed small-model tasks with JSON-schema structured output, closed-set candidate ids, edit kind derived in code; transport retries separate from validation retries; small → haiku → mid only after 2 validation failures; caches keyed by repo + snapshot + code version | `gap_workers.py`, `agents/gap/skills/` |
+| G assemble + verify | grounding validator (`verify: grounded/heuristic/failed` on every EDIT), scope pass (`scope: shell/layout/template/data/literal`, `shared_by`, `template_n`, per-route `head_scope`), coverage ledger reflecting failures, JSON Schema + referential-integrity validation | `site_model.py`, `output/` |
 
-Accuracy is measured, not assumed: `scripts/score_fixtures.py` scores 13 golden fixture
-repos (one per major stack, `tests/fixtures/sites/`) for URL recall/precision, head-field
-accuracy, heading/link/image precision+recall and edit-attribution accuracy against the
-doc targets (≥98% URL recall, ≥97% head fields, ≥90% attribution).
+### Output: `seo_reports/exploration/` (sharded, the execution-stage contract)
+
+`manifest.json` (snapshot, frameworks, hosting, canonical host, lenses, coverage, cost) and
+`summary.json` (≤4k tokens, ranked `issues[]` with fact refs and fix target) are the planner
+input. Workers load one shard: `site.json`, `entity.json`, `routes.json`, `pages/<route_id>.json`,
+`images.json`, `links.json`, `metadata.json`, `structured_data.json`, `performance.json`,
+`keywords.json`; `evidence/<ev_id>.json` is lazy. JSON Schemas live in `schemas/`. An EDIT is
+applied only when `verify == "grounded"`; check `scope`/`shared_by` before editing a shared
+file. Contract: [`docs/site-model.md`](docs/site-model.md). The older
+`seo_reports/site_model/` files are still written for back-compat.
+
+Accuracy is measured, not assumed: `scripts/score_fixtures.py` (hermetic: no model, no cache)
+scores 19 golden fixture repos (`tests/fixtures/sites/`, incl. a pathname-switch SPA mirroring
+the PR #8 portfolio, Remix, Gatsby, Eleventy, Express, Angular) for URL recall/precision,
+head-field accuracy, heading/link/image precision+recall and edit-attribution accuracy.
 
 ```sh
 PYTHONPATH=src .venv/bin/python scripts/score_fixtures.py --misses
 ```
+
+## On-page SEO stage (`seo_agents.onpage`)
+
+Reads only the exploration JSON and writes proposals to `seo_reports/onpage/`. Client source is
+never read or edited; a human reviews and applies the approved ones.
+
+```sh
+python -m seo_agents.onpage path/to/seo_reports [--site-url https://www.example.com] [--publish]
+```
+
+Each page gets 4 model calls (intent + keyword map on small, one page plan on mid with a cached
+system prompt and an explicit fact→slot assignment, alts + anchors on small, optional
+E-E-A-T/AEO advice); everything else is deterministic (accessible names, image technical issues,
+social tags, canonical, robots, viewport, redirects, sitemap/robots/llms.txt, FAQ↔JSON-LD,
+dedup, JSON-LD `@id` graph). A **scope gate** blocks head changes that would land in a shared
+shell or layout (e.g. a Vite SPA `index.html`) behind a site-level `chg_prerender` /
+`chg_per_route_head`, retargeted to the framework's per-route head location (Next metadata,
+Nuxt `useSeoMeta`, `<svelte:head>`, Remix `meta`, Astro layout props, Gatsby Head, front
+matter, Liquid/WordPress/server templates).
+
+Per page: `changes` (≤15 atomic ops: `set_text | set_attr | set_json | insert_node | remove |
+platform_config`, one per template pointer, with `dedup_key`, `target.scope/shared_by`,
+`depends_on`, `status`), `changes_more`, `advice`, `client_inputs` (also `client_inputs.json`).
+Validators: grounding against served text + data JSON only (numbers incl. spelled-out), entity
+repetition cap, no synonym swaps of the client's own terms, FAQ ∩ H2 = ∅, no repeated facts.
+Settings: `SEO_ONPAGE_TIER`, `SEO_ONPAGE_ATTEMPTS`, `SEO_ONPAGE_ADVICE`,
+`SEO_ONPAGE_REASONING_EFFORT`, `SEO_ONPAGE_CONCURRENCY`, `SEO_ONPAGE_MAX_PAGES`.
+
+## Model tiers
+
+`small` (`OPENROUTER_SMALL_MODEL`), `haiku` (`OPENROUTER_HAIKU_MODEL`), `mid`
+(`OPENROUTER_MID_MODEL`), `large` (`OPENROUTER_LARGE_MODEL`, offline only with
+`SEO_ALLOW_LARGE`). Skills choose a tier through `tier:` frontmatter; per-tier reasoning via
+`OPENROUTER_<TIER>_REASONING_EFFORT` (escalations always reason at least `low`). Anthropic
+models get `cache_control` on static system blocks; cost accounting uses provider cache
+read/write multipliers.
 
 ## Repository context (`repo_context.json`)
 
@@ -64,7 +120,10 @@ structured data, mobile, i18n, shareability, brand/entity, local business, AI-se
 readiness) with precision labels, truncation flags and file references + content hashes
 (no file copies by default). Its summaries also feed `site.json`.
 
-## Legacy LLM category extractors (opt-in: `--llm-agents` / `SEO_RUN_LLM_AGENTS=1`)
+## Legacy LLM category extractors (deprecated, opt-in: `--llm-agents` / `SEO_RUN_LLM_AGENTS=1`)
+
+Deprecated: the site model covers this data more cheaply. A legacy-agent failure no longer
+blocks publishing the site model or repo_context.
 
 Each category has its own LangChain agent and packaged
 [`SKILL.md`](src/seo_agents/exploration/repo_analysis/agents/llm/skills): URLs, content, page
@@ -303,18 +362,6 @@ Artifacts contain observations rather than embedded LLM judgments. The category
 contract is validated both during extraction and before the PR publishes files.
 Internal relative paths remain intact in `href`; `target_url` resolves them against
 the page route. Absolute links are preserved without guessing the production origin.
-
-## Analyze the saved JSON without a repository
-
-```sh
-python -m seo_agents.exploration.repo_analysis.json_analysis path/to/seo_reports/onpage
-```
-
-The analyzer reads only the seven JSON files. It emits evidence-linked review
-findings for content coverage and duplication, headings, anchors and unmatched
-destinations, metadata coverage/length/duplication, media alt/dimensions/bytes, and
-E-E-A-T evidence gaps. Findings are review candidates, not verified runtime failures.
-It does not call a model or fetch a website. Old report schemas must be regenerated.
 
 ## Legacy static mode coverage and media measurements
 

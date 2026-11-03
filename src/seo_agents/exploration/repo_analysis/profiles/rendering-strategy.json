@@ -24,7 +24,7 @@
     {
       "id": "spa-shell",
       "label": "Empty SPA root element in HTML shell",
-      "regex": "<div\\s+id=['\"](?:root|app|__next|svelte)['\"]\\s*>\\s*</div>",
+      "regex": "<div\\s+id=['\"](?:root|app|__next|svelte|q-app)['\"][^>]*>\\s*</div>|<app-root\\b[^>]*>\\s*</app-root>",
       "mode": "CSR",
       "glob": [
         "*.html"
@@ -33,7 +33,9 @@
       "examples": {
         "match": [
           "<div id=\"root\"></div>",
-          "<div id=\"app\"> </div>"
+          "<div id=\"app\"> </div>",
+          "<app-root></app-root>",
+          "<div id=\"app\" class=\"h-full\"></div>"
         ],
         "no_match": [
           "<div id=\"root\"><h1>Hi</h1></div>"
@@ -161,7 +163,7 @@
     {
       "id": "server-default",
       "label": "Route file rendered on the server/at build by framework default (App Router, SvelteKit, Astro, Nuxt, Remix, Gatsby pages)",
-      "regex": "(?:^|/)app/(?:.*/)?(?:page|layout)\\.(?:tsx|jsx|ts|js|mdx)$|^src/routes/(?:.*/)?\\+(?:page|layout)\\.svelte$|^src/pages/.+\\.(?:astro|md|mdx)$|^(?:app/)?pages/.+\\.vue$|^app/routes/.+\\.(?:tsx|jsx)$",
+      "regex": "(?:^|/)app/(?:.*/)?(?:page|layout)\\.(?:tsx|jsx|ts|js|mdx)$|(?:^|/)src/routes/(?:.*/)?\\+(?:page|layout)\\.svelte$|(?:^|/)src/pages/.+\\.(?:astro|md|mdx)$|(?:^|/)(?:app/)?pages/.+\\.vue$|(?:^|/)app/routes/.+\\.(?:tsx|jsx)$",
       "mode": "server-default",
       "files_only": true,
       "precision": "high",
@@ -170,7 +172,8 @@
           "app/page.tsx",
           "src/routes/+page.svelte",
           "src/pages/index.astro",
-          "pages/index.vue"
+          "pages/index.vue",
+          "apps/web/app/about/page.tsx"
         ],
         "no_match": [
           "src/components/Button.tsx"

@@ -128,44 +128,6 @@
       }
     },
     {
-      "id": "semantic-landmark",
-      "label": "Semantic landmark element",
-      "regex": "<(?:main|article|section|aside|nav|header|footer)\\b",
-      "languages": [
-        "@templates"
-      ],
-      "precision": "high",
-      "examples": {
-        "match": [
-          "<main class=\"x\">",
-          "<article>"
-        ],
-        "no_match": [
-          "<mainframe>",
-          "<div>"
-        ]
-      }
-    },
-    {
-      "id": "list-table",
-      "label": "Lists/tables (extractable structure)",
-      "regex": "<(?:ol|ul|table|dl)\\b|^\\s*\\|.+\\|\\s*$",
-      "languages": [
-        "@templates",
-        "@content"
-      ],
-      "precision": "high",
-      "examples": {
-        "match": [
-          "<ul>",
-          "| a | b |"
-        ],
-        "no_match": [
-          "<p>"
-        ]
-      }
-    },
-    {
       "id": "dates",
       "label": "Published/updated dates",
       "regex": "datePublished|dateModified|article:published_time|article:modified_time|<time\\b|^(?:date|updated|lastmod|published):",

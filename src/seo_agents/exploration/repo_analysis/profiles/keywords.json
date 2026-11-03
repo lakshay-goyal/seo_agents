@@ -14,11 +14,11 @@
     "body": 1
   },
   "limits": {
-    "unigrams": 100,
-    "bigrams": 60,
-    "trigrams": 40,
-    "occurrences": 8,
-    "per_file": 15
+    "unigrams": 40,
+    "bigrams": 30,
+    "trigrams": 20,
+    "examples": 2,
+    "per_file": 20
   },
   "signals": [],
   "gaps": [],

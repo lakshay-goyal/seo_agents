@@ -1,0 +1,31 @@
+{
+  "framework": "eleventy",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Field Notes"
+        ],
+        "title": "Field Notes"
+      }
+    },
+    {
+      "url": "/about-us",
+      "fields": {
+        "h1": [
+          "About"
+        ],
+        "title": "About: the notebook"
+      }
+    },
+    {
+      "url": "/posts/first-light",
+      "fields": {
+        "h1": [
+          "First light"
+        ]
+      }
+    }
+  ]
+}

@@ -16,7 +16,12 @@ FORWARDED_ENV = (
     "SEO_LIGHTHOUSE_RUNS", "SEO_LIGHTHOUSE_MAX_PAGES", "SEO_GAP_WORKERS", "SEO_GAP_CONCURRENCY",
     "SEO_GAP_MAX_TASKS", "SEO_TOPIC_MAX_PAGES", "SEO_EEAT_MAX_PAGES", "SEO_MODEL_PRICES",
     "SEO_REPAIR_ROUNDS", "SEO_MAX_TOOL_CALLS", "SEO_AGENT_CONCURRENCY",
+    "SEO_MEASURE_PREBUILT", "SEO_MAX_CRAWL_DEPTH", "SEO_ADAPTER_CACHE", "SEO_GAP_CACHE", "OPENROUTER_HAIKU_MODEL",
+    "SEO_INSTRUMENT", "SEO_LIGHTHOUSE_CONCURRENCY", "SEO_RENDER_BROWSERS",
+    "SEO_PR_COMMIT_FULL", "SEO_PR_COMMIT_BUDGET", "SEO_PR_BRANCH",
 )
+# Whole families forwarded by prefix (tracing, on-page stage settings).
+FORWARDED_PREFIXES = ("LANGSMITH_", "SEO_ONPAGE_")
 
 
 def forward_env(overrides=None):
@@ -24,6 +29,9 @@ def forward_env(overrides=None):
     for key in FORWARDED_ENV:
         value = os.environ.get(key)
         if value:
+            env[key] = value
+    for key, value in os.environ.items():
+        if key.startswith(FORWARDED_PREFIXES) and value:
             env[key] = value
     for key, value in (overrides or {}).items():
         if value is not None:
@@ -53,8 +61,8 @@ def main(argv=None):
         log("notice: no repository given; using default " + DEFAULT_REPO)
 
     if not is_valid_github_url(github_url):
-        log("skipping: not a valid GitHub URL: " + github_url)
-        return
+        log("error: not a valid GitHub URL: " + github_url)
+        return 2
 
     if not os.environ.get("GITHUB_TOKEN"):
         raise RuntimeError("Set GITHUB_TOKEN in .env first (classic PAT with the `repo` scope).")
@@ -64,10 +72,16 @@ def main(argv=None):
                  "SEO_BUILD": "1" if args.build else None,
                  "SEO_RUN_LLM_AGENTS": "1" if args.llm_agents else "0" if args.no_llm_agents else None}
     sandbox = create_sandbox()
-    pr_url = run_pipeline_in_sandbox(sandbox, github_url, env=forward_env(overrides), site_url=args.site_url)
+    try:
+        pr_url = run_pipeline_in_sandbox(sandbox, github_url, env=forward_env(overrides), site_url=args.site_url)
+    finally:
+        close = getattr(sandbox, "close", None)
+        if close:
+            close()
     log("result: " + pr_url)
     done("seo-agents run", begun)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

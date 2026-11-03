@@ -41,8 +41,10 @@ class ElementIndexTests(unittest.TestCase):
         self.assertEqual((h1['line'], h1['col'], h1['heading_level']), (2, 2, 1))
         self.assertEqual(h1['text'][0]['i18n_keys'], ['hero.title'])
         link = by[('sections/hero.liquid', 'a')]
-        self.assertEqual(link['attrs']['href'], {'literal': '/shop'})
-        self.assertEqual(link['text'][0], {'literal': 'Shop'})
+        self.assertEqual(link['attrs']['href']['literal'], '/shop')
+        self.assertEqual(link['text'][0]['literal'], 'Shop')
+        shop = link['text'][0]  # exact value span of the text run
+        self.assertEqual(files['sections/hero.liquid'].splitlines()[shop['line'] - 1][shop['col']:shop['end_col']], 'Shop')
         self.assertEqual(by[('single.php', 'h2')]['text'][0]['i18n_keys'], ['Latest news'])
         self.assertEqual(by[('templates/page.html', 'p')]['text'][0]['i18n_keys'], ['Hello'])
         self.assertEqual(by[('resources/views/a.blade.php', 'h3')]['line'], 3)
@@ -144,7 +146,11 @@ class SiteModelTests(unittest.TestCase):
         self.assertEqual(home['lens'], 'raw-html')
         self.assertEqual(home['head']['title']['value'], 'Home')
         self.assertTrue(home['head']['title']['lens_agreement'])
-        self.assertEqual(home['head']['description']['edit'], {'kind': 'literal', 'file': 'index.html', 'line': 1, 'col': 41, 'attr': 'content'})
+        edit = home['head']['description']['edit']
+        self.assertEqual({k: edit.get(k) for k in ('kind', 'file', 'line', 'col', 'attr')},
+                         {'kind': 'literal', 'file': 'index.html', 'line': 1, 'col': 75, 'attr': 'content'})
+        self.assertEqual(edit.get('end_col'), 82)  # value span of content="Welcome", not the <meta> tag start
+        self.assertEqual(edit['verify'], 'grounded')
         self.assertEqual(home['links']['click_depth'], 0)
         about = next(p for p in model['pages'].values() if p['url'] == '/about')
         self.assertEqual(about['links']['click_depth'], 1)
@@ -199,8 +205,10 @@ class SiteModelTests(unittest.TestCase):
         ctx = SimpleNamespace(files={'a.html': '', 'b.html': ''}, index={'refs': [], 'data': []})
         with patch.object(gap_workers, 'default_factory', lambda tier, temperature=0, label=None: Model(tier)), \
                 patch.dict(os.environ, {'SEO_TOPIC_MAX_PAGES': '0', 'SEO_EEAT_MAX_PAGES': '0'}):
-            report = gap_workers.run_gap_workers([gap], [page], ctx, {'family': 'html'})
-        self.assertEqual(report['applied'], 1)
+            tasks = gap_workers.build_tasks([gap], [page], ctx, {'family': 'html'})
+            self.assertEqual([t['task'] for t in tasks], ['attribute_value'])
+            result = gap_workers.solve(tasks[0], 'html', model_factory=lambda tier, temperature=0, label=None: Model(tier))
+        self.assertTrue(gap_workers.apply(tasks[0], result, page, ctx))
         self.assertEqual(calls, [('small', False), ('small', True)])
         edit = page['head']['title']['edit']
         self.assertEqual((edit['file'], edit['line'], edit['resolved_by']), ('a.html', 3, 'llm:small'))

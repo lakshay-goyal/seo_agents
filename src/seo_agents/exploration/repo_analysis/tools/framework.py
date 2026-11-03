@@ -52,30 +52,39 @@ FRAMEWORKS = {
     'shopify-theme': {'deps': set(), 'files': [r'^(?:.*/)?layout/theme\.liquid$', r'^(?:.*/)?config/settings_schema\.json$'],
                       'renderer': 'server-liquid', 'build_outputs': [], 'family': 'liquid', 'needs_runtime': 'shopify'},
     'shopify-hydrogen': {'deps': {'@shopify/hydrogen'}, 'files': [], 'renderer': 'ssr', 'build_outputs': ['dist/client'], 'family': 'react'},
-    'jekyll': {'deps': {'jekyll', 'github-pages'}, 'files': [r'^_config\.ya?ml$'], 'renderer': 'static',
+    'jekyll': {'deps': {'jekyll', 'github-pages'}, 'files': [r'^_config\.ya?ml$', r'^_layouts/[^/]+\.html$', r'^_posts/'], 'renderer': 'static',
                'build_outputs': ['_site'], 'family': 'liquid'},
-    'hugo': {'deps': set(), 'files': [r'^(?:hugo|config)\.(?:toml|ya?ml|json)$', r'^(?:.*/)?layouts/_default/baseof\.html$'],
+    # `config.*` alone is generic (Vite/Tailwind/ESLint repos have config.json); Hugo needs hugo.*,
+    # a Hugo-only key in config.*, archetypes/, or a baseof layout to be detected.
+    'hugo': {'deps': set(), 'files': [r'^hugo\.(?:toml|ya?ml|json)$', r'^(?:.*/)?layouts/_default/baseof\.html$', r'^archetypes/'],
+             'generic_files': [r'^config\.(?:toml|ya?ml|json)$', r'^config/_default/', r'^content/.+\.md$'],
              'renderer': 'static', 'build_outputs': ['public'], 'family': 'go-template',
-             'content': [(r'^(?:hugo|config)\.(?:toml|ya?ml)$', r'(?im)^\s*(?:baseURL|baseurl|theme)\s*[=:]')]},
+             'content': [(r'^(?:hugo|config)\.(?:toml|ya?ml)$|^config/_default/(?:hugo|config)\.(?:toml|ya?ml)$',
+                          r'(?im)^\s*(?:baseURL|baseurl|theme|languageCode|disableKinds|\[params\]|\[menu)\s*[=:\]]?')]},
     'wordpress-theme': {'deps': {'wordpress', 'roots/wordpress', 'johnpbloch/wordpress'}, 'files': [r'(?:^|/)wp-content/themes/', r'(?:^|/)wp-config(?:-sample)?\.php$'],
                         'renderer': 'server-php', 'build_outputs': [], 'family': 'php', 'needs_runtime': 'wordpress',
                         'content': [(r'(?:^|/)style\.css$', r'(?i)Theme Name\s*:'), (r'(?:^|/)functions\.php$', r'\b(?:add_action|add_theme_support|wp_enqueue_)')]},
-    'wordpress-block-theme': {'deps': set(), 'files': [r'(?:^|/)theme\.json$'], 'renderer': 'server-php', 'build_outputs': [],
+    'wordpress-block-theme': {'deps': set(), 'files': [], 'generic_files': [r'(?:^|/)theme\.json$'], 'renderer': 'server-php', 'build_outputs': [],
                               'family': 'php', 'needs_runtime': 'wordpress',
                               'content': [(r'(?:^|/)templates/[^/]+\.html$', r'<!--\s*wp:')], 'weak': True},
-    'drupal': {'deps': {'drupal/core', 'drupal/core-recommended'}, 'files': [r'\.info\.yml$'], 'renderer': 'server-php', 'build_outputs': [],
-               'family': 'twig', 'needs_runtime': 'drupal'},
+    'drupal': {'deps': {'drupal/core', 'drupal/core-recommended'}, 'files': [], 'generic_files': [r'\.info\.yml$'],
+               'renderer': 'server-php', 'build_outputs': [], 'family': 'twig', 'needs_runtime': 'drupal',
+               'content': [(r'\.info\.yml$', r'(?m)^\s*(?:core_version_requirement|core)\s*:\s*\S'),
+                           (r'\.info\.yml$', r'(?m)^\s*type\s*:\s*(?:theme|module)\b')]},
     'laravel': {'deps': {'laravel/framework'}, 'files': [r'^artisan$', r'^resources/views/.+\.blade\.php$'], 'renderer': 'server-php',
                 'build_outputs': [], 'family': 'blade', 'needs_runtime': 'php'},
     'symfony': {'deps': {'symfony/framework-bundle'}, 'files': [r'^templates/.+\.html\.twig$'], 'renderer': 'server-php', 'build_outputs': [],
                 'family': 'twig', 'needs_runtime': 'php'},
-    'magento': {'deps': {'magento/product-community-edition', 'magento/framework'}, 'files': [r'(?:^|/)registration\.php$'], 'renderer': 'server-php',
+    'magento': {'deps': {'magento/product-community-edition', 'magento/framework'}, 'files': [], 'generic_files': [r'(?:^|/)registration\.php$'],
+                'content': [(r'(?:^|/)registration\.php$', r'ComponentRegistrar::register')], 'renderer': 'server-php',
                 'build_outputs': [], 'family': 'php', 'needs_runtime': 'php', 'weak': True},
-    'django': {'deps': {'django'}, 'files': [r'(?:^|/)manage\.py$', r'(?:^|/)urls\.py$'], 'renderer': 'server-python', 'build_outputs': [],
-               'family': 'jinja', 'needs_runtime': 'python'},
+    # A bare urls.py (e.g. scripts/urls.py) is not Django: manage.py, the dependency or settings.INSTALLED_APPS is required.
+    'django': {'deps': {'django'}, 'files': [r'(?:^|/)manage\.py$'], 'generic_files': [r'(?:^|/)urls\.py$'],
+               'renderer': 'server-python', 'build_outputs': [], 'family': 'jinja', 'needs_runtime': 'python',
+               'content': [(r'(?:^|/)settings(?:/[\w]+)?\.py$|(?:^|/)settings\.py$', r'\bINSTALLED_APPS\s*=')]},
     'flask': {'deps': {'flask'}, 'files': [], 'renderer': 'server-python', 'build_outputs': [], 'family': 'jinja', 'needs_runtime': 'python'},
     'fastapi': {'deps': {'fastapi'}, 'files': [], 'renderer': 'server-python', 'build_outputs': [], 'family': 'jinja', 'needs_runtime': 'python', 'weak': True},
-    'rails': {'deps': {'rails', 'railties'}, 'files': [r'^config/routes\.rb$', r'^app/views/'], 'renderer': 'server-ruby', 'build_outputs': [],
+    'rails': {'deps': {'rails', 'railties'}, 'files': [r'^config/routes\.rb$'], 'generic_files': [r'^app/views/'], 'renderer': 'server-ruby', 'build_outputs': [],
               'family': 'erb', 'needs_runtime': 'ruby'},
     'express': {'deps': {'express', 'koa', 'fastify', 'hapi'}, 'files': [], 'renderer': 'server-node', 'build_outputs': [],
                 'family': 'node-templates', 'weak': True},
@@ -149,43 +158,107 @@ def _version(files, manifest, dep):
     return None
 
 
-def detect_frameworks(snapshot):
-    """Return the framework fingerprint for one snapshot.
+def _score_candidates(files, paths, deps):
+    """Every framework with corroborated evidence, best first.
 
-    {primary, candidates:[{name, score, evidence}], family, router, renderer, version,
-     package_manager, build: {command, output_dirs}, roots, needs_runtime, languages}
-    """
-    files = snapshot['files']
-    inventory_paths = [row['path'] for row in snapshot.get('inventory', []) if row.get('kind') == 'file']
-    paths = sorted(set(files) | set(inventory_paths) | set(snapshot.get('assets', {})))
-    deps = _deps_from_manifests(files)
+    `generic_files` (config.json, urls.py, theme.json, *.info.yml, app/views/) add one point but
+    never qualify a framework on their own: a dependency, a framework-specific file or content
+    evidence is required. That removes the config.json -> Hugo and scripts/urls.py -> Django misfires."""
     candidates = []
     for name, rule in FRAMEWORKS.items():
-        evidence, score = [], 0
+        evidence, score, corroborated = [], 0, False
         for dep in sorted(rule['deps']):
             if dep in deps:
                 evidence.append({'kind': 'dependency', 'name': dep, 'file': deps[dep]})
                 score += 3
+                corroborated = True
         for pattern in rule['files']:
             regex = re.compile(pattern)
             hit = next((p for p in paths if regex.search(p) and 'node_modules' not in p), None)
             if hit:
                 evidence.append({'kind': 'file', 'file': hit, 'pattern': pattern})
                 score += 2
+                corroborated = True
+        for pattern in rule.get('generic_files', []):
+            regex = re.compile(pattern)
+            hit = next((p for p in paths if regex.search(p) and 'node_modules' not in p), None)
+            if hit:
+                evidence.append({'kind': 'generic-file', 'file': hit, 'pattern': pattern})
+                score += 1
         for path_pattern, content_pattern in rule.get('content', []):
             path_regex, content_regex = re.compile(path_pattern), re.compile(content_pattern)
-            hit = next((p for p in sorted(files) if path_regex.search(p) and content_regex.search(files[p])), None)
+            hit = next((p for p in sorted(files) if path_regex.search(p) and 'node_modules' not in p
+                        and content_regex.search(files[p])), None)
             if hit:
                 evidence.append({'kind': 'content', 'file': hit, 'pattern': content_pattern})
                 score += 3
-        if score:
+                corroborated = True
+        if score and corroborated:
             if rule.get('weak'):
                 score -= 1
             candidates.append({'name': name, 'score': score, 'family': rule['family'], 'evidence': evidence})
     candidates.sort(key=lambda c: (-c['score'], c['name']))
+    return candidates
+
+
+def _pick_primary(candidates):
     # A meta-framework outranks the bare UI library it builds on.
     strong = [c for c in candidates if not FRAMEWORKS[c['name']].get('weak')]
-    primary = (strong or candidates or [{'name': 'unknown', 'family': 'unknown'}])[0]
+
+    def secondary(candidate):  # docs/storybook/example packages lose ties against the product site
+        files = [e.get('file') or '' for e in candidate.get('evidence', [])]
+        return int(bool(files) and all(re.search(r'(?:^|/)(?:docs?|documentation|storybook|examples?|playground)/', f) for f in files))
+    strong.sort(key=lambda c: (-c['score'], secondary(c), c['name']))
+    return (strong or candidates or [{'name': 'unknown', 'family': 'unknown', 'score': 0, 'evidence': []}])[0]
+
+
+PACKAGE_ROOT_MARKERS = re.compile(r'(?:^|/)(?:package\.json|composer\.json|Gemfile|manage\.py|pyproject\.toml|requirements\.txt|'
+                                  r'hugo\.(?:toml|ya?ml)|_config\.ya?ml|config/settings_schema\.json)$')
+SITE_THRESHOLD = 2
+
+
+def package_roots(paths):
+    """Directories that own a manifest (monorepo packages), shallowest first; '' is the repo root."""
+    found = {posixpath.dirname(p) for p in paths if PACKAGE_ROOT_MARKERS.search(p) and 'node_modules' not in p
+             and not re.search(r'(?:^|/)(?:tests?|fixtures|examples?|e2e|__tests__)/', p)}
+    found = {re.sub(r'/config$', '', d) if d.endswith('/config') else ('' if d == 'config' else d) for d in found}
+    return sorted(found, key=lambda d: (d.count('/') if d else -1, d))
+
+
+def detect_sites(files, paths, deps_for=None):
+    """Per package root: every framework above threshold. [{root, primary, family, score, frameworks}]"""
+    sites = []
+    for root in package_roots(paths):
+        prefix = root + '/' if root else ''
+        sub_files = {p[len(prefix):]: t for p, t in files.items() if p.startswith(prefix)}
+        sub_paths = [p[len(prefix):] for p in paths if p.startswith(prefix)]
+        if root == '':
+            # Root detection must not absorb nested packages' files.
+            nested = [r + '/' for r in package_roots(paths) if r]
+            sub_files = {p: t for p, t in sub_files.items() if not p.startswith(tuple(nested))}
+            sub_paths = [p for p in sub_paths if not p.startswith(tuple(nested))]
+        candidates = _score_candidates(sub_files, sub_paths, _deps_from_manifests(sub_files))
+        above = [c for c in candidates if c['score'] >= SITE_THRESHOLD]
+        if not above:
+            continue
+        primary = _pick_primary(above)
+        sites.append({'root': root, 'primary': primary['name'], 'family': primary['family'], 'score': primary['score'],
+                      'frameworks': [c['name'] for c in above if not FRAMEWORKS[c['name']].get('weak') or c is primary][:6]})
+    return sites
+
+
+def detect_frameworks(snapshot):
+    """Return the framework fingerprint for one snapshot.
+
+    {primary, candidates:[{name, score, evidence}], family, router, renderer, version,
+     package_manager, build: {command, output_dirs}, sites:[{root, primary, ...}], needs_runtime, languages}
+    """
+    files = snapshot['files']
+    inventory_paths = [row['path'] for row in snapshot.get('inventory', []) if row.get('kind') == 'file']
+    paths = sorted(set(files) | set(inventory_paths) | set(snapshot.get('assets', {})))
+    deps = _deps_from_manifests(files)
+    candidates = _score_candidates(files, paths, deps)
+    primary = _pick_primary(candidates)
     name = primary['name']
     rule = FRAMEWORKS.get(name, {})
     manifest = next((e['file'] for e in primary.get('evidence', []) if e['kind'] == 'dependency'), None)
@@ -229,6 +302,7 @@ def detect_frameworks(snapshot):
         'build': {'command': build_command, 'output_dirs': output_dirs, 'scripts': sorted(scripts)[:30],
                   'preview_script': next((k for k in ('preview', 'start', 'serve') if k in scripts), None)},
         'candidates': candidates[:8], 'source_extensions': languages[:60],
+        'sites': detect_sites(files, paths),
         'method': 'dependency manifests + configuration files + directory layout; no code executed',
     }
 

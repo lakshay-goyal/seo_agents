@@ -27,7 +27,8 @@ repo_analysis/
 ├── graph.py                    7 legacy LLM category extractors as a DAG (urls -> 4 parallel -> content -> eeat)
 ├── evidence.py                 combined evidence bundle over LLM reports + corpus
 ├── inspect.py                  read-only CLI: explore/export/query evidence (no PR)
-├── json_analysis.py            review findings from saved LLM report JSON (no source/model)
+├── output/                     sharded exploration writer (manifest, summary, shards, evidence), issues ranking,
+│                               JSON Schemas + mini validator + referential-integrity checks
 │
 ├── runtime/                    measurement lenses (no LLM)
 │   ├── build_serve.py              site_url | pre-built HTML (+SPA fallback) | install+build+serve | source-only
@@ -42,7 +43,7 @@ repo_analysis/
 │   ├── llm/                        legacy LLM extractor harness (extractor, verification w/ grounding,
 │   │                               script policy/worker, handoff, references, skills/contract-common.md + 7 skills)
 │   └── *.py                        deterministic skill runners (sitemap_robots, canonicals_redirects, rendering_strategy,
-│                                   react_diagnostics, state_management, performance_assets, https_security_headers,
+│                                   react_diagnostics, performance_assets, https_security_headers,
 │                                   structured_data, mobile_parity, hreflang_i18n, shareability_link_assets,
 │                                   brand_entity_signals, local_business_presence, ai_search_readiness, page_latency)
 │
@@ -50,7 +51,8 @@ repo_analysis/
 │   ├── repository_snapshot.py      bounded read-only snapshot, content-hash identity (no mtimes)
 │   ├── framework.py                framework fingerprint (deps, config, layout) for 35+ stacks
 │   ├── element_index.py            unified element index, data/i18n index, composition refs, alias resolution
-│   ├── adapters.py                 framework route adapters (URL pattern -> entry template)
+│   ├── adapters.py                 framework route adapters (URL pattern -> entry template), Adapter registry
+│   ├── head_recipes.py             per-framework head recipe + head_scope (per-route | shared-shell | mixed)
 │   ├── source_index.py             line-addressable index used by the skill runners
 │   ├── skill_runner.py             loads profiles/*.json (validated), scoped signals, truncation flags
 │   ├── routes.py                   generic route skill (fallback for unknown stacks)

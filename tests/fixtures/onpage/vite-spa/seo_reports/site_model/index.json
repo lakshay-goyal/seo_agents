@@ -1,0 +1,40 @@
+{
+ "schema": "seo-site-model/1.0",
+ "repo": {
+  "framework": {
+   "name": "react-spa"
+  }
+ },
+ "pages": [
+  {
+   "id": "p_42099b4af0",
+   "url": "/",
+   "file": "pages/p_42099b4af0.json",
+   "title": "Lakshay Goyal \u2014 Software Engineer"
+  },
+  {
+   "id": "p_69bbc6be2c",
+   "url": "/about",
+   "file": "pages/p_69bbc6be2c.json",
+   "title": "Lakshay Goyal \u2014 Software Engineer"
+  },
+  {
+   "id": "p_7c8dd5e9d4",
+   "url": "/bookshelf",
+   "file": "pages/p_7c8dd5e9d4.json",
+   "title": "Lakshay Goyal \u2014 Software Engineer"
+  },
+  {
+   "id": "p_7051ac01cf",
+   "url": "/blog",
+   "file": "pages/p_7051ac01cf.json",
+   "title": "Lakshay Goyal \u2014 Software Engineer"
+  },
+  {
+   "id": "p_06a117be1a",
+   "url": "/blog/deploying-your-site-with-vercel",
+   "file": "pages/p_06a117be1a.json",
+   "title": "Lakshay Goyal \u2014 Software Engineer"
+  }
+ ]
+}

@@ -48,4 +48,4 @@ Layout/template rows are the shared shells that wrap pages.
 
 Runtime profile: [`profiles/routes.json`](../../profiles/routes.json), validated by
 `profiles/schema.json`; behaviour is tested in `tests/test_skill_profiles.py`.
-This file is human documentation only.
+Every backticked token in this file is either in the profile or listed in `COVERED_BY_PYTHON` in `tests/test_skill_docs.py`. This file is human documentation only.

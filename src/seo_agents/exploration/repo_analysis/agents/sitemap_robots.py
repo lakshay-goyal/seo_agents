@@ -1,9 +1,12 @@
-"""Sitemap/robots sources (static files and generators) plus parsed robots groups and sitemap URLs."""
+"""Sitemap/robots sources (static files, generators, templates) plus parsed robots groups, sitemap URLs
+and per-source robots directives (meta robots, X-Robots-Tag, framework metadata) with their values."""
 
 import re
 
 from seo_agents.exploration.repo_analysis.tools.safe_xml import XMLParseError, safe_xml_fromstring
 from seo_agents.exploration.repo_analysis.tools.skill_runner import records_of, run_skill
+
+TEMPLATE_SYNTAX = re.compile(r'\{\{|\{%|<\?php|<%|\A---\s*\n|\A\+\+\+\s*\n')
 
 
 def parse_robots(text):
@@ -29,26 +32,85 @@ def parse_robots(text):
                                                              for r in g['rules']) for g in groups)}
 
 
+def robots_policy_for(parsed, agent):
+    """'allow' | 'disallow' | 'partial' | None for a user agent, from parsed robots groups (most specific group wins)."""
+    agent = agent.lower()
+    specific = [g for g in parsed['groups'] if any(u.lower() == agent for u in g['user_agents'])]
+    groups = specific or [g for g in parsed['groups'] if '*' in g['user_agents']]
+    if not groups:
+        return None
+    rules = [r for g in groups for r in g['rules'] if r['directive'] in {'allow', 'disallow'}]
+    if any(r['directive'] == 'disallow' and r['value'] == '/' for r in rules):
+        return 'disallow' if not any(r['directive'] == 'allow' and r['value'] for r in rules) else 'partial'
+    if any(r['directive'] == 'disallow' and r['value'] for r in rules):
+        return 'partial'
+    return 'allow'
+
+
+def parse_sitemap(text):
+    root = safe_xml_fromstring(text)
+    kind = root.tag.rsplit('}', 1)[-1]
+    urls, children, lastmod, hreflang, images = [], [], 0, 0, 0
+    for element in root.iter():
+        tag = element.tag.rsplit('}', 1)[-1]
+        if tag == 'loc' and element.text:
+            urls.append(element.text.strip())
+        elif tag == 'lastmod':
+            lastmod += 1
+        elif tag == 'link' and element.get('hreflang'):
+            hreflang += 1
+        elif tag == 'image':
+            images += 1
+    if kind == 'sitemapindex':
+        children, urls = urls, []
+    return {'type': kind, 'url_count': len(urls), 'urls': urls[:500], 'urls_truncated': len(urls) > 500,
+            'children': children[:200], 'lastmod_entries': lastmod, 'hreflang_entries': hreflang, 'image_entries': images}
+
+
+def robots_directives(result):
+    """[{source, value, noindex, nofollow, file, line}] for every robots directive with a captured value."""
+    directives = []
+    for source, signal in (('meta-robots', 'meta-robots'), ('x-robots-tag', 'x-robots-tag'), ('metadata', 'metadata-robots')):
+        for record in records_of(result, signal):
+            value = (record.get('value') or '').strip()
+            lowered = value.lower().replace(' ', '')
+            noindex = 'noindex' in lowered or lowered in {'none'} or 'index:false' in lowered
+            directives.append({'source': source, 'value': value or None, 'noindex': noindex,
+                               'nofollow': 'nofollow' in lowered or 'follow:false' in lowered,
+                               'file': record['location']['file'], 'line': record['location']['line_start']})
+    return directives
+
+
 def check_sitemap_and_robots(index):
     result = run_skill(index, 'sitemap-robots')
     robots = []
     for record in records_of(result, 'robots-file'):
         path = record['location']['file']
-        if path in index.files:
-            robots.append({'file': path, 'record_id': record['id'], **parse_robots(index.files[path])})
+        if path not in index.files:
+            continue
+        text = index.files[path]
+        entry = {'file': path, 'record_id': record['id']}
+        if TEMPLATE_SYNTAX.search(text):
+            entry['generated'] = 'template'
+        robots.append({**entry, **parse_robots(text)})
     sitemaps = []
     for record in records_of(result, 'sitemap-file'):
         path = record['location']['file']
-        if path not in index.files:
+        if path.endswith('.gz') or path not in index.files:
+            sitemaps.append({'file': path, 'record_id': record['id'], 'compressed': path.endswith('.gz'),
+                             'note': 'Compressed or binary sitemap; contents not parsed.'})
+            continue
+        text = index.files[path]
+        if TEMPLATE_SYNTAX.search(text):
+            sitemaps.append({'file': path, 'record_id': record['id'], 'generated': 'template',
+                             'note': 'Sitemap is rendered from a template at build time; URLs come from the site content.'})
             continue
         try:
-            root = safe_xml_fromstring(index.files[path])
-            urls = [e.text.strip() for e in root.iter() if e.tag.rsplit('}', 1)[-1] == 'loc' and e.text]
-            sitemaps.append({'file': path, 'record_id': record['id'], 'type': root.tag.rsplit('}', 1)[-1],
-                             'url_count': len(urls), 'urls': urls[:500],
-                             'urls_truncated': len(urls) > 500})
+            sitemaps.append({'file': path, 'record_id': record['id'], **parse_sitemap(text)})
         except XMLParseError as error:
             sitemaps.append({'file': path, 'record_id': record['id'], 'parse_error': str(error)})
     result['robots_files'] = robots
     result['sitemap_files'] = sitemaps
+    result['robots_directives'] = robots_directives(result)
+    result['noindex_sources'] = [d for d in result['robots_directives'] if d['noindex']]
     return result

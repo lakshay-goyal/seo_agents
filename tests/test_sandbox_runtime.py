@@ -14,8 +14,9 @@ from seo_agents.sandbox.tools.local import LocalResult
 class SandboxRuntimeTests(unittest.TestCase):
     def test_dependency_constraints_reach_pip_without_shell_redirections(self):
         sandbox = Mock()
-        sandbox.run.side_effect = [LocalResult('', '', 1), LocalResult('', '', 0), LocalResult('', '', 0)]
+        sandbox.run.side_effect = [LocalResult('', '', 1), LocalResult('', '', 0), LocalResult('', '', 0), LocalResult('', '', 0)]
         ensure_container_runtime(sandbox)
+        self.assertIn('useradd', sandbox.run.call_args_list[2].args[0])
         install = sandbox.run.call_args_list[1].args[0]
         # Exercise bash, as DockerSandbox does, replacing Python only to avoid
         # installing packages. Any accidental redirects still execute in bash.

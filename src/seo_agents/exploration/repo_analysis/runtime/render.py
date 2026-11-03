@@ -14,7 +14,10 @@ never silently replaced by the raw lens.
 
 from __future__ import annotations
 
+import atexit
 import os
+import queue
+import threading
 import time
 
 from seo_agents.exploration.repo_analysis.runtime.dom import finalize, summarize_html
@@ -34,7 +37,18 @@ EXTRACT_JS = r"""
   const SEM = new Set(['MAIN','NAV','HEADER','FOOTER','ASIDE','ARTICLE','SECTION']);
   const CHROME = new Set(['HEADER','NAV','FOOTER','ASIDE']);
   const section = el => { for (let n = el.parentElement; n; n = n.parentElement) if (SEM.has(n.tagName)) return n.tagName.toLowerCase(); return 'body'; };
-  const inMain = el => { for (let n = el.parentElement; n; n = n.parentElement) if (CHROME.has(n.tagName)) return false; return true; };
+  const inChrome = el => { for (let n = el.parentElement; n; n = n.parentElement) if (CHROME.has(n.tagName)) return true; return false; };
+  const hasMain = !!document.querySelector('main,[role="main"]');
+  // Literal: inside <main> (or, when the page has no <main>, outside header/nav/footer/aside).
+  const inMain = el => hasMain ? !!el.closest('main,[role="main"]') : !inChrome(el);
+  const LOC = /^[^\s:"'<>]+\.[A-Za-z0-9]+:\d+:\d+$/;
+  const srcHint = el => { if (!el || !el.getAttribute) return null;
+    const own = el.getAttribute('data-seo-src'); if (own && LOC.test(own)) return own;
+    const ds = el.getAttribute('data-src'); if (ds && LOC.test(ds)) return ds;
+    const rel = el.getAttribute('data-inspector-relative-path'), line = el.getAttribute('data-inspector-line');
+    if (rel && line) return rel + ':' + line + ':' + (el.getAttribute('data-inspector-column') || '1');
+    const vue = el.getAttribute('data-v-inspector'); if (vue && LOC.test(vue)) return vue;
+    return null; };
   const visible = el => { const s = getComputedStyle(el); const r = el.getBoundingClientRect();
     return s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) !== 0 && (r.width > 0 || r.height > 0); };
   const path = el => { const parts = []; for (let n = el; n && n.nodeType === 1 && parts.length < 7; n = n.parentElement) {
@@ -45,20 +59,20 @@ EXTRACT_JS = r"""
     meta: [...document.querySelectorAll('meta')].map(m => { const o = {}; for (const k of ['name','property','content','http-equiv','charset','itemprop']) if (m.hasAttribute(k)) o[k] = m.getAttribute(k); return o; }),
     head_links: [...document.querySelectorAll('link')].map(l => { const o = {}; for (const k of ['rel','href','hreflang','type','sizes','as','media']) if (l.hasAttribute(k)) o[k] = l.getAttribute(k); return o; }),
     json_ld: [...document.querySelectorAll('script[type="application/ld+json"]')].map(s => s.textContent),
-    headings: [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map(h => ({level: +h.tagName[1], text: norm(h.innerText || h.textContent), section: section(h), path: path(h), visible: visible(h)})),
+    headings: [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map(h => ({level: +h.tagName[1], text: norm(h.innerText || h.textContent), section: section(h), in_main: inMain(h), in_chrome: inChrome(h), path: path(h), visible: visible(h), src_hint: srcHint(h)})),
     links: [...document.querySelectorAll('a[href]')].map(a => ({href: a.getAttribute('href'), resolved: a.href, text: norm(a.innerText || a.textContent),
       aria_label: a.getAttribute('aria-label'), title: a.getAttribute('title'), rel: a.getAttribute('rel'), target: a.getAttribute('target'),
-      section: section(a), in_main: inMain(a), path: path(a), visible: visible(a),
+      section: section(a), in_main: inMain(a), in_chrome: inChrome(a), path: path(a), visible: visible(a), src_hint: srcHint(a),
       img_alt: [...a.querySelectorAll('img[alt]')].map(i => i.getAttribute('alt')).filter(Boolean)})),
     images: [...document.querySelectorAll('img')].map(img => { const r = img.getBoundingClientRect(); return {
       src: img.getAttribute('src'), resolved: img.currentSrc || img.src, alt: img.hasAttribute('alt') ? img.getAttribute('alt') : null,
       width: img.getAttribute('width'), height: img.getAttribute('height'), loading: img.getAttribute('loading'), decoding: img.getAttribute('decoding'),
       fetchpriority: img.getAttribute('fetchpriority'), srcset: img.getAttribute('srcset'), sizes: img.getAttribute('sizes'),
       natural: [img.naturalWidth, img.naturalHeight], rendered: [Math.round(r.width), Math.round(r.height)],
-      above_fold: r.top < fold && r.bottom > 0, section: section(img), in_main: inMain(img), path: path(img), visible: visible(img)}; }),
+      above_fold: r.top < fold && r.bottom > 0, section: section(img), in_main: inMain(img), in_chrome: inChrome(img), path: path(img), visible: visible(img), src_hint: srcHint(img)}; }),
     blocks: [...document.querySelectorAll('p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,dd,dt,figcaption,summary,caption,pre,label,button')]
       .filter(el => !el.parentElement.closest('p,li,blockquote,td,th,dd,dt,figcaption,summary,caption,pre,label,button'))
-      .map(el => ({tag: el.tagName.toLowerCase(), text: norm(el.innerText || el.textContent).slice(0, 2000), section: section(el), in_main: inMain(el), path: path(el), visible: visible(el)}))
+      .map(el => ({tag: el.tagName.toLowerCase(), text: norm(el.innerText || el.textContent).slice(0, 2000), section: section(el), in_main: inMain(el), in_chrome: inChrome(el), path: path(el), visible: visible(el), src_hint: srcHint(el)}))
       .filter(b => b.text),
     iframes: document.querySelectorAll('iframe').length, scripts: document.scripts.length,
     stylesheets: document.querySelectorAll('link[rel~="stylesheet"]').length};
@@ -68,6 +82,15 @@ EXTRACT_JS = r"""
   if (clone) clone.querySelectorAll('header,nav,footer,aside,script,style,noscript').forEach(n => n.remove());
   out.word_count = countWords(body);
   out.main_word_count = clone ? countWords(clone.innerText || clone.textContent || '') : 0;
+  const mains = [...document.querySelectorAll('main,[role="main"]')];
+  const landmarkIssues = [];
+  if (mains.length > 1) landmarkIssues.push({issue: 'multiple-main', count: mains.length});
+  for (const m of mains) for (const tag of ['nav','header','footer','aside']) {
+    const inside = m.querySelectorAll(tag).length;
+    if (inside) landmarkIssues.push({issue: tag + '-inside-main', count: inside, path: path(m)});
+  }
+  for (const m of mains) if (inChrome(m)) landmarkIssues.push({issue: 'main-inside-chrome', path: path(m)});
+  out.landmarks = {main: mains.length, nav: document.querySelectorAll('nav').length, issues: landmarkIssues};
   out.resources = performance.getEntriesByType('resource').map(r => ({name: r.name, type: r.initiatorType, transfer: r.transferSize, encoded: r.encodedBodySize}));
   return out;
 }
@@ -81,29 +104,96 @@ def playwright_available():
         return False
 
 
-def close_browsers():
-    """Kept for API compatibility: every render session now closes its own browser."""
-    return None
+# ---------------------------------------------------------------- browser pool
+# Playwright's sync API is bound to the thread that started it, while the site graph measures URLs
+# from many worker threads. A few dedicated render threads each own one long-lived Chromium; callers
+# hand them jobs through a queue. This replaces one Chromium launch per URL.
+_POOL_LOCK = threading.Lock()
+_POOL = {'queue': None, 'threads': []}
+
+
+def chromium_args():
+    """--no-sandbox only when we must (running as root, e.g. inside the sandbox container)."""
+    args = ['--disable-dev-shm-usage']
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        args.append('--no-sandbox')
+    return args
+
+
+def _render_worker(jobs):
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
+    manager = browser = None
+    try:
+        while True:
+            job = jobs.get()
+            if job is None:
+                return
+            url, devices, timeout, reply = job
+            results = {}
+            try:
+                if browser is None or not browser.is_connected():
+                    if manager is None:
+                        manager = sync_playwright().start()
+                    browser = manager.chromium.launch(headless=True, args=chromium_args())
+                for device in devices:
+                    results[device] = _render_one(browser, url, device, timeout, PlaywrightError)
+            except (PlaywrightError, OSError) as error:
+                for device in devices:
+                    results.setdefault(device, {'status': 'failed', 'device': device,
+                                                'error': type(error).__name__ + ': ' + str(error)[:300]})
+                browser = None
+            except Exception as error:  # noqa: BLE001 - never leave a caller waiting
+                for device in devices:
+                    results.setdefault(device, {'status': 'failed', 'device': device, 'error': type(error).__name__})
+            reply.put(results)
+    finally:
+        for close in (getattr(browser, 'close', None), getattr(manager, 'stop', None)):
+            try:
+                if close is not None:
+                    close()
+            except Exception:  # noqa: BLE001 - shutdown is best effort
+                pass
+
+
+def _pool():
+    with _POOL_LOCK:
+        if _POOL['queue'] is None:
+            jobs = queue.Queue()
+            size = max(1, int(os.getenv('SEO_RENDER_BROWSERS', '2')))
+            threads = [threading.Thread(target=_render_worker, args=(jobs,), daemon=True, name=f'seo-render-{i}')
+                       for i in range(size)]
+            for thread in threads:
+                thread.start()
+            _POOL.update(queue=jobs, threads=threads)
+        return _POOL['queue']
+
+
+def close_browsers(timeout=30):
+    """Stop the render threads and close their browsers (called at the end of a site-graph run)."""
+    with _POOL_LOCK:
+        jobs, threads = _POOL['queue'], _POOL['threads']
+        _POOL.update(queue=None, threads=[])
+    if jobs is None:
+        return
+    for _ in threads:
+        jobs.put(None)
+    for thread in threads:
+        thread.join(timeout)
+
+
+atexit.register(close_browsers, 5)
 
 
 def render_devices(url, devices=('desktop', 'mobile'), *, timeout=30):
-    """One Playwright session per URL (safe in any worker thread): every requested device."""
+    """Render one URL on every requested device using the shared browser pool (safe from any thread)."""
     if not playwright_available():
         return {device: {'status': 'unavailable', 'reason': 'playwright-not-installed', 'device': device} for device in devices}
-    from playwright.sync_api import Error as PlaywrightError, sync_playwright
-    results = {}
+    reply = queue.Queue(maxsize=1)
+    _pool().put((url, tuple(devices), timeout, reply))
     try:
-        with sync_playwright() as manager:
-            browser = manager.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
-            try:
-                for device in devices:
-                    results[device] = _render_one(browser, url, device, timeout, PlaywrightError)
-            finally:
-                browser.close()
-    except (PlaywrightError, OSError) as error:
-        for device in devices:
-            results.setdefault(device, {'status': 'failed', 'device': device, 'error': type(error).__name__ + ': ' + str(error)[:300]})
-    return results
+        return reply.get(timeout=timeout * (len(devices) + 1) + 60)
+    except queue.Empty:
+        return {device: {'status': 'failed', 'device': device, 'error': 'render pool timeout'} for device in devices}
 
 
 def render_url(url, device='desktop', *, timeout=30):

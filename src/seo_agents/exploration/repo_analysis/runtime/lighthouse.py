@@ -69,14 +69,22 @@ def parse_report(report):
             'tool': 'lighthouse ' + str(report.get('lighthouseVersion') or '')}
 
 
+def chrome_flags():
+    flags = '--headless=new --disable-dev-shm-usage'
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        flags += ' --no-sandbox'  # only needed when Chromium runs as root (sandbox container)
+    return '--chrome-flags=' + flags
+
+
 def run_cli(url, form_factor, runs, timeout):
+    """`runs` Lighthouse runs; a failed run no longer discards the successful ones.
+    status: success (all runs), partial (some), failed (none, with the last error)."""
     command = lighthouse_command()
-    results = []
+    results, errors = [], []
     for _ in range(runs):
         with tempfile.NamedTemporaryFile(suffix='.json') as output:
             args = command + [url, '--output=json', '--output-path=' + output.name, '--quiet',
-                              '--only-categories=performance,seo,accessibility,best-practices',
-                              '--chrome-flags=--headless=new --no-sandbox --disable-dev-shm-usage']
+                              '--only-categories=performance,seo,accessibility,best-practices', chrome_flags()]
             if form_factor == 'desktop':
                 args.append('--preset=desktop')
             try:
@@ -84,15 +92,20 @@ def run_cli(url, form_factor, runs, timeout):
                 with open(output.name, encoding='utf-8') as stream:
                     results.append(parse_report(json.load(stream)))
             except (subprocess.SubprocessError, OSError, ValueError) as error:
-                return {'status': 'failed', 'error': type(error).__name__ + ': ' + str(error)[:200], 'runs': len(results)}
+                errors.append(type(error).__name__ + ': ' + str(error)[:200])
+    if not results:
+        return {'status': 'failed', 'error': errors[-1] if errors else 'no runs', 'runs': 0, 'failed_runs': len(errors),
+                'metrics': {}}
     lcps = [r['metrics'].get('lcp_ms') for r in results if r['metrics'].get('lcp_ms') is not None]
     median = statistics.median(lcps) if lcps else None
-    chosen = min(results, key=lambda r: abs((r['metrics'].get('lcp_ms') or 0) - (median or 0))) if results else {}
-    chosen = dict(chosen)
+    chosen = dict(min(results, key=lambda r: abs((r['metrics'].get('lcp_ms') or 0) - (median or 0))))
     chosen['runs'] = len(results)
+    chosen['failed_runs'] = len(errors)
     chosen['lcp_ms_runs'] = lcps
-    chosen['status'] = 'success'
-    chosen['method'] = 'lab: lighthouse CLI median-by-LCP of ' + str(len(results)) + ' runs'
+    chosen['status'] = 'success' if not errors else 'partial'
+    if errors:
+        chosen['errors'] = errors[-3:]
+    chosen['method'] = 'lab: lighthouse CLI median-by-LCP of ' + str(len(results)) + ' successful runs'
     return chosen
 
 
@@ -114,6 +127,25 @@ def run_psi(url, strategy, key, timeout):
     return result
 
 
+def fetch_crux(url, key, timeout=20):
+    """CrUX field data (p75 per metric) for the URL, falling back to its origin. None when absent."""
+    endpoint = 'https://chromeuxreport.googleapis.com/v1/records:queryRecord?key=' + quote(key)
+    parts = urlsplit(url)
+    for scope, body in (('url', {'url': url}), ('origin', {'origin': parts.scheme + '://' + parts.netloc})):
+        request = Request(endpoint, data=json.dumps({**body, 'formFactor': 'PHONE'}).encode(),
+                          headers={'Content-Type': 'application/json', 'User-Agent': 'seo-agents'}, method='POST')
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                record = json.loads(response.read()).get('record') or {}
+        except (OSError, ValueError):
+            continue
+        metrics = {name: {'p75': (metric.get('percentiles') or {}).get('p75')}
+                   for name, metric in (record.get('metrics') or {}).items()}
+        if metrics:
+            return {'scope': scope, 'form_factor': 'PHONE', 'metrics': metrics, 'source': 'CrUX API'}
+    return None
+
+
 def public_url(url):
     host = (urlsplit(url).hostname or '').lower()
     return bool(host) and host not in {'localhost', '127.0.0.1', '0.0.0.0', '::1'} and not host.endswith('.local')
@@ -123,12 +155,47 @@ def measure_performance(url, *, runs=None, timeout=180):
     runs = runs or int(os.getenv('SEO_LIGHTHOUSE_RUNS', '3'))
     key = os.getenv('PAGESPEED_API_KEY')
     if lighthouse_command():
-        return {'mobile': run_cli(url, 'mobile', runs, timeout), 'desktop': run_cli(url, 'desktop', runs, timeout)}
+        result = {'mobile': run_cli(url, 'mobile', runs, timeout), 'desktop': run_cli(url, 'desktop', runs, timeout)}
+        if key and public_url(url):
+            result['field_data'] = fetch_crux(url, key)  # lab numbers alone miss real-user CWV
+        result['status'] = overall_status(result)
+        return result
     if key and public_url(url):
-        return {'mobile': run_psi(url, 'mobile', key, timeout), 'desktop': run_psi(url, 'desktop', key, timeout)}
+        result = {'mobile': run_psi(url, 'mobile', key, timeout), 'desktop': run_psi(url, 'desktop', key, timeout)}
+        result['status'] = overall_status(result)
+        return result
     reason = ('Lighthouse CLI not installed (npm i -g lighthouse) and PAGESPEED_API_KEY not set'
               if not key else 'PageSpeed Insights needs a public URL; Lighthouse CLI not installed')
     return {'status': 'unavailable', 'reason': reason}
+
+
+def overall_status(result):
+    """One status for a {mobile, desktop} result so ledgers never say "measured" for a failed run."""
+    if not isinstance(result, dict):
+        return 'failed'
+    if 'status' in result and 'mobile' not in result:
+        return result['status']
+    states = {(result.get(k) or {}).get('status') for k in ('mobile', 'desktop')}
+    if states == {'success'}:
+        return 'success'
+    if 'success' in states or 'partial' in states:
+        return 'partial'
+    return 'failed'
+
+
+def measure_many(urls, *, runs=None, timeout=180, concurrency=None):
+    """{url: result} for several URLs with a small pool (SEO_LIGHTHOUSE_CONCURRENCY, default 2).
+    Each result also carries `status` (success | partial | failed | unavailable)."""
+    from concurrent.futures import ThreadPoolExecutor
+    concurrency = max(1, concurrency or int(os.getenv('SEO_LIGHTHOUSE_CONCURRENCY', '2')))
+    urls = list(dict.fromkeys(urls))
+
+    def one(url):
+        result = measure_performance(url, runs=runs, timeout=timeout)
+        result.setdefault('status', overall_status(result))
+        return url, result
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        return dict(pool.map(one, urls))
 
 
 def performance_available(url):

@@ -42,8 +42,9 @@ class LiveProgressTests(unittest.TestCase):
                         gate.write_text('continue')
 
             def launch(command, **kwargs):
-                self.assertEqual(command[:3], ['docker', 'exec', '-e'])
-                self.assertIn('TEST_OPTION=enabled', command)
+                self.assertEqual(command[:3], ['docker', 'exec', '--env-file'])
+                self.assertNotIn('-e', command)  # secrets never on the command line
+                self.assertIn('TEST_OPTION=enabled', Path(command[3]).read_text())
                 process = real_popen([sys.executable, '-u', '-c', source], **kwargs)
                 processes.append(process)
                 return process
@@ -79,7 +80,8 @@ class LiveProgressTests(unittest.TestCase):
                     self.assertTrue(command.startswith('python3 -u '))
                     self.assertTrue(stream)
                     print('live child output', flush=True)
-                    return DockerResult('live child output\nSEO_PR_URL=https://github.com/example/site/pull/1\n', '', exit_code)
+                    marker = 'SEO_BUNDLE=/opt/b.json' if ' analyze ' in command else 'SEO_PR_URL=https://github.com/example/site/pull/1'
+                    return DockerResult('live child output\n' + marker + '\n', '', exit_code)
 
                 sandbox.run.side_effect = run
                 with patch('seo_agents.sandbox.host.ensure_container_runtime'), patch(
@@ -91,7 +93,8 @@ class LiveProgressTests(unittest.TestCase):
                     else:
                         self.assertEqual(run_pipeline_in_sandbox(sandbox, 'https://github.com/example/site'),
                                          'https://github.com/example/site/pull/1')
-                self.assertEqual(terminal.getvalue().count('live child output'), 1)
+                # analyze + publish phases each print once; nothing is replayed
+                self.assertEqual(terminal.getvalue().count('live child output'), 1 if exit_code else 2)
 
     def test_waiting_updates_stop_when_work_completes_or_fails(self):
         for fails in (False, True):

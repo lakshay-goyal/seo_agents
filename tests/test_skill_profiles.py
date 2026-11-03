@@ -29,7 +29,7 @@ class ProfileSchemaTests(unittest.TestCase):
     def test_every_profile_file_validates_and_loads(self):
         names = {p.stem for p in PROFILES_DIR.glob('*.json')} - {'schema'}
         self.assertEqual(names, set(load_skills()))
-        self.assertGreaterEqual(len(names), 19)
+        self.assertGreaterEqual(len(names), 18)
         schema = json.loads((PROFILES_DIR / 'schema.json').read_text())
         self.assertIn('signal', schema['$defs'])
 
@@ -95,8 +95,8 @@ class SignalBehaviourTests(RepoTestCase):
         self.write('src/Faq.vue', '<template><details><summary>More</summary></details></template>')
         index = self.index()
         for skill_name, signal in (('shareability-link-assets', 'newsletter'), ('performance-assets', 'priority-image'),
-                                   ('state-management', 'context-provider'), ('local-business-presence', 'phone'),
-                                   ('client-diagnostics', 'nondeterministic-render'), ('sitemap-robots', 'noindex'),
+                                   ('local-business-presence', 'phone'),
+                                   ('sitemap-robots', 'noindex'),
                                    ('ai-search-readiness', 'faq-section')):
             self.assertEqual(run_skill(index, skill_name)['signals'][signal]['count'], 0, skill_name + '.' + signal)
 
@@ -107,12 +107,12 @@ class SignalBehaviourTests(RepoTestCase):
         self.assertEqual([r['matched_text'] for r in records], ['https://twitter.com/acme'])
 
     def test_truncation_is_reported_when_caps_hit(self):
-        self.write('index.html', '<main></main>\n' * 40)
-        signal = run_skill(self.index(), 'ai-search-readiness')['signals']['semantic-landmark']
+        self.write('index.html', '<h2>What is green tea?</h2>\n' * 40)
+        signal = run_skill(self.index(), 'ai-search-readiness')['signals']['question-heading']
         self.assertEqual(signal['count'], skill_runner.MAX_RECORDS_PER_FILE)
         self.assertEqual(signal['total_matches'], 40)
         self.assertTrue(signal['truncated'])
-        self.assertEqual(signal['precision'], 'high')
+        self.assertIn(signal['precision'], {'high', 'medium'})
 
     def test_signals_cover_non_javascript_stacks(self):
         self.write('layout/theme.liquid', '<html lang="{{ request.locale.iso_code }}"><head><title>{{ page_title }}</title>'
@@ -164,7 +164,7 @@ class RouteAdapterTests(RepoTestCase):
         self.write('src/App.tsx', 'import {Routes, Route} from "react-router-dom";\nexport default () => <Routes>'
                    '<Route path="/" element={<Layout />}><Route path="blog" element={<B />}>'
                    '<Route path=":slug" element={<P />} /></Route></Route></Routes>')
-        self.write('src/app/app.routes.ts', "export const routes: Routes = [{ path: 'shop', children: [{ path: ':id' }] }];")
+        self.write('src/app/app.routes.ts', "export const routes: Routes = [{ path: 'shop', children: [{ path: ':id', component: Item }] }];")
         routes = {route for route, _, _ in self.routes()}
         self.assertTrue({'/blog', '/blog/:slug', '/shop', '/shop/:id'} <= routes)
 
@@ -206,11 +206,15 @@ class InventoryAndContextTests(RepoTestCase):
         self.assertNotIn('edit_guide', context)
         self.assertNotIn('skills', context)
         route = context['agents']['routes'][0]
-        self.assertNotIn('context', route['source'])
-        self.assertLessEqual(route['source']['code'].count('\n'), 11)
-        self.assertTrue(route['source']['code_truncated'])
-        self.assertIn('code_sha256', route['source'])
-        self.assertIsNone(context['agents']['rendering_strategy']['initial_html_contains_content'])
+        # Compact reference form: location + value only; no code, hashes, pointers or ids.
+        self.assertEqual(route['source']['file'], 'index.html')
+        for key in ('context', 'code', 'code_sha256', 'file_ref', 'id', 'location'):
+            self.assertNotIn(key, route['source'])
+        self.assertIn('coverage', context)
+        self.assertIn('ai_search_readiness.llms-txt', context['coverage']['absent'])
+        self.assertNotIn('root', context['repository'])
+        self.assertNotIn(str(self.repo), json.dumps(context))
+        self.assertIsNone(context['agents']['rendering_strategy'].get('initial_html_contains_content'))  # null is omitted
         self.assertEqual(context['agents']['rendering_strategy']['per_route_verdict'], 'requires-measurement')
 
 

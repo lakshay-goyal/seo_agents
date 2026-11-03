@@ -47,7 +47,7 @@
     {
       "id": "social-profile",
       "label": "Social profile link",
-      "regex": "https?://(?:www\\.)?(?:twitter\\.com|x\\.com|linkedin\\.com/(?:in|company)|github\\.com|facebook\\.com|instagram\\.com|youtube\\.com|tiktok\\.com|medium\\.com|dribbble\\.com|behance\\.net|threads\\.net|mastodon\\.\\w+|bsky\\.app)/[\\w@./-]+",
+      "regex": "https?://(?:www\\.)?(?:twitter\\.com|x\\.com|linkedin\\.com/(?:in|company)|github\\.com|facebook\\.com|instagram\\.com|youtube\\.com|tiktok\\.com|medium\\.com|dribbble\\.com|behance\\.net|threads\\.net|mastodon\\.\\w+|bsky\\.app)/(?!intent\\b|share\\b|sharer|shareArticle|sharing\\b|home\\?|search\\?|hashtag/)[\\w@.-]+(?:/(?!blob/|tree/|issues|pull|commit|releases|raw/|edit/|status/)[\\w@.-]+)*/?(?![\\w/])",
       "ignore_case": true,
       "languages": [
         "@templates",
@@ -63,7 +63,11 @@
           "https://www.linkedin.com/company/acme"
         ],
         "no_match": [
-          "https://example.com/twitter"
+          "https://example.com/twitter",
+          "https://twitter.com/intent/tweet?text=x",
+          "https://github.com/acme/site/blob/main/README.md",
+          "https://www.facebook.com/sharer/sharer.php?u=x",
+          "https://www.linkedin.com/shareArticle?url=x"
         ]
       }
     },
@@ -136,19 +140,22 @@
     {
       "id": "about-page",
       "label": "About/team/company page",
-      "regex": "(?:^|/|-|\\.)(?:about|about-us|team|company|our-story|who-we-are)(?:/|\\.|$)",
+      "regex": "(?:^|/|-|\\.)(?:about|about-us|about-me|team|company|our-story|who-we-are)(?:/(?:index|page|\\+page)\\.\\w+|\\.(?:html?|astro|vue|svelte|md|mdx|php|liquid|erb|hbs|njk|[jt]sx?|json)|/)$",
       "files_only": true,
       "precision": "high",
       "examples": {
         "match": [
           "src/pages/about.astro",
           "page-about.php",
-          "templates/page.about.json"
+          "templates/page.about.json",
+          "app/about/page.tsx"
         ],
         "no_match": [
-          "src/components/AboutCard.tsx"
+          "src/components/AboutCard.tsx",
+          "src/components/team/Avatar.tsx"
         ]
-      }
+      },
+      "exclude": "(?:^|/)(?:components?|stores?|store|state|hooks|utils?|lib|data|assets|styles?|redux|slices?|composables|api|services|types|__tests__|tests?)/|\\.(?:ya?ml|ya?ml|toml|css|scss|less|test\\.\\w+|spec\\.\\w+|d\\.ts)$"
     }
   ],
   "gaps": [

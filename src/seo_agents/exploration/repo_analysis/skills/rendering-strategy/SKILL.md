@@ -1,14 +1,13 @@
 ---
 name: explore-rendering-strategy
-description: Classify how pages reach the browser (static, SSG, SSR, ISR, CSR, hybrid) from code signals in any framework.
+description: Classify how each route reaches the browser (static, SSG, SSR, ISR, CSR, hybrid) through a config -> layout -> page cascade.
 ---
 
 Crawlers index what is in the HTML response first. Each signal carries a `mode`:
-`static` (literal HTML), `SSG` (built at deploy), `ISR` (revalidated static),
-`SSR` (rendered per request), `CSR` (empty shell, rendered by JS),
-`CSR-component` (an island/component rendered only on the client) and
-`hydration`. The project mode is inferred from the strongest signals; per-file
-signals show which pages differ. An SPA shell (`<div id="root"></div>` with a
-module script) means content is not in the initial HTML.
+`static`, `SSG`, `ISR`, `SSR`, `CSR`, `CSR-component` and `hydration`. Framework config sets the
+default (Next `output: 'export'`, Nuxt `ssr: false`, SvelteKit adapter-static, Astro `output`, Gatsby,
+Angular without SSR, an SPA shell such as `<div id="root"></div>` or `<app-root>`), layouts override
+config and page files override layouts. `route_modes` gives each page route `{mode, source_chain}`;
+`csr_only` and `config_mode` summarise the project.
 
-Runtime profile: [`profiles/rendering-strategy.json`](../../profiles/rendering-strategy.json) (regex signals with scope, precision and match/no-match examples; validated by `profiles/schema.json` and `tests/test_skill_profiles.py`). This file is human documentation only.
+Runtime profile: [`profiles/rendering-strategy.json`](../../profiles/rendering-strategy.json) (regex signals with scope, precision and match/no-match examples; validated by `profiles/schema.json` and `tests/test_skill_profiles.py`). Python post-processing: `agents/rendering_strategy.py`. Every backticked token in this file is either in the profile or listed in `COVERED_BY_PYTHON` in `tests/test_skill_docs.py`. This file is human documentation only.

@@ -46,7 +46,7 @@
     {
       "id": "phone",
       "label": "Phone number",
-      "regex": "tel:\\+?[\\d\\s().-]{6,}|['\\\"]telephone['\\\"]\\s*:|(?<![\\w.\\-/+])\\+\\d{1,3}[\\s.-]\\(?\\d{2,4}\\)?[\\s.-]\\d{3,4}[\\s.-]?\\d{3,4}(?![\\w.\\-/])|(?<![\\w.\\-/])\\(\\d{3}\\)\\s?\\d{3}-\\d{4}(?![\\w.\\-/])",
+      "regex": "tel:\\+?[\\d\\s().-]{6,}|['\"]telephone['\"]\\s*:\\s*['\"]([^'\"]{6,})['\"]|(?<![\\w.\\-/+])\\+\\d{1,3}[\\s.-]\\(?\\d{2,4}\\)?[\\s.-]\\d{3,4}[\\s.-]?\\d{3,4}(?![\\w.\\-/])|(?<![\\w.\\-/])\\(\\d{3}\\)\\s?\\d{3}-\\d{4}(?![\\w.\\-/])",
       "languages": [
         "@templates",
         "@content",
@@ -58,7 +58,8 @@
         "match": [
           "tel:+1-555-123-4567",
           "+44 20 7946 0958",
-          "(555) 123-4567"
+          "(555) 123-4567",
+          "\"telephone\": \"+1 555 123 4567\""
         ],
         "no_match": [
           "version 1.2.3456.7890",
@@ -70,7 +71,7 @@
     {
       "id": "email",
       "label": "Contact email",
-      "regex": "mailto:[\\w.+-]+@[\\w-]+\\.[\\w.]+|['\"]email['\"]\\s*:\\s*['\"][\\w.+-]+@",
+      "regex": "mailto:([\\w.+-]+@[\\w-]+\\.[\\w.]+)|['\"]email['\"]\\s*:\\s*['\"](?:mailto:)?([\\w.+-]+@[\\w-]+\\.[\\w.]+)",
       "languages": [
         "@templates",
         "@content",
@@ -151,7 +152,7 @@
     {
       "id": "contact-or-location-page",
       "label": "Contact/location page",
-      "regex": "(?:^|/|-)(?:contact|contact-us|locations?|stores?|find-us|visit)(?:/|\\.|$)",
+      "regex": "(?:^|/|-|\\.)(?:contact|contact-us|locations?|find-us|visit|store-locator|our-stores)(?:/(?:index|page|\\+page)\\.\\w+|\\.(?:html?|astro|vue|svelte|md|mdx|php|liquid|erb|hbs|njk|[jt]sx?|json)|/)$",
       "files_only": true,
       "precision": "high",
       "examples": {
@@ -160,9 +161,13 @@
           "page-contact.php"
         ],
         "no_match": [
+          "src/components/contact-form.tsx",
+          "src/stores/cart.ts",
+          "src/store/data/contacts.json",
           "src/components/contact-form.tsx"
         ]
-      }
+      },
+      "exclude": "(?:^|/)(?:components?|stores?|store|state|hooks|utils?|lib|data|assets|styles?|redux|slices?|composables|api|services|types|__tests__|tests?)/|\\.(?:ya?ml|ya?ml|toml|css|scss|less|test\\.\\w+|spec\\.\\w+|d\\.ts)$"
     }
   ],
   "gaps": [

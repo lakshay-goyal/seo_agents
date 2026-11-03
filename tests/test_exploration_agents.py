@@ -20,7 +20,6 @@ from seo_agents.exploration.repo_analysis.agents.llm.handoff import PRIOR_WORK, 
 from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
 from seo_agents.exploration.repo_analysis.agents.llm.verification import ObservationValidationError, execute_script, validate_observations, verify_and_extract
 from seo_agents.exploration.repo_analysis.graph import CHECKS, ExplorationIncomplete, run_onpage_graph, validate_artifact_links
-from seo_agents.exploration.repo_analysis.json_analysis import analyze_reports
 from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
 from seo_agents.sandbox.host import sync_sources
 
@@ -728,7 +727,6 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertEqual(set(state['agent_runs']), set(REPORT_FILES))
         self.assertEqual(len(set(prompts)), 7)
         self.assertEqual(before, sorted(p.relative_to(self.repo).as_posix() for p in self.repo.rglob('*')))
-        self.assertIn('findings', analyze_reports(state['artifacts']))
         state['artifacts']['internal_links']['pages'][0]['links'] = []
         with self.assertRaisesRegex(ValueError, 'Unmatched cross-report'):
             validate_artifact_links(state)

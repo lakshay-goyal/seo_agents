@@ -1,9 +1,10 @@
 """Assemble the repository SEO context JSON: references, not copies.
 
-By default (`include_content='none'`) every record keeps its exact location
-(file, line range, JSON pointer), a short code excerpt (<= 12 lines) and the
-sha256 of the full construct; consumers read source on demand. `'referenced'`
-and `'all'` embed full file contents and full records for callers that need them.
+By default (`include_content='none'`) the JSON is compact: every record keeps only its location
+(repo-relative file + line range) and its value; no code excerpts, hashes, JSON pointers or record ids.
+Null/empty values are omitted and zero-count signals are listed once in `coverage.absent[]`. Repository prose
+(README, CHANGELOG, docs/) is excluded from content and keywords upstream. `'referenced'` and `'all'` embed
+full file contents and full records for callers that need them.
 Execution-phase guidance (profile `execution_hint`) is never emitted here.
 """
 
@@ -88,24 +89,67 @@ def _page_summaries(index, inventory, routes, keywords, rendering):
     return pages
 
 
-def compact_record(value):
-    """Reference form of evidence: location + code excerpt + hash; no context blob."""
+RECORD_DROP = {'code', 'context', 'code_truncated', 'code_sha256', 'code_lines_omitted', 'id', 'record_id', 'kind', 'label'}
+EMPTY = (None, '', [], {})
+
+
+def reference_record(value):
+    """Compact form of evidence for `include_content='none'`: location + value, nothing else."""
     if isinstance(value, list):
-        return [compact_record(item) for item in value]
+        return [reference_record(item) for item in value]
     if not isinstance(value, dict):
         return value
     if 'location' in value and ('code' in value or 'context' in value):
-        out = {key: compact_record(child) for key, child in value.items() if key not in {'code', 'context'}}
-        code = value.get('code')
-        if isinstance(code, str):
-            lines = code.split('\n')
-            out['code'] = '\n'.join(lines[:CODE_EXCERPT_LINES])
-            out['code_sha256'] = hashlib.sha256(code.encode()).hexdigest()
-            if len(lines) > CODE_EXCERPT_LINES or value.get('code_truncated'):
-                out['code_truncated'] = True
-                out['code_lines_omitted'] = max(0, len(lines) - CODE_EXCERPT_LINES)
+        location = value['location']
+        out = {key: reference_record(child) for key, child in value.items() if key not in RECORD_DROP | {'location'}}
+        out['file'] = location.get('file')
+        if location.get('line_start'):
+            out['line'] = location['line_start']
+            if location.get('line_end') and location['line_end'] != location['line_start']:
+                out['line_end'] = location['line_end']
+        if location.get('asset'):
+            out['asset'] = True
+        if isinstance(out.get('matched_text'), str) and len(out['matched_text']) > 120:
+            out['matched_text'] = out['matched_text'][:117] + '...'
         return out
-    return {key: compact_record(child) for key, child in value.items()}
+    return {key: reference_record(child) for key, child in value.items()
+            if key not in {'record_ids', 'record_id', 'file_ref', 'skill_sha256', 'skill_file'}}
+
+
+def prune(value):
+    """Drop None/empty values recursively (False and 0 are kept: they are facts)."""
+    if isinstance(value, dict):
+        out = {}
+        for key, child in value.items():
+            child = prune(child)
+            if child not in EMPTY:
+                out[key] = child
+        return out
+    if isinstance(value, list):
+        return [item for item in (prune(v) for v in value) if item not in EMPTY]
+    return value
+
+
+def absent_signals(results):
+    """Remove zero-match signals from agent results; return their ids once ('agent.signal')."""
+    absent = []
+    for name, result in results.items():
+        signals = result.get('signals') if isinstance(result, dict) else None
+        if not isinstance(signals, dict):
+            continue
+        for sid in list(signals):
+            entry = signals[sid]
+            if isinstance(entry, dict) and not entry.get('count') and not entry.get('total_matches'):
+                absent.append(name + '.' + sid)
+                del signals[sid]
+            elif isinstance(entry, dict):
+                for key in ('truncated',):
+                    if entry.get(key) is False:
+                        entry.pop(key)
+                if entry.get('total_matches') == entry.get('count'):
+                    entry.pop('total_matches', None)
+        result.pop('found_signals', None)
+    return sorted(absent)
 
 
 def build_repo_context(index, results, *, repo_path=None, github_url=None, include_content='none'):
@@ -129,30 +173,39 @@ def build_repo_context(index, results, *, repo_path=None, github_url=None, inclu
     else:
         content_paths = sorted(p for p in index.files if p in index.referenced)
     files = {p: index.file_entry(p, include_content=include_content != 'none') for p in content_paths}
-    agents = results if include_content != 'none' else compact_record(results)
+    absent = []
+    if include_content == 'none':
+        import copy
+        agents = reference_record(copy.deepcopy(results))
+        absent = absent_signals(agents)
+        agents = prune(agents)
+        files = {p: {k: v for k, v in entry.items() if k in {'language', 'roles', 'line_count', 'size_bytes'}}
+                 for p, entry in files.items()}
+        pages = prune(reference_record(pages))
+    else:
+        agents = results
 
     context = {
         'schema_version': SCHEMA_VERSION,
         'kind': 'seo-repo-context',
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'content_mode': include_content,
-        'how_to_use': ('`agents` holds every agent result by name. Every record has `location` (file, line_start, '
-                       'line_end, file_ref JSON pointer into `files`) and `code` (the construct; capped to '
-                       + str(CODE_EXCERPT_LINES) + ' lines with `code_sha256` of the whole construct when '
-                       'content_mode is none). `files` lists every referenced file with its sha256 and line count '
-                       '(and full `content` only in referenced/all modes); read the checkout for the rest. Use `pages` '
-                       'for a per-route view and `gaps` for missing signals (leads, not proof). Each signal carries '
-                       '`precision`, `total_matches` and `truncated`. Observations are static source facts, not '
-                       'rendered/deployed behaviour.'),
-        'repository': {'url': github_url, 'root': str(Path(repo_path).resolve()) if repo_path else None,
+        'how_to_use': ('`agents` holds every agent result by name. In content_mode none every record is '
+                       '{file, line[, line_end], value/matched_text}: read the checkout for the code. Signals with no '
+                       'match are listed once in `coverage.absent`. `files` lists every referenced file (full `content` '
+                       'only in referenced/all modes). Use `pages` for a per-route view and `gaps` for missing signals '
+                       '(leads, not proof). Observations are static source facts, not rendered/deployed behaviour; the '
+                       'site model (seo_reports/site_model) is the source of truth for served values.'),
+        'repository': {'url': github_url, 'name': Path(repo_path).resolve().name if repo_path else None,
                        'snapshot_sha256': snapshot['sha256'], 'observed_at': snapshot.get('observed_at'),
                        'coverage': snapshot.get('coverage', {}), 'limitations': snapshot.get('limitations', [])},
         'agents': agents,
         'pages': pages,
         'gaps': gaps,
         'files': files,
-        'file_inventory': [{k: row.get(k) for k in ('path', 'kind', 'status', 'reason', 'roles', 'size_bytes')}
-                           for row in snapshot.get('inventory', [])],
+        'file_inventory': [{k: row.get(k) for k in ('path', 'kind', 'status', 'reason', 'roles', 'size_bytes')
+                            if row.get(k) not in EMPTY} for row in snapshot.get('inventory', [])],
+        'coverage': {'absent': absent},
         'summary': {
             'agents_run': sorted(results),
             'framework_hints': [h['label'] for h in results['code_exploration']['framework_hints']],
@@ -164,8 +217,11 @@ def build_repo_context(index, results, *, repo_path=None, github_url=None, inclu
             'gaps': len(gaps), 'truncated_signals': truncated,
             'primary_keyword_candidates': keywords['primary_candidates'][:10],
         },
-        'identity': {'skills': skills_identity()},
+        'identity': {'skills_sha256': hashlib.sha256(json.dumps(skills_identity(), sort_keys=True).encode()).hexdigest()},
     }
+    if include_content == 'none':
+        context = prune(context)
+        context.setdefault('coverage', {'absent': []})
     log('repo context: ' + json.dumps(context['summary'], ensure_ascii=False))
     return context
 
@@ -173,6 +229,8 @@ def build_repo_context(index, results, *, repo_path=None, github_url=None, inclu
 def write_repo_context(context, output_path):
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(context, indent=2, ensure_ascii=False, allow_nan=False) + '\n')
+    compact = context.get('content_mode', 'none') == 'none'
+    path.write_text(json.dumps(context, ensure_ascii=False, allow_nan=False,
+                               **({'separators': (',', ':')} if compact else {'indent': 2})) + '\n')
     log('repo context written: ' + str(path) + ' (' + str(path.stat().st_size // 1024) + ' KiB)')
     return path

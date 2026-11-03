@@ -56,8 +56,9 @@ HOST_HINTS = [
     (r'(?:^|/)package\.json$', r'"homepage"\s*:\s*"(https?://[^"]+)"'),
     (r'(?:^|/)(?:next-sitemap\.config\.[cm]?js|nuxt\.config\.[jt]s|svelte\.config\.js|gatsby-config\.[jt]s|docusaurus\.config\.[jt]s)$',
      r"""\b(?:siteUrl|url|baseURL|site)\s*:\s*['"](https?://[^'"]+)"""),
-    (r'(?:^|/)(?:\.env\.production|\.env\.example|vercel\.json|netlify\.toml)$',
-     r"""(?:SITE_URL|PUBLIC_URL|NEXT_PUBLIC_SITE_URL|URL)\s*=\s*["']?(https?://[^"'\s]+)"""),
+    # Hidden env files are retained by the snapshot with secrets redacted (only URL-like public values kept).
+    (r'(?:^|/)(?:\.env(?:\.production|\.example|\.sample)?|vercel\.json|netlify\.toml|wrangler\.toml)$',
+     r"""(?:\w*_)?(?:SITE_URL|PUBLIC_URL|BASE_URL|APP_URL|SITE_ORIGIN|URL)\s*=\s*["']?(https?://[^"'\s]+)"""),
 ]
 
 
@@ -67,7 +68,7 @@ def site_hosts(snapshot, site_url=None):
     if site_url:
         hosts.add((urlsplit(site_url).hostname or '').lower())
     files = snapshot['files']
-    for path, text in files.items():
+    for path, text in list(files.items()) + list((snapshot.get('env_hints') or {}).items()):
         for path_pattern, value_pattern in HOST_HINTS:
             if re.search(path_pattern, path):
                 for match in re.finditer(value_pattern, text, re.M):
@@ -147,11 +148,99 @@ def build_output_urls(output_dir):
     return urls
 
 
+CATCH_ALL_DESTINATION = re.compile(r'^/?(?:index\.html?|200\.html)?$')
+
+
+def catch_all_rewrites(files):
+    """Host rewrites that answer every unknown URL with the app shell (HTTP 200): soft-404 risk, and
+    robots.txt/sitemap.xml served as HTML when those files don't exist (PR #8: vercel.json `/(.*) -> /index.html`)."""
+    import json
+    found = []
+    for path, text in files.items():
+        name = PurePosixPath(path).name
+        if name == 'vercel.json':
+            try:
+                document = json.loads(text)
+            except ValueError:
+                continue
+            for rule in (document.get('rewrites') or []) + (document.get('routes') or []) if isinstance(document, dict) else []:
+                if not isinstance(rule, dict):
+                    continue
+                source = str(rule.get('source') or rule.get('src') or '')
+                dest = str(rule.get('destination') or rule.get('dest') or '')
+                if re.fullmatch(r'/?(?:\(\.\*\)|\.\*|:path\*|\(\.\+\)|:\w+\*|\*)', source) and CATCH_ALL_DESTINATION.match(dest):
+                    found.append({'kind': 'host-rewrite', 'file': path, 'rule': f'{source} -> {dest}', 'host': 'vercel'})
+        elif name == '_redirects' or name == 'netlify.toml':
+            for match in re.finditer(r'(?m)^\s*/\*\s+/index\.html\s+200\b|from\s*=\s*["\']/\*["\'][^\[]*?to\s*=\s*["\']/index\.html["\'][^\[]*?status\s*=\s*200', text, re.S):
+                found.append({'kind': 'host-rewrite', 'file': path, 'rule': ' '.join(match.group(0).split())[:120], 'host': 'netlify'})
+        elif name == '.htaccess' and re.search(r'(?m)^\s*RewriteRule\s+\S+\s+/?index\.html\s*(?:\[L\])?\s*$', text):
+            found.append({'kind': 'host-rewrite', 'file': path, 'rule': 'RewriteRule . /index.html', 'host': 'apache'})
+        elif re.search(r'(?:^|/)nginx[^/]*\.conf$|(?:^|/)conf\.d/', path) and re.search(r'try_files\s+\$uri[^;]*\s/index\.html\s*;', text):
+            found.append({'kind': 'host-rewrite', 'file': path, 'rule': 'try_files ... /index.html', 'host': 'nginx'})
+        elif name in {'firebase.json', 'static.json'} and re.search(r'"source"\s*:\s*"\*\*"[^}]*"destination"\s*:\s*"/index\.html"', text):
+            found.append({'kind': 'host-rewrite', 'file': path, 'rule': '** -> /index.html', 'host': 'firebase' if name == 'firebase.json' else 'static'})
+    return found
+
+
+def merge_suggested_instances(manifest_pages, suggestions, *, site_url=None, own_hosts=()):
+    """Feed gap-worker `instances_suggested` back into the manifest (the doc's missing loop edge).
+
+    suggestions: iterable of URL strings or {url|path, route?, template?, source?}. Each URL that matches a
+    dynamic route pattern (or an explicit route) becomes a concrete row with discovered_by ['gap-suggested'];
+    already-known URLs only gain the provenance. Returns (pages, added_rows). Rows are new dicts; inputs are
+    not mutated except for appended provenance on existing rows."""
+    pages = list(manifest_pages)
+    by_url = {page['url']: page for page in pages}
+    templates = [(pattern_regex(page['route']), page) for page in pages if page.get('instance_status') == 'template']
+    templates.sort(key=lambda item: specificity(item[1]['route']))
+    added = []
+    for suggestion in suggestions or []:
+        item = {'url': suggestion} if isinstance(suggestion, str) else dict(suggestion or {})
+        raw = item.get('url') or item.get('path')
+        path = normalize_path(raw, site_url, own_hosts) if raw else None
+        if not path or PLACEHOLDER.search(path):
+            continue
+        if path in by_url:
+            if 'gap-suggested' not in by_url[path]['discovered_by']:
+                by_url[path]['discovered_by'].append('gap-suggested')
+            continue
+        parent = None
+        if item.get('route'):
+            parent = next((page for _, page in templates if page['route'] == item['route']), None)
+        if parent is None:
+            parent = next((page for regex, page in templates if regex.match(path)), None)
+        if parent is None:
+            continue  # a suggestion must instantiate a known template; free-floating URLs are left to the crawl
+        new = {'id': page_id(path), 'url': path, 'route': parent['route'], 'template': item.get('template') or parent['template'],
+               'kind': parent.get('kind', 'page'), 'is_dynamic': True, 'instance_status': 'concrete',
+               'discovered_by': ['gap-suggested']}
+        if item.get('source'):
+            new['content_source'] = item['source']
+        pages.append(new)
+        by_url[path] = new
+        added.append(new)
+    pages.sort(key=lambda p: (p['url'] != '/', p['url'].count('/'), p['url']))
+    return pages, added
+
+
 def build_manifest(snapshot, fingerprint, *, routes=None, site_url=None, extra_urls=(), learned_rows=(), own_hosts=()):
     """Return (pages, notes). `extra_urls` = [(url, method)] from sitemaps, build output and crawl."""
     files = snapshot['files']
     rows, adapter = adapter_routes(files, fingerprint)
-    notes = {'adapter': adapter, 'fallback_routes_skill': False, 'excluded': [], 'unmatched_urls': []}
+    notes = {'adapter': adapter, 'fallback_routes_skill': False, 'excluded': [], 'unmatched_urls': [],
+             'gaps': [], 'soft_404_risk': catch_all_rewrites(files), 'declared_redirects': []}
+    for item in rows:
+        if item['kind'] == 'gap':
+            notes['gaps'].append({k: item.get(k) for k in ('gap', 'expression', 'declared_in', 'line', 'adapter')})
+        elif item['kind'] == 'not-found' and item.get('catch_all'):
+            notes['soft_404_risk'].append({'kind': 'client-catch-all', 'file': item['template'], 'line': item.get('line'),
+                                           'adapter': item['adapter'], 'note': item.get('note')})
+        for source in (item.get('aliases') or []) + (item.get('redirect_from') or []):
+            notes['declared_redirects'].append({'from': source, 'to': item['url'], 'file': item['template'],
+                                                'mechanism': 'hugo-aliases' if item.get('aliases') else 'jekyll-redirect-from'})
+    data_links = [(item['url'], 'data-link') for item in rows if item['adapter'] == 'data-link']
+    rows = [item for item in rows if item['kind'] != 'gap' and not (item['kind'] == 'not-found' and item.get('catch_all'))
+            and item['adapter'] != 'data-link']
     if not rows and learned_rows:
         rows, notes['adapter'] = list(learned_rows), 'learned-adapter'
     if not rows and routes:
@@ -191,13 +280,22 @@ def build_manifest(snapshot, fingerprint, *, routes=None, site_url=None, extra_u
         if item['kind'] == 'utility':
             notes['excluded'].append({'url': item['url'], 'template': item['template'], 'kind': 'utility'})
             continue
-        method = 'adapter:' + item['adapter']
+        method = item.get('discovered_by') or 'adapter:' + item['adapter']
+        extra = {key: item[key] for key in ('i18n_param', 'site_root', 'entry_component') if item.get(key)}
+        if item['adapter'] == 'nav-literal':
+            extra['declared_in'] = item.get('declared_in')
         if item['is_dynamic']:
             pattern = item['url']
             add(pattern, item['template'], method, kind=item['kind'], route=pattern, is_dynamic=True, status='template',
-                adapter_line=item.get('line'))
+                adapter_line=item.get('line'), **extra)
             patterns.append((pattern_regex(pattern, optional_rest=fingerprint.get('primary') in {'astro', 'sveltekit', 'solid-start', 'qwik'}),
                              pattern, item['template']))
+            if item.get('i18n_param') and item.get('locales'):
+                for locale in item['locales']:
+                    concrete = pattern.replace('[' + item['i18n_param'] + ']', locale)
+                    add(concrete, item['template'], 'i18n-locales', kind=item['kind'], route=pattern,
+                        is_dynamic=bool(PLACEHOLDER.search(concrete)), status='template' if PLACEHOLDER.search(concrete) else 'concrete',
+                        locale=locale)
             for value in static_params(files, item['template'], pattern):
                 add(substitute(pattern, value), item['template'], 'static-params-literal', kind=item['kind'], route=pattern,
                     is_dynamic=True, status='concrete')
@@ -207,10 +305,10 @@ def build_manifest(snapshot, fingerprint, *, routes=None, site_url=None, extra_u
                 if page is not None:
                     page.setdefault('content_source', source)
         else:
-            page = add(item['url'], item['template'], method, kind=item['kind'], route=item['url'])
+            page = add(item['url'], item['template'], method, kind=item['kind'], route=item['url'], **extra)
             if page is not None and item['adapter'] == 'static-html' and item['template']:
                 page['fetch_path'] = '/' + re.sub(r'^(?:public|static|src|site|www|docs)/', '', item['template'])
-    for url, method in list(sitemap_urls_from_source(files)) + list(extra_urls):
+    for url, method in list(sitemap_urls_from_source(files)) + data_links + list(extra_urls):
         path = normalize_path(url, site_url, own_hosts)
         if path is None:
             continue

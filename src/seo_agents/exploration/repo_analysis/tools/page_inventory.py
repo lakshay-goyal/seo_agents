@@ -283,8 +283,8 @@ def data_content(index, limit=400):
     """Prose-like string values in JSON/YAML data files (candidate page copy)."""
     records = []
     pattern = re.compile(r'''^\s*["']?([\w-]+)["']?\s*:\s*(["'])((?:(?!\2).){20,})\2''', re.M)
-    for path in index.paths(languages={'json', 'yaml'}):
-        if 'content-data' not in file_roles(path) or path.endswith(('package.json', 'tsconfig.json')) or 'locale' in path:
+    for path in index.paths(languages={'json', 'yaml'}, exclude_docs=True):
+        if 'content-data' not in file_roles(path) or path.endswith(('package.json', 'package-lock.json', 'tsconfig.json', 'composer.json', 'composer.lock', 'skills-lock.json')) or 'locale' in path:
             continue
         for match in pattern.finditer(index.files[path]):
             if len(match.group(3).split()) >= 4 and len(records) < limit:

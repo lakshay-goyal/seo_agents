@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
 from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
+from seo_agents.sandbox.clone import repo_folder
 from seo_agents.sandbox.pr import create_pr
 from seo_agents.sandbox.tools.docker import DockerSandbox
 from seo_agents.sandbox.tools.local import LocalResult
@@ -56,10 +57,11 @@ class MemoryWorkflowTests(unittest.TestCase):
             result = create_pr(runner, 'https://github.com/example-owner/example-site', reports)
         self.assertTrue(result.endswith('/pull/1'))
         writes = {args[0]: args[1] for args, kwargs in runner.write.call_args_list}
-        self.assertEqual(len(writes), 8)  # Seven reports and the PR documentation.
-        self.assertTrue(all(path.startswith('/tmp/example-site/') for path in writes))
+        self.assertEqual(len(writes), 7)  # Seven reports; no extra readme is committed to the client repo.
+        checkout = repo_folder('https://github.com/example-owner/example-site')
+        self.assertTrue(all(path.startswith(checkout + '/') for path in writes))
         for category, filename in REPORT_FILES.items():
-            self.assertEqual(json.loads(writes['/tmp/example-site/seo_reports/onpage/' + filename]), reports[category])
+            self.assertEqual(json.loads(writes[checkout + '/seo_reports/onpage/' + filename]), reports[category])
         self.assertEqual(reports, original)
         create_command = next(args[0] for args, kwargs in runner.run.call_args_list if args[0].startswith('gh pr create '))
         self.assertIn(' --body ', create_command)

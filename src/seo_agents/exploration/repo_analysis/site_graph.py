@@ -15,6 +15,7 @@ import json
 import operator
 import os
 import re
+from pathlib import Path
 from typing import Annotated, Any, TypedDict
 from urllib.parse import urljoin, urlsplit
 
@@ -125,7 +126,8 @@ def build_serve(state):
     extra = build_output_urls(served.output_dir)
     if served.base_url:
         from seo_agents.exploration.repo_analysis.site_model import live_sitemap_urls
-        extra += live_sitemap_urls(served.base_url)
+        from seo_agents.exploration.repo_analysis.url_manifest import site_hosts
+        extra += live_sitemap_urls(served.base_url, own_hosts=site_hosts(state['snapshot'], config.get('site_url')))
     limitations = state['limitations'] + served.limitations
     if config['render'] and served.base_url:
         from seo_agents.exploration.repo_analysis.runtime.render import playwright_available
@@ -224,13 +226,7 @@ def discover(state):
         new.append((target, depth.get(target), url))
     frontier = new[:max(0, budget)] if wave <= MAX_WAVES else []
     update = {'frontier': frontier, 'depth': depth, 'wave': wave}
-    if frontier:
-        from seo_agents.exploration.repo_analysis.url_manifest import build_manifest
-        crawl = [(path, 'crawl') for path in sorted(set(ok_paths(measured)) | {p for p, _, _ in frontier})]
-        pages, notes = build_manifest(state['snapshot'], state['fingerprint'], routes=state.get('routes'),
-                                      site_url=state.get('base_url'), extra_urls=state.get('extra_urls', []) + crawl,
-                                      learned_rows=state.get('learned', []), own_hosts=set(state.get('own_hosts', [])))
-        update.update(pages=pages, manifest_notes=notes)
+    if frontier:  # the manifest is rebuilt once, in attribute, with every crawled path
         log(f'crawl: {len(frontier)} new internal URLs discovered (measured {len(measured)})')
     return update
 
@@ -266,7 +262,9 @@ def attribute(state):
         if base and config['check_links']:
             link_health = sm.run_link_checks(base, model_pages, measured)
         if base:
-            probes = sm.probe_site(base)
+            samples = [p['url'] for p in sorted(pages, key=lambda p: (len(p['url']), p['url']))
+                       if p['instance_status'] in {'static', 'concrete'} and p['url'] != '/']
+            probes = sm.probe_site(base, samples)
     finally:
         if state.get('served') is not None:
             state['served'].close()
@@ -312,6 +310,10 @@ def assemble(state):
         elif result['status'] != 'resolved':
             unresolved.append({'task': task['task'], 'page_id': task.get('page_id'), 'field': task.get('field'), 'errors': result['errors'][-2:]})
     resolutions = state.get('resolutions', [])
+    suggested = expand_suggested_instances(model_pages, state.get('pages') or [], config)
+    if suggested:
+        model_pages = model_pages + suggested
+        counts['instances_added'] = len(suggested)
     gap_report = {'total': len(tasks), 'attribution_gaps': len(state.get('gaps', [])),
                   'resolved': sum(r['status'] == 'resolved' for _, r in resolutions), 'applied': counts['applied'],
                   'by_outcome': dict(counts), 'escalated_to_mid': sum(r['tier'] == 'mid' for _, r in resolutions),
@@ -329,9 +331,11 @@ def assemble(state):
             health = link_health.get('results', {}).get(link.get('resolved') or '')
             if health:
                 link['status'] = health.get('status')
-                if health.get('redirects'):
+                link['state'] = sm.link_state(health)
+                if link['state'] == 'ok' and health.get('redirects'):
                     link['redirect_chain'] = health['redirect_chain']
     validation = sm.validate_model(model_pages, state['snapshot']['files'])
+    sm.annotate_scope(model_pages, state['fingerprint'])
     site = sm.site_facts(state['snapshot'], state['fingerprint'], state['index'], state['manifest_notes'], state.get('served'),
                          state.get('probes') or {}, config.get('deterministic'), model_pages, duplicates, link_health,
                          gap_report, validation, state.get('limitations', []), config['begun'])
@@ -342,18 +346,78 @@ def assemble(state):
                              'linked_from': sorted({origin for target, origin, _ in state.get('found', []) if target == path})[:10]}
                             for path, result in sorted(measured.items()) if path not in good][:300]
     index_view = sm.planning_index(state['snapshot'], state['fingerprint'], model_pages, site)
+    site['timings'] = dict(config.get('_timings') or {})
     model = {'index': index_view, 'site': site, 'pages': {page['id']: page for page in model_pages}}
     if config.get('output_dir'):
         sm.write_model(model, config['output_dir'])
+        from seo_agents.exploration.repo_analysis.output import write_exploration
+        exploration_dir = os.getenv('SEO_EXPLORATION_DIR') or Path(config['output_dir']).parent / 'exploration'
+        write_exploration(model, exploration_dir, root=config.get('root'), files=state['snapshot']['files'],
+                          deterministic=config.get('deterministic'))
+    model['_element_index'] = state['index']  # in memory only: lets pipeline.py reuse it instead of rebuilding
     return {'model': model}
 
 
-def build_site_graph():
+def expand_suggested_instances(model_pages, manifest_pages, config):
+    """Gap feedback loop (one pass, no recursion): instances a gap worker found for a dynamic route
+    (e.g. slugs in a data file) become source-only pages instead of being dropped."""
+    import copy
+    from seo_agents.exploration.repo_analysis.url_manifest import normalize_path, page_id
+    sources = [page for page in model_pages if page.get('instances_suggested')]
+    if not sources:
+        return []
+    known = {page['url'] for page in model_pages}
+    suggestions = [{'route': p['route'], 'template': p['template'], 'urls': p['instances_suggested'].get('urls') or [],
+                    'source': p['instances_suggested'].get('source'), 'page_id': p['id']} for p in sources]
+    try:
+        from seo_agents.exploration.repo_analysis.url_manifest import merge_suggested_instances
+        rows = merge_suggested_instances(manifest_pages, suggestions) or []
+        urls = {(row.get('url'), row.get('route')) for row in rows if isinstance(row, dict) and row.get('url')}
+    except (ImportError, TypeError, ValueError, KeyError):
+        urls = {(normalize_path(u) or u, s['route']) for s in suggestions for u in s['urls']}
+    by_route = {s['route']: next(p for p in sources if p['id'] == s['page_id']) for s in suggestions}
+    budget = max(0, config.get('max_pages', 200) - len(model_pages))
+    added = []
+    for url, route in sorted(urls, key=lambda r: str(r[0])):
+        if not url or url in known or route not in by_route or len(added) >= budget:
+            continue
+        template = by_route[route]
+        record = copy.deepcopy({k: v for k, v in template.items() if k != 'instances_suggested'})
+        record.update(id=page_id(url), url=url, instance_status='concrete', discovered_by=['gap-suggested'], lens='source',
+                      http=None, performance=None)
+        record['rendering'] = {'raw_html_words': None, 'rendered_words': None, 'js_dependent': None, 'method': 'source-only'}
+        record['limitations'] = [l for l in record.get('limitations', []) if not l.startswith('Route pattern')] + [
+            'Instance suggested by a gap worker from ' + json.dumps(template['instances_suggested'].get('source')) +
+            '; values describe the template until measured.']
+        known.add(url)
+        added.append(record)
+    if added:
+        log(f'gap feedback: {len(added)} suggested instances added to the model')
+    return added
+
+
+def timed(name, node):
+    import time
+
+    def run(state):
+        begun = time.perf_counter()
+        try:
+            return node(state)
+        finally:
+            config = state.get('config') if isinstance(state, dict) and 'config' in state else None
+            if config is not None:
+                timings = config.setdefault('_timings', {})
+                timings[name] = round(timings.get(name, 0) + time.perf_counter() - begun, 3)
+    run.__name__ = name
+    return run
+
+
+def build_site_graph(checkpointer=None):
     graph = StateGraph(SiteState)
     for name, node in (('acquire', acquire), ('build_serve', build_serve), ('url_manifest', url_manifest),
                        ('measure_page', measure_page), ('discover', discover), ('attribute', attribute),
                        ('gap_worker', gap_worker), ('assemble', assemble)):
-        graph.add_node(name, node)
+        graph.add_node(name, timed(name, node))
     graph.add_edge(START, 'acquire')
     graph.add_edge('acquire', 'build_serve')
     graph.add_edge('build_serve', 'url_manifest')
@@ -363,21 +427,62 @@ def build_site_graph():
     graph.add_conditional_edges('attribute', fan_out_gaps, ['gap_worker', 'assemble'])
     graph.add_edge('gap_worker', 'assemble')
     graph.add_edge('assemble', END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer) if checkpointer is not None else graph.compile()
 
 
 MAX_WAVES = 40  # crawl waves; each costs two supersteps (measure_page, discover)
 
 
+def graph_concurrency(config):
+    """SEO_MEASURE_WORKERS (or an explicit `workers`) caps concurrency, up or down; otherwise the larger of
+    the measure default and SEO_GAP_CONCURRENCY. Each concurrent URL launches its own browser."""
+    if config.get('workers_explicit') or os.getenv('SEO_MEASURE_WORKERS'):
+        return max(1, int(config.get('workers') or os.getenv('SEO_MEASURE_WORKERS') or 4))
+    return max(config.get('workers') or 4, int(os.getenv('SEO_GAP_CONCURRENCY', '6')))
+
+
+def checkpointer_from_env():
+    """Opt-in resume: SEO_CHECKPOINT=/path/to/checkpoints.sqlite (needs langgraph-checkpoint-sqlite)."""
+    path = os.getenv('SEO_CHECKPOINT')
+    if not path:
+        return None, None
+    try:
+        import sqlite3
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        try:
+            from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+            serde = JsonPlusSerializer(pickle_fallback=True)
+        except (ImportError, TypeError):
+            serde = None
+        connection = sqlite3.connect(path, check_same_thread=False)
+        saver = SqliteSaver(connection, serde=serde) if serde else SqliteSaver(connection)
+        return saver, connection
+    except Exception as error:  # noqa: BLE001 - checkpointing is optional; never fail the run over it
+        log('checkpointing unavailable (' + type(error).__name__ + '); running without resume')
+        return None, None
+
+
 def run_site_graph(config, snapshot=None):
-    concurrency = max(config.get('workers') or 4, int(os.getenv('SEO_GAP_CONCURRENCY', '6')))
+    concurrency = graph_concurrency(config)
     state = {'config': config}
     if snapshot is not None:
         state['snapshot'] = snapshot
+    checkpointer, connection = checkpointer_from_env()
+    run_config = {'max_concurrency': concurrency, 'recursion_limit': 2 * MAX_WAVES + 30}
+    if checkpointer is not None:
+        run_config['configurable'] = {'thread_id': os.getenv('SEO_CHECKPOINT_THREAD') or str(config.get('root'))}
     try:
-        result = build_site_graph().invoke(state, config={'max_concurrency': concurrency,
-                                                          'recursion_limit': 2 * MAX_WAVES + 30})
+        try:
+            result = build_site_graph(checkpointer).invoke(state, config=run_config)
+        except (TypeError, ValueError) as error:
+            if checkpointer is None or 'serializ' not in str(error).lower():
+                raise
+            log('checkpoint serialisation failed; re-running without resume')
+            run_config.pop('configurable', None)
+            result = build_site_graph().invoke(state, config=run_config)
     finally:
         for served in config.pop('_served', []):
             served.close()
+        if connection is not None:
+            connection.close()
     return result['model']

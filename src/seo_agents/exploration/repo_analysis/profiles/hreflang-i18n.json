@@ -73,7 +73,7 @@
     {
       "id": "html-lang",
       "label": "Document language attribute",
-      "regex": "<html[^>]*\\blang\\s*=\\s*['\\\"{]?([\\w-]*)|<html[^>]*\\blanguage_attributes\\s*\\(",
+      "regex": "<html\\b[^>]*\\blang\\s*=\\s*(?:[\"']([\\w-]*)|(\\{))|<html[^>]*\\blanguage_attributes\\s*\\(|<Html\\b[^>]*\\blang\\s*=\\s*(?:[\"']([\\w-]*)|(\\{))",
       "value_group": 1,
       "languages": [
         "@markup",
@@ -84,12 +84,15 @@
         "match": [
           "<html lang=\"en\">",
           "<html <?php language_attributes(); ?>>",
-          "<html lang=\"{{ request.locale.iso_code }}\">"
+          "<html lang=\"{{ request.locale.iso_code }}\">",
+          "<Html lang=\"en\">",
+          "<html lang={params.locale}>"
         ],
         "no_match": [
           "<head>"
         ]
-      }
+      },
+      "ignore_case": true
     },
     {
       "id": "locale-segment",

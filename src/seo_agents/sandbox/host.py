@@ -1,7 +1,11 @@
 """Host side: prepare the sandbox and run the pipeline inside it.
 
-The host never clones the client repo. It only provisions the
-container, ships this package into it, and starts the driver.
+The host never clones the client repo. It only provisions the container, ships this package
+into it, and starts the driver in two separate `docker exec` phases:
+
+1. `analyze` (clone + exploration): no GITHUB_TOKEN. Repository code that runs during an
+   optional build runs as the unprivileged `seo-build` user with an allowlisted environment.
+2. `publish` (commit + PR): only GITHUB_TOKEN; no repository code runs in this phase.
 """
 
 import os
@@ -35,10 +39,12 @@ PIP_DEPS = project_dependencies()
 
 # Best-effort optional runtime for building, rendering and Lighthouse. Each step may fail
 # (e.g. no network for apt/npm); the pipeline then falls back to source-only lenses.
+BROWSERS_PATH = "/opt/ms-playwright"
+BUILD_USER = "seo-build"
 RENDER_STEPS = [
     ("system packages (node, npm)", "apt-get update -qq && apt-get install -y -qq nodejs npm"),
     ("playwright python package", shlex.join(["python3", "-m", "pip", "install", "--quiet", "--break-system-packages", "playwright>=1.48"])),
-    ("chromium for playwright", "python3 -m playwright install --with-deps chromium"),
+    ("chromium for playwright", "PLAYWRIGHT_BROWSERS_PATH=" + BROWSERS_PATH + " python3 -m playwright install --with-deps chromium"),
     ("lighthouse CLI", "npm install -g --silent lighthouse"),
 ]
 
@@ -53,6 +59,8 @@ def ensure_container_runtime(sandbox):
     ]))
     if not result.success:
         raise RuntimeError("pip install failed:\n" + result.stdout + result.stderr)
+    # Unprivileged identity for install/build/preview of untrusted repository code.
+    sandbox.run("id -u " + BUILD_USER + " >/dev/null 2>&1 || useradd -m -s /bin/bash " + BUILD_USER)
     sandbox.run("mkdir -p /opt/seo_agents && touch " + RUNTIME_MARKER)
     done("provisioning container runtime (pip install)", begun)
 
@@ -99,6 +107,24 @@ def sync_sources(sandbox):
     return count
 
 
+SECRET_FOR_PUBLISH = ("GITHUB_TOKEN", "GH_TOKEN")
+PUBLISH_KEYS = ("SEO_PR_COMMIT_FULL", "SEO_PR_COMMIT_BUDGET", "SEO_PR_BRANCH")
+
+
+def phase_envs(env):
+    """(analyze_env, publish_env): the token reaches only the publish phase."""
+    analyze = {k: v for k, v in env.items() if k not in SECRET_FOR_PUBLISH}
+    analyze.setdefault("PLAYWRIGHT_BROWSERS_PATH", BROWSERS_PATH)
+    analyze.setdefault("SEO_BUILD_USER", BUILD_USER)
+    publish = {k: env[k] for k in SECRET_FOR_PUBLISH + PUBLISH_KEYS if env.get(k)}
+    return analyze, publish
+
+
+def marker(output, name):
+    match = re.search(name + r"=(\S+)", output or "")
+    return match.group(1) if match else None
+
+
 def run_pipeline_in_sandbox(sandbox, github_url, env=None, site_url=None):
     begun = start("full pipeline in sandbox")
     env = dict(env or {})
@@ -107,14 +133,23 @@ def run_pipeline_in_sandbox(sandbox, github_url, env=None, site_url=None):
         ensure_render_runtime(sandbox)
     sync_sources(sandbox)
     driver = CONTAINER_SRC + "/seo_agents/sandbox/in_container.py"
-    log("running driver inside the sandbox for " + github_url)
-    command = ["python3", "-u", driver, github_url] + ([site_url] if site_url else [])
-    result = sandbox.run(shlex.join(command), env=env, stream=True)
+    analyze_env, publish_env = phase_envs(env)
+    log("running analysis inside the sandbox for " + github_url + " (no GitHub token in this phase)")
+    command = ["python3", "-u", driver, "analyze", github_url] + ([site_url] if site_url else [])
+    result = sandbox.run(shlex.join(command), env=analyze_env, stream=True)
     if not result.success:
-        raise RuntimeError("Container pipeline failed (exit " + str(result.exit_code) +
+        raise RuntimeError("Container analysis failed (exit " + str(result.exit_code) +
                            "); see the streamed output above.")
-    match = PR_URL_RE.search(result.stdout)
-    if not match:
+    bundle = marker(result.stdout, "SEO_BUNDLE")
+    if not bundle:
+        raise RuntimeError("Analysis finished but no SEO_BUNDLE found; see the streamed output above.")
+    log("publishing the PR (token-only phase)")
+    result = sandbox.run(shlex.join(["python3", "-u", driver, "publish", github_url, bundle]), env=publish_env, stream=True)
+    if not result.success:
+        raise RuntimeError("Container publish failed (exit " + str(result.exit_code) +
+                           "); see the streamed output above.")
+    pr_url = marker(result.stdout, "SEO_PR_URL")
+    if not pr_url:
         raise RuntimeError("Pipeline finished but no SEO_PR_URL found; see the streamed output above.")
     done("full pipeline in sandbox", begun)
-    return match.group(1)
+    return pr_url

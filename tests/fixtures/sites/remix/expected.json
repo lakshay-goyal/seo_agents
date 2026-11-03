@@ -1,0 +1,30 @@
+{
+  "framework": "remix",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Welcome to Acme"
+        ],
+        "title": "Acme Shop"
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "h1": [
+          "About Acme"
+        ]
+      }
+    },
+    {
+      "url": "/docs/:slug",
+      "fields": {}
+    },
+    {
+      "url": "/posts/:id",
+      "fields": {}
+    }
+  ]
+}

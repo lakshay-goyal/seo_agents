@@ -9,7 +9,8 @@
    (when a site_url, pre-built HTML or SEO_BUILD is available) -> attribution -> cheap-model gap
    workers -> `seo_reports/site_model/{index.json, site.json, pages/<id>.json}`;
 5. optionally (SEO_RUN_LLM_AGENTS=1 / --with-llm-agents) runs the seven legacy LLM category
-   extractors through `graph.py`, reusing the same snapshot, context and element index.
+   extractors through `graph.py`, reusing the same snapshot, context and element index. DEPRECATED: the
+   site model covers their data; a legacy failure never blocks the site model or repo_context.json.
 
 CLI (no clone, no PR):
     python -m seo_agents.exploration.repo_analysis /path/to/site [--site-url URL] [--render] [--build]
@@ -31,7 +32,6 @@ from seo_agents.exploration.repo_analysis.agents.sitemap_robots import check_sit
 from seo_agents.exploration.repo_analysis.agents.canonicals_redirects import analyze_canonicals_redirects
 from seo_agents.exploration.repo_analysis.agents.rendering_strategy import analyze_rendering_strategy
 from seo_agents.exploration.repo_analysis.agents.react_diagnostics import diagnose_react
-from seo_agents.exploration.repo_analysis.agents.state_management import analyze_state_management
 from seo_agents.exploration.repo_analysis.agents.performance_assets import analyze_performance_assets
 from seo_agents.exploration.repo_analysis.agents.https_security_headers import analyze_https_security_headers
 from seo_agents.exploration.repo_analysis.agents.structured_data import analyze_structured_data
@@ -63,22 +63,21 @@ def explore_codebase(index):
     run('keywords', extract_keywords, inventory, routes)
 
     # Crawl, rendering, Core Web Vitals, security, structured data, mobile and i18n
-    run('sitemap_robots', check_sitemap_and_robots, index)
+    sitemap = run('sitemap_robots', check_sitemap_and_robots, index)
     run('canonicals_redirects', analyze_canonicals_redirects, index)
-    run('rendering_strategy', analyze_rendering_strategy, index, routes)
-    run('client_diagnostics', diagnose_react, index)
-    run('state_management', analyze_state_management, index)
+    client = run('client_diagnostics', diagnose_react, index)
+    run('rendering_strategy', analyze_rendering_strategy, index, routes, client)
     run('performance_web_vitals', analyze_performance_assets, index, inventory, project)
     run('https_security_headers', analyze_https_security_headers, index)
-    run('structured_data', analyze_structured_data, index)
-    run('mobile_parity', analyze_mobile_parity, index)
+    structured = run('structured_data', analyze_structured_data, index)  # single @type source for the agents below
+    run('mobile_parity', analyze_mobile_parity, index, project)
     run('hreflang_i18n', analyze_hreflang_i18n, index)
 
     # Shareability, brand/entity, local business presence and AI-search readiness
     run('shareability_link_assets', analyze_shareability_link_assets, index)
-    run('brand_entity_signals', analyze_brand_entity_signals, index)
-    run('local_business_presence', analyze_local_business_presence, index)
-    run('ai_search_readiness', analyze_ai_search_readiness, index)
+    run('brand_entity_signals', analyze_brand_entity_signals, index, structured)
+    run('local_business_presence', analyze_local_business_presence, index, structured)
+    run('ai_search_readiness', analyze_ai_search_readiness, index, structured, sitemap)
     return results
 
 
@@ -132,21 +131,30 @@ def repo_analysis(github_url=None, repo_path=None, *, output_path=None, run_agen
     if run_agents is None:
         run_agents = os.getenv('SEO_RUN_LLM_AGENTS', '0') == '1'
     if run_agents:
-        element_index = None
-        if model is not None:
-            from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
-            element_index = build_element_index(snapshot)
-        state = run_llm_agents(repo_path=repo_path, snapshot=snapshot, element_index=element_index,
-                               routes=results.get('routes'))
-        artifacts = state.get("artifacts") or {}
-        log("LLM agent reports in memory: " + str(sorted(artifacts)))
-        context['llm_agent_reports'] = {'categories': sorted(artifacts),
-                                        'note': 'Verified LLM reports are published separately under seo_reports/onpage/.'}
+        try:
+            element_index = (model or {}).get('_element_index')
+            if element_index is None and model is not None:
+                from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+                element_index = build_element_index(snapshot)
+            state = run_llm_agents(repo_path=repo_path, snapshot=snapshot, element_index=element_index,
+                                   routes=results.get('routes'))
+            artifacts = state.get("artifacts") or {}
+            log("LLM agent reports in memory: " + str(sorted(artifacts)))
+            context['llm_agent_reports'] = {'categories': sorted(artifacts), 'status': 'completed',
+                                            'note': 'Deprecated legacy reports, published separately under seo_reports/onpage/.'}
+        except Exception as error:  # noqa: BLE001 - legacy extractors must never block the site model / repo context
+            log('legacy LLM agents failed (site model and repo_context.json are kept): ' + type(error).__name__ + ': ' + str(error)[:300])
+            failed = getattr(error, 'checkpoint', None) or {}
+            state = {}
+            context['llm_agent_reports'] = {'status': 'failed', 'error': type(error).__name__ + ': ' + str(error)[:500],
+                                            'completed_categories': sorted((failed.get('artifacts') or {}))}
     if path:
         write_repo_context(context, path)
     state = dict(state)
     state['repo_context'] = context
     state['repo_context_path'] = str(path) if path else None
+    if isinstance(model, dict):
+        model.pop('_element_index', None)
     state['site_model'] = model
     state['site_model_dir'] = str(model_dir) if model is not None and (output_path is not False or site_model_dir) else None
     done(label, begun)

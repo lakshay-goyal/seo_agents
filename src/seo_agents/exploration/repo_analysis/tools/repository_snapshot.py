@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import os
 import codecs
 import stat
@@ -11,7 +12,8 @@ from pathlib import Path, PurePosixPath
 
 from seo_agents.exploration.repo_analysis.tools.helpers import SKIP_DIRS
 
-MAX_FILES = 2000
+MAX_FILES = 2000          # source/text files loaded; binary assets have their own budget below
+MAX_ASSETS = 5000
 MAX_FILE_BYTES = 500_000
 MAX_SOURCE_BYTES = 20_000_000
 ASSET_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif', '.ico',
@@ -20,7 +22,22 @@ SECRET_EXTS = {'.pem', '.key', '.p12', '.pfx', '.sqlite', '.db'}
 SKIP_NAMES = {'credentials', 'credentials.json', 'secrets.json', 'secrets.yaml',
               'id_rsa', 'id_ed25519'}
 HIDDEN_DIRS = {'.well-known', '.vitepress', '.vuepress', '.config'}
-HIDDEN_FILES = {'.htaccess', '.eleventy.js', '.eleventy.cjs', '.eleventy.json'}
+HIDDEN_FILES = {'.htaccess', '.eleventy.js', '.eleventy.cjs', '.eleventy.json', '.nvmrc', '.node-version', '.tool-versions',
+                '.python-version', '.ruby-version'}
+# Env files are read only to learn the site's public origin: every value is redacted except URL-shaped
+# values of non-secret keys (SITE_URL=https://example.com). Never stored verbatim.
+ENV_FILES = {'.env', '.env.production', '.env.example', '.env.sample'}
+SECRET_KEY = re.compile(r'(?i)SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE|API_?KEY|ACCESS_?KEY|CREDENTIAL|AUTH|SESSION|SALT|DSN|DATABASE|_KEY$')
+# Generated/build output and caches: never source, and indexing them misattributes edits.
+GENERATED_DIRS = {'out', '_site', '.next', '.nuxt', '.output', '.svelte-kit', '.astro', '.vercel', '.netlify', 'coverage',
+                  'storybook-static', '.turbo', '.cache', '.parcel-cache', '.docusaurus', '.expo', 'resources/_gen'}
+# Walk these first so an asset-heavy public/ can never starve the source budget.
+SOURCE_DIRS = ('src', 'app', 'pages', 'components', 'layouts', 'layout', 'templates', 'template-parts', 'content', 'routes',
+               'sections', 'snippets', 'blocks', 'theme', 'themes', 'views', 'resources', 'lib', 'config', 'data', 'locales',
+               '_layouts', '_includes', '_posts', '_data', 'archetypes', 'i18n')
+DOC_NAME = re.compile(r'^(?:README|CHANGELOG|CHANGES|HISTORY|CONTRIBUTING|CODE_OF_CONDUCT|LICEN[CS]E|SECURITY|AUTHORS|NOTICE)(?:\.[\w.]+)?$', re.I)
+DOCS_SITE_MARKERS = re.compile(r'(?:^|/)(?:docusaurus\.config\.[cm]?[jt]s|mkdocs\.ya?ml|\.vitepress/config\.[cm]?[jt]s|book\.toml|'
+                               r'docs/(?:_config\.ya?ml|\.vuepress/)|antora\.yml)$')
 MANIFESTS = ('routes-manifest.json', 'prerender-manifest.json',
              'server/app-paths-manifest.json', 'server/pages-manifest.json')
 
@@ -46,6 +63,8 @@ def file_roles(path):
         roles.append('template')
     if parts & {'test', 'tests', 'fixtures', '__tests__'} or '.test.' in name or '.spec.' in name:
         roles.append('tests-fixtures')
+    if DOC_NAME.match(PurePosixPath(path).name) or str(p).startswith('.github/'):
+        roles.append('doc')  # repository documentation: never served, never page content or keywords
     if p.suffix in ASSET_EXTS:
         roles.append('asset')
     return roles or ['implementation']
@@ -69,6 +88,22 @@ def secret_name(name):
             or PurePosixPath(name).suffix in SECRET_EXTS)
 
 
+def redact_env(text):
+    """KEY=value lines -> KEY=<redacted>, except public URL values of non-secret keys (host hints for the manifest)."""
+    out = []
+    for line in text.splitlines()[:400]:
+        match = re.match(r'^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$', line)
+        if not match:
+            continue
+        key, value = match.group(1), match.group(2).strip().strip('"\'')
+        url = re.fullmatch(r'https?://([A-Za-z0-9.\-]+(?::\d+)?)(/[\w\-./]*)?', value)
+        if url and not SECRET_KEY.search(key) and '@' not in value:
+            out.append(f'{key}={value}')
+        else:
+            out.append(f'{key}=<redacted>')
+    return '\n'.join(out) + ('\n' if out else '')
+
+
 def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, max_source_bytes=None):
     root = Path(repo_path or Path.cwd()).resolve()
     if not root.is_dir():
@@ -78,15 +113,27 @@ def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, 
     max_source_bytes = MAX_SOURCE_BYTES if max_source_bytes is None else max_source_bytes
     if min(max_files, max_file_bytes, max_source_bytes) < 1:
         raise ValueError('Snapshot budgets must be positive')
-    files, assets, limitations, inventory = {}, {}, [], []
-    total = count = source_reads = asset_probes = 0
+    files, assets, limitations, inventory, env_hints = {}, {}, [], [], {}
+    total = count = asset_count = source_reads = asset_probes = 0
+    hugo_site = any((root / name).is_file() and re.search(r'(?im)^\s*(?:baseURL|theme|languageCode)\s*[=:]', (root / name).read_text(errors='replace'))
+                    for name in ('hugo.toml', 'hugo.yaml', 'hugo.yml', 'config.toml', 'config.yaml', 'config.yml')) or (root / 'archetypes').is_dir()
     walk_errors = []
 
     def capture(path):
-        nonlocal total, count, source_reads, asset_probes
+        nonlocal total, count, asset_count, source_reads, asset_probes
         relative = path.relative_to(root).as_posix()
         row = {'path': relative, 'kind': 'file', 'roles': file_roles(relative)}
         inventory.append(row)
+        if path.name in ENV_FILES and not path.is_symlink():
+            # The file stays excluded (never in `files`, never shown to a model); only public URL values of
+            # non-secret keys are kept as host hints for the URL manifest.
+            try:
+                if path.stat().st_size <= 200_000:
+                    hints = [line for line in redact_env(path.read_text(errors='replace')).splitlines() if not line.endswith('=<redacted>')]
+                    if hints:
+                        env_hints[relative] = '\n'.join(hints) + '\n'
+            except OSError:
+                pass
         if path.is_symlink() or secret_name(path.name):
             row.update(status='excluded', reason='symlink' if path.is_symlink() else 'credential-or-secret')
             return
@@ -102,11 +149,18 @@ def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, 
                 row.update(status='excluded', reason='not-a-regular-file')
                 return
             row['size_bytes'] = info.st_size
-            if count >= max_files or total >= max_source_bytes:
+            is_asset = path.suffix.lower() in ASSET_EXTS
+            if is_asset and asset_count >= MAX_ASSETS:
+                row.update(status='not_loaded', reason='asset-budget', mtime_ns=info.st_mtime_ns)
+                return
+            if not is_asset and (count >= max_files or total >= max_source_bytes):
                 row.update(status='not_loaded', reason='snapshot-budget', mtime_ns=info.st_mtime_ns)
                 return
-            count += 1
-            if path.suffix.lower() in ASSET_EXTS:
+            if is_asset:
+                asset_count += 1
+            else:
+                count += 1
+            if is_asset:
                 assets[relative] = {'size_bytes': info.st_size}
                 if info.st_size <= 10_000_000:
                     # Content hash, not mtime: identity must survive a fresh clone.
@@ -140,10 +194,18 @@ def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, 
     for directory, dirs, names in os.walk(root, followlinks=False,
                                          onerror=lambda error: walk_errors.append(type(error).__name__)):
         kept = []
-        for name in sorted(dirs):
+        at_root = Path(directory) == root
+
+        def walk_order(name):  # source dirs first, then other dirs, static/public asset dirs last
+            lowered = name.lower()
+            return (0 if lowered in SOURCE_DIRS else 2 if lowered in {'public', 'static', 'assets', 'images', 'img', 'media', 'uploads', 'fonts'} else 1, name)
+        for name in sorted(dirs, key=walk_order):
             path = Path(directory) / name
+            relative_dir = path.relative_to(root).as_posix()
             reason = ('symlink' if path.is_symlink() else 'credential-or-secret' if secret_name(name)
                       else 'dependencies-or-generated' if name in SKIP_DIRS | {'vendor', 'seo_reports'}
+                      else 'build-output' if name in GENERATED_DIRS or relative_dir in GENERATED_DIRS
+                      else 'hugo-build-output' if at_root and name == 'public' and hugo_site
                       else 'hidden-directory-outside-declared-scope' if name.startswith('.') and name not in HIDDEN_DIRS else None)
             if reason:
                 inventory.append({'path': path.relative_to(root).as_posix(), 'kind': 'subtree',
@@ -159,6 +221,15 @@ def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, 
         # Prioritize configuration within a directory; inventory continues after all caps.
         for name in sorted(names, key=lambda n: ('configuration' not in file_roles(n), n)):
             capture(Path(directory) / name)
+    docs_site = any(DOCS_SITE_MARKERS.search(row['path']) for row in inventory)
+    doc_files = []
+    for row in inventory:
+        if row['kind'] != 'file':
+            continue
+        if not docs_site and row['path'].startswith('docs/') and 'doc' not in row['roles']:
+            row['roles'] = row['roles'] + ['doc']
+        if 'doc' in row['roles']:
+            doc_files.append(row['path'])
     if not files:
         limitations.append('No textual source captured; inspect inventory exclusions, unreadable files and budgets.')
     counts = Counter(row['status'] for row in inventory if row['kind'] == 'file')
@@ -174,7 +245,10 @@ def snapshot_repository(repo_path=None, *, max_files=None, max_file_bytes=None, 
                 'source_bytes_captured': total, 'source_read_attempts': source_reads, 'asset_probe_attempts': asset_probes,
                 'limits': {'max_files_loaded': max_files, 'max_file_bytes': max_file_bytes, 'max_source_bytes': max_source_bytes},
                 'denominator_note': 'All enumerated in-scope files; excluded subtree descendants are not counted. Listed/captured does not mean understood.'}
-    payload = {'files': files, 'assets': assets, 'limitations': limitations,
+    coverage['assets_loaded'] = asset_count
+    coverage['limits']['max_assets'] = MAX_ASSETS
+    payload = {'files': files, 'assets': assets, 'limitations': limitations, 'doc_files': sorted(doc_files),
+               'env_hints': env_hints,
                'inventory': sorted(inventory, key=lambda r: r['path']), 'coverage': coverage}
     payload['sha256'] = content_identity(payload)
     payload['observed_at'] = datetime.now(timezone.utc).isoformat()

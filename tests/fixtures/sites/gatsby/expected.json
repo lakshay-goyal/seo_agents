@@ -1,0 +1,26 @@
+{
+  "framework": "gatsby",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Trail Notes"
+        ],
+        "title": "Trail Notes"
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "h1": [
+          "About"
+        ]
+      }
+    },
+    {
+      "url": "/posts/:slug",
+      "fields": {}
+    }
+  ]
+}

@@ -650,14 +650,44 @@ def app_entry(repo):
     return None
 
 
+NON_REACT_MOUNT = re.compile(r'''\bcreateApp\s*\(|from\s+['"](?:vue|svelte|solid-js(?:/web)?|preact|lit|@angular/[\w-]+)['"]|new\s+\w+\s*\(\s*\{\s*target\s*:''')
+REACT_MOUNT = re.compile(r'''\bcreateRoot\s*\(|\bhydrateRoot\s*\(|\bReactDOM\.(?:render|hydrate)\s*\(|from\s+['"]react-dom(?:/client)?['"]''')
+
+
+def is_react_entry(repo, entry):
+    """Only React mounts are composed statically; anything else returns no discovery instead of raising."""
+    try:
+        source = entry.read_text(errors='replace')
+    except OSError:
+        return False
+    if NON_REACT_MOUNT.search(source) and not re.search(r'''from\s+['"]react-dom''', source):
+        return False
+    if REACT_MOUNT.search(source) or entry.suffix in {'.jsx', '.tsx'}:
+        return True
+    package = repo / 'package.json'
+    try:
+        manifest = json.loads(package.read_text()) if package.is_file() else {}
+    except ValueError:
+        manifest = {}
+    deps = {**(manifest.get('dependencies') or {}), **(manifest.get('devDependencies') or {})} if isinstance(manifest, dict) else {}
+    return 'react-dom' in deps and bool(re.search(r'\bApp\b|\brender\s*\(', source))
+
+
 def discover_app(repo):
     repo = Path(repo).resolve()
     entry = app_entry(repo)
     if not entry:
         return None
+    if not is_react_entry(repo, entry):
+        # Static sites (<script src="js/app.js">) and Vue/Svelte/Solid Vite apps are not React mounts:
+        # nothing to compose here, the framework adapters and rendered lenses cover them.
+        return None
     engine = Engine(repo)
-    main = engine.module(entry)
-    if not isinstance(main.default, Function):
+    try:
+        main = engine.module(entry)
+    except Exception:  # noqa: BLE001 - an unparseable entry is a coverage gap, not a crash
+        return None
+    if main is None or not isinstance(getattr(main, 'default', None), Function):
         if not (repo / 'index.html').is_file():
             return None
         raise ValueError('Unresolved React mount entry: ' + str(entry.relative_to(repo)) + '; refusing an HTML-shell-only report.')

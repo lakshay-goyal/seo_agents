@@ -114,6 +114,25 @@
           "favicon"
         ]
       }
+    },
+    {
+      "id": "favicon",
+      "label": "Favicon / app icon declaration or file",
+      "regex": "rel\\s*=\\s*[\"'](?:shortcut\\s+)?icon[\"']|rel\\s*=\\s*[\"']apple-touch-icon|(?:^|/)favicon\\.(?:ico|png|svg)\\b|(?:^|/)(?:icon|apple-icon)\\.(?:png|svg|ico|tsx|jsx)\\b|\\bicons\\s*:\\s*\\{",
+      "precision": "high",
+      "languages": [
+        "@templates",
+        "@data"
+      ],
+      "examples": {
+        "match": [
+          "<link rel=\"icon\" href=\"/logo.png\" />",
+          "icons: { icon: '/i.png' }"
+        ],
+        "no_match": [
+          "iconography"
+        ]
+      }
     }
   ],
   "gaps": [
@@ -122,6 +141,13 @@
       "label": "No viewport declaration found (some frameworks add one by default)",
       "when_none_of": [
         "viewport"
+      ]
+    },
+    {
+      "id": "no-favicon",
+      "label": "No favicon declaration found (search results show site favicons)",
+      "when_none_of": [
+        "favicon"
       ]
     }
   ],

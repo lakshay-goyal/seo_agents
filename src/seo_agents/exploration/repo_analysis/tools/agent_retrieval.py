@@ -3,6 +3,8 @@
 from collections import Counter
 import json
 import re
+import time
+from typing import Annotated, Literal
 
 from langchain_core.tools import tool
 
@@ -14,18 +16,55 @@ def encoded_size(value):
 
 
 def page_records(records, offset=0, limit=100, budget=OUTPUT_BYTES):
+    """One page of records within a byte budget. Sizes accumulate incrementally (no quadratic re-serialise)."""
     offset = max(0, offset)
-    selected = []
+    selected, size = [], 2
     for row in records[offset:offset + limit]:
-        if encoded_size(selected + [row]) > budget - 1500:
+        row_size = encoded_size(row) + 2
+        if size + row_size > budget - 1500:
             if not selected:
                 selected.append({'record_id': row.get('record_id', offset), 'oversized_record': True,
                                  'preview_json': json.dumps(row, ensure_ascii=False)[:800]})
             break
         selected.append(row)
+        size += row_size
     return {'records': selected, 'total': len(records),
             'next_offset': offset + len(selected) if offset + len(selected) < len(records) else None,
             'truncated': offset + len(selected) < len(records) or any(r.get('oversized_record') for r in selected)}
+
+
+# ---------------------------------------------------------------- model-supplied regex safety
+MAX_PATTERN = 300
+GREP_SECONDS = 5.0
+NESTED_QUANTIFIER = re.compile(r'\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*[+*{]')
+try:  # the `regex` module supports per-call timeouts; stdlib `re` cannot be interrupted
+    import regex as _regex  # type: ignore
+except ImportError:  # pragma: no cover - depends on the environment
+    _regex = None
+
+
+def safe_compile(pattern, literal=False):
+    """Compile a model-supplied pattern defensively. Returns (compiled, error)."""
+    if not pattern:
+        return None, 'Pattern must not be empty'
+    if len(pattern) > MAX_PATTERN:
+        return None, f'Pattern longer than {MAX_PATTERN} characters'
+    if literal:
+        return re.compile(re.escape(pattern), re.I), None
+    if NESTED_QUANTIFIER.search(pattern) or re.search(r'\\[1-9]', pattern):
+        return None, 'Nested quantifiers / backreferences are not allowed (catastrophic backtracking risk); simplify the regex'
+    try:
+        if _regex is not None:
+            return _regex.compile(pattern, _regex.I | _regex.V0), None
+        return re.compile(pattern, re.I), None
+    except Exception as error:  # noqa: BLE001 - re.error / regex.error
+        return None, 'Invalid regex: ' + str(error)[:200]
+
+
+def timed_search(compiled, line):
+    if _regex is not None and isinstance(compiled, _regex.Pattern):
+        return compiled.search(line, timeout=0.2)
+    return compiled.search(line)
 
 
 def text_chunk(text, offset, metadata, budget=OUTPUT_BYTES, field='text'):
@@ -265,16 +304,22 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
 
     # ---- compact surface (preferred): read, grep, symbols, find_definition, resolve_import, query_index
     @tool
-    def read(path: str, start_line: int = 1, end_line: int = 0) -> dict:
-        """Read source as line-numbered text (`N| code`). end_line=0 reads up to the byte budget; continue at next_line."""
+    def read(path: Annotated[str, 'Repository-relative file path, exactly as listed by list_files'],
+             start_line: Annotated[int, '1-based first line to return'] = 1,
+             end_line: Annotated[int, 'Last line to return; 0 = as many as fit the byte budget'] = 0) -> dict:
+        """Read source as line-numbered text (`N| code`). Continue at next_line. Lines over 2000 characters are cut
+        and listed in long_lines; use read_source(path, start_line, start_column) to read them completely."""
         if path not in files:
             return emit('read', {'error': 'Source unavailable; check list_files status', 'path': path[:300]})
         lines = files[path].splitlines()
         start = max(1, start_line)
         stop = len(lines) if end_line <= 0 else min(len(lines), end_line)
-        out, size, number = [], 0, start
+        out, size, number, long_lines = [], 0, start, []
         while number <= stop:
-            row = str(number) + '| ' + lines[number - 1][:2000]
+            line = lines[number - 1]
+            if len(line) > 2000:
+                long_lines.append({'line': number, 'length': len(line)})
+            row = str(number) + '| ' + line[:2000] + (' …[cut]' if len(line) > 2000 else '')
             if size + len(row.encode()) + 1 > OUTPUT_BYTES - 400:
                 break
             out.append(row)
@@ -285,31 +330,57 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         metrics['unique_source_files_requested'] = len(read_paths)
         if inspected is not None and out:
             inspected.add(path)
-        return emit('read', {'path': path, 'total_lines': len(lines), 'start_line': start,
-                             'text': '\n'.join(out), 'next_line': number if number <= stop else None})
+        result = {'path': path, 'total_lines': len(lines), 'start_line': start,
+                  'text': '\n'.join(out), 'next_line': number if number <= stop else None}
+        if long_lines:
+            result['long_lines'] = long_lines[:20]
+            result['truncated'] = True
+        return emit('read', result)
 
     @tool
-    def grep(pattern: str, regex: bool = False, glob: str = '', cursor: int = 0) -> dict:
-        """Search captured source (literal by default, case-insensitive; regex=True for Python regex). glob filters paths (e.g. '*.liquid', 'src/**')."""
+    def grep(pattern: Annotated[str, 'Text to find (literal unless regex=True); at most 300 characters'],
+             regex: Annotated[bool, 'Treat pattern as a regular expression (no nested quantifiers / backreferences)'] = False,
+             glob: Annotated[str, "Path filter, e.g. '*.liquid' or 'src/**'; empty = all files"] = '',
+             cursor: Annotated[int, 'next_cursor from the previous page; 0 for the first page'] = 0) -> dict:
+        """Search captured source, case-insensitive. Returns up to 60 matches per page with file, line, col and preview."""
         import fnmatch
-        try:
-            compiled = re.compile(pattern if regex else re.escape(pattern), re.I)
-        except re.error as error:
-            return emit('grep', {'error': 'Invalid regex: ' + str(error)[:200]})
-        if not pattern:
-            return emit('grep', {'error': 'Pattern must not be empty'})
-        matches = []
+        compiled, error = safe_compile(pattern, literal=not regex)
+        if error:
+            return emit('grep', {'error': error})
+        cursor = max(0, cursor)
+        deadline = time.monotonic() + GREP_SECONDS
+        matches, seen, size, more, timed_out = [], 0, 2, False, False
         for path in sorted(files):
+            if more or timed_out:
+                break
             if glob and not (fnmatch.fnmatch(path, glob) or fnmatch.fnmatch(path.rsplit('/', 1)[-1], glob)):
                 continue
             for number, line in enumerate(files[path].splitlines(), 1):
-                found = compiled.search(line)
-                if found:
-                    matches.append({'file': path, 'line': number, 'col': found.start(),
-                                    'preview': line[max(0, found.start() - 60):found.start() + 140]})
-        result = page_records(matches, cursor, limit=60)
-        result['matches'] = result.pop('records')
-        result['next_cursor'] = result.pop('next_offset')
+                if time.monotonic() > deadline:
+                    timed_out = True
+                    break
+                try:
+                    found = timed_search(compiled, line[:5000])
+                except TimeoutError:
+                    timed_out = True
+                    break
+                if not found:
+                    continue
+                seen += 1
+                if seen <= cursor:
+                    continue
+                row = {'file': path, 'line': number, 'col': found.start(),
+                       'preview': line[max(0, found.start() - 60):found.start() + 140]}
+                row_size = encoded_size(row) + 2
+                if len(matches) >= 60 or size + row_size > OUTPUT_BYTES - 1500:
+                    more = True
+                    break
+                matches.append(row)
+                size += row_size
+        result = {'matches': matches, 'next_cursor': cursor + len(matches) if more else None,
+                  'truncated': more or timed_out}
+        if timed_out:
+            result['error'] = f'Search stopped after {GREP_SECONDS:.0f}s; narrow the glob or simplify the pattern'
         return emit('grep', result)
 
     def index_value():
@@ -320,7 +391,7 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         return element_index
 
     @tool
-    def symbols(file: str) -> dict:
+    def symbols(file: Annotated[str, 'Repository-relative file path']) -> dict:
         """Declarations and composition facts of one file: imports/includes (with resolved files), components used, headings, links."""
         if file not in files:
             return emit('symbols', {'error': 'Source unavailable', 'file': file[:300]})
@@ -342,7 +413,8 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         return emit('symbols', result)
 
     @tool
-    def find_definition(name: str, from_file: str = '') -> dict:
+    def find_definition(name: Annotated[str, 'Component, function or variable name'],
+                        from_file: Annotated[str, 'File whose imports should be followed first (optional)'] = '') -> dict:
         """Where a component/function/variable is defined. Follows from_file's imports first, then searches declarations."""
         index_data = index_value()
         candidates = []
@@ -363,7 +435,8 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         return emit('find_definition', {'name': name[:120], 'candidates': unique, 'total': len(unique)})
 
     @tool
-    def resolve_import(from_file: str, specifier: str) -> dict:
+    def resolve_import(from_file: Annotated[str, 'File containing the import/include'],
+                       specifier: Annotated[str, "Import specifier as written, e.g. '@/components/Hero'"]) -> dict:
         """Resolve an import/include specifier from a file, honouring tsconfig/jsconfig paths and Vite/webpack aliases."""
         from seo_agents.exploration.repo_analysis.tools.element_index import load_aliases, resolve_module
         resolved = resolve_module(from_file, specifier, files, load_aliases(files))
@@ -371,14 +444,22 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
                                        'external_package': resolved is None and not specifier.startswith(('.', '/'))})
 
     @tool
-    def query_index(kind: str = 'element', file: str = '', page: str = '', tag: str = '', cursor: int = 0) -> dict:
-        """Query precomputed records. kind: element | route | ref | data | i18n. Filter by file prefix, page url (its composed files) or element tag."""
+    def query_index(kind: Annotated[Literal['element', 'route', 'ref', 'data', 'i18n'], 'Record family to query'] = 'element',
+                    file: Annotated[str, 'File path prefix filter (or i18n key prefix for kind=i18n)'] = '',
+                    page: Annotated[str, "Page URL such as '/about'; restricts to the files composing that page"] = '',
+                    tag: Annotated[str, "Element tag filter for kind=element, e.g. 'h1', 'a', 'img'"] = '',
+                    cursor: Annotated[int, 'next_cursor from the previous page; 0 for the first page'] = 0) -> dict:
+        """Query precomputed records: elements (tag, attrs, literal text, location), routes, import refs, data scalars, i18n keys."""
         index_data = index_value()
         scope = None
         if page:
             from seo_agents.exploration.repo_analysis.tools.element_index import page_composition
             template = next((r.get('template') for r in (routes or []) if r.get('url') == page), None)
-            scope = set(page_composition(index_data, template)) if template else set()
+            if not template:
+                known = [r.get('url') for r in (routes or [])][:20]
+                return emit('query_index', {'error': 'Unknown page ' + repr(page[:200]) + '; use a route url from list_routes',
+                                            'known_pages': known, 'kind': kind})
+            scope = set(page_composition(index_data, template))
         def keep(path):
             return path.startswith(file) and (scope is None or path in scope)
         if kind == 'element':
@@ -398,6 +479,9 @@ def repository_tools(snapshot, inspected=None, *, context=None, routes=None, met
         result = page_records(rows, cursor, limit=40)
         result['next_cursor'] = result.pop('next_offset')
         result['kind'] = kind
+        if not rows:
+            result['error'] = ('No ' + kind + ' records match these filters (file=' + repr(file[:100]) + ', page=' + repr(page[:100])
+                               + ', tag=' + repr(tag[:40]) + '); widen a filter. Empty does not prove absence on the served page.')
         return emit('query_index', result)
 
     draft_tools = []

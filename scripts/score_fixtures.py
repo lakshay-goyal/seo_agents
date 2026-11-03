@@ -15,13 +15,18 @@ a copy of the fixture (without expected.json) and measures:
 Only keys present in expected.json are scored. Actual items with a null value
 (runtime/CMS-only) are ignored for precision.
 
+Hermetic by default: no model calls (SEO_GAP_WORKERS=0, OPENROUTER_API_KEY removed), no network lenses,
+and gap/adapter caches point at a temporary directory instead of ~/.cache. `--allow-llm` opts out.
+
     PYTHONPATH=src python scripts/score_fixtures.py [--fixture NAME ...] [--json out.json]
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import html
+import os
 import json
 import re
 import shutil
@@ -289,7 +294,34 @@ def print_table(results, summary, stream=sys.stdout):
               f"{'PASS' if target['pass'] else 'FAIL'}", file=stream)
 
 
-def run(names=None, explore=None):
+HERMETIC_ENV = {'SEO_GAP_WORKERS': '0', 'SEO_RENDER': '0', 'SEO_BUILD': '0', 'SEO_LIGHTHOUSE': '0', 'SEO_CHECK_LINKS': '0',
+                'SEO_RUN_LLM_AGENTS': '0', 'SEO_NO_LLM': '1', 'SEO_GAP_CACHE': '0'}
+HERMETIC_UNSET = ('OPENROUTER_API_KEY', 'SEO_SITE_URL', 'PAGESPEED_API_KEY', 'LANGSMITH_API_KEY', 'LANGCHAIN_API_KEY')
+
+
+@contextlib.contextmanager
+def hermetic(enabled=True):
+    """Scores must not depend on a model, the network or a warm ~/.cache: same input, same number."""
+    if not enabled:
+        yield
+        return
+    saved = {key: os.environ.get(key) for key in list(HERMETIC_ENV) + list(HERMETIC_UNSET) + ['SEO_ADAPTER_CACHE']}
+    with tempfile.TemporaryDirectory() as cache:
+        os.environ.update(HERMETIC_ENV)
+        os.environ['SEO_ADAPTER_CACHE'] = cache
+        for key in HERMETIC_UNSET:
+            os.environ.pop(key, None)
+        try:
+            yield
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+def run(names=None, explore=None, *, allow_llm=False):
     if explore is None:
         try:
             explore = load_explore()
@@ -298,7 +330,8 @@ def run(names=None, explore=None):
 
             def explore(path, render=False):
                 raise RuntimeError(message)
-    results = [score_fixture(name, explore) for name in (names or fixture_names())]
+    with hermetic(not allow_llm):
+        results = [score_fixture(name, explore) for name in (names or fixture_names())]
     return results, summarize(results)
 
 
@@ -307,8 +340,9 @@ def main(argv=None):
     parser.add_argument('--fixture', action='append', help='Score only this fixture (repeatable)')
     parser.add_argument('--json', type=Path, help='Write full results JSON here')
     parser.add_argument('--misses', action='store_true', help='Print every miss')
+    parser.add_argument('--allow-llm', action='store_true', help='Let gap workers call the configured model (not hermetic)')
     args = parser.parse_args(argv)
-    results, summary = run(args.fixture)
+    results, summary = run(args.fixture, allow_llm=args.allow_llm)
     print_table(results, summary)
     if args.misses:
         for r in results:

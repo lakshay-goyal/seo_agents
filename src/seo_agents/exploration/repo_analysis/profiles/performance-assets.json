@@ -98,8 +98,8 @@
     },
     {
       "id": "preconnect",
-      "label": "Resource hints (preconnect/dns-prefetch/preload)",
-      "regex": "rel\\s*=\\s*['\"](?:preconnect|dns-prefetch|preload|modulepreload)['\"]",
+      "label": "Connection hints (preconnect / dns-prefetch)",
+      "regex": "rel\\s*=\\s*['\"](?:preconnect|dns-prefetch)['\"]",
       "tags": [
         "LCP",
         "TTFB"
@@ -114,7 +114,8 @@
           "rel='dns-prefetch'"
         ],
         "no_match": [
-          "rel=\"stylesheet\""
+          "rel=\"stylesheet\"",
+          "rel=\"preload\""
         ]
       }
     },
@@ -168,7 +169,7 @@
     {
       "id": "code-splitting",
       "label": "Code splitting / dynamic import",
-      "regex": "\\bimport\\s*\\(\\s*['\"`]|React\\.lazy\\s*\\(|defineAsyncComponent|loadChildren\\s*:|next/dynamic",
+      "regex": "(?<![\\w{(@])import\\s*\\(\\s*['\"`](?![\\w@/.-]+['\"`]\\s*\\)\\s*\\.\\w+\\b(?!\\s*\\())|React\\.lazy\\s*\\(|defineAsyncComponent|loadChildren\\s*:|next/dynamic",
       "tags": [
         "INP",
         "LCP"
@@ -183,9 +184,12 @@
           "loadChildren: () => x"
         ],
         "no_match": [
-          "import x from './Chart'"
+          "import x from './Chart'",
+          "/** @type {import('tailwindcss').Config} */"
         ]
-      }
+      },
+      "exclude_comments": true,
+      "exclude": "(?:^|/)[\\w.-]*\\.config\\.[cm]?[jt]s$|(?:^|/)\\.?(?:eslintrc|prettierrc|babelrc)[\\w.]*$"
     },
     {
       "id": "vitals-measurement",
@@ -262,8 +266,8 @@
     },
     {
       "id": "animation-heavy",
-      "label": "Scroll/animation library on main thread",
-      "regex": "from\\s+['\"](?:aos|gsap|framer-motion|animejs|lottie-web|locomotive-scroll)['\"]|AOS\\.init",
+      "label": "Heavy client libraries (animation, WebGL/shaders, 3D, maps)",
+      "regex": "from\\s+['\"](?:aos|gsap|framer-motion|motion|animejs|lottie-web|lottie-react|@lottiefiles/[\\w-]+|locomotive-scroll|three|@react-three/[\\w-]+|@paper-design/shaders-react|ogl|pixi\\.js|@splinetool/[\\w-]+|mapbox-gl|maplibre-gl)['\"]|AOS\\.init",
       "tags": [
         "INP",
         "CLS"
@@ -275,10 +279,32 @@
       "examples": {
         "match": [
           "import { motion } from 'framer-motion'",
-          "AOS.init()"
+          "AOS.init()",
+          "import { LiquidMetal } from '@paper-design/shaders-react'",
+          "import * as THREE from 'three'"
         ],
         "no_match": [
           "import x from 'react'"
+        ]
+      }
+    },
+    {
+      "id": "preload",
+      "label": "Resource preloads (preload / modulepreload)",
+      "tags": [
+        "LCP"
+      ],
+      "regex": "rel\\s*=\\s*['\"](?:preload|modulepreload)['\"]",
+      "precision": "high",
+      "languages": [
+        "@templates"
+      ],
+      "examples": {
+        "match": [
+          "<link rel=\"preload\" as=\"font\" href=\"/f.woff2\">"
+        ],
+        "no_match": [
+          "rel=\"preconnect\""
         ]
       }
     }

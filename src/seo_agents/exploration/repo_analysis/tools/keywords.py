@@ -1,9 +1,13 @@
-"""Weighted keyword candidates from the repository's own text, with occurrences."""
+"""Weighted keyword candidates from the repository's served text (repository prose such as README is excluded).
+
+Compact by design: counts per field plus at most `limits.examples` file:line examples per keyword, no
+occurrence lists or text snippets (they dominated repo_context.json size).
+"""
 
 from collections import Counter, defaultdict
 import re
 
-from seo_agents.exploration.repo_analysis.tools.skill_runner import skill
+from seo_agents.exploration.repo_analysis.tools.skill_runner import DOC_FILES, skill
 
 WORD = re.compile(r"[^\W\d_][\w'’-]*[^\W_]|[^\W\d_]", re.UNICODE)
 STOPWORDS = set('''
@@ -72,6 +76,11 @@ def _sources(onpage, routes):
             yield 'url', route['route'].replace('-', ' ').replace('/', ' '), route['source']
 
 
+def doc_file(path):
+    # docs/ folders are filtered upstream by SourceIndex.is_doc (which knows whether a docs site serves them).
+    return bool(DOC_FILES.search(path))
+
+
 def extract_keywords(onpage, routes):
     profile = skill('keywords')['profile']
     weights, limits = profile['weights'], profile['limits']
@@ -85,18 +94,20 @@ def extract_keywords(onpage, routes):
         if not isinstance(text, str) or not text.strip():
             continue
         location = record.get('location', {})
+        if location.get('file') and doc_file(location['file']):
+            continue  # repository prose (README, CHANGELOG, docs/) is never served content
         if field == 'declared':
-            declared.append({'value': text, 'location': location, 'code': record.get('code')})
+            declared.append({'value': text, 'file': location.get('file'), 'line': location.get('line_start')})
         words = tokens(text)
         for n in (1, 2, 3):
             for gram in ngrams(words, n):
                 scores[n][gram] += weights.get(field, 1)
                 frequency[n][gram] += 1
                 fields[n][gram][field] += 1
-                if len(occurrences[n][gram]) < limits['occurrences']:
-                    occurrences[n][gram].append({'field': field, 'file': location.get('file'),
-                                                 'line': location.get('line_start'), 'text': text[:240],
-                                                 'record_id': record.get('id') or record.get('declared_in')})
+                if len(occurrences[n][gram]) < limits.get('examples', 2) and location.get('file'):
+                    example = location['file'] + ':' + str(location.get('line_start') or 1)
+                    if example not in occurrences[n][gram]:
+                        occurrences[n][gram].append(example)
                 if location.get('file') and n <= 2:
                     per_file[location['file']][gram] += weights.get(field, 1)
 
@@ -104,7 +115,7 @@ def extract_keywords(onpage, routes):
         minimum = 1 if n == 1 else 2
         rows = [(g, s) for g, s in scores[n].most_common() if frequency[n][g] >= minimum or s >= 4]
         return [{'keyword': g, 'score': round(s, 2), 'frequency': frequency[n][g], 'fields': dict(fields[n][g]),
-                 'occurrences': occurrences[n][g]} for g, s in rows[:limit]]
+                 'examples': occurrences[n][g]} for g, s in rows[:limit]]
 
     unigrams = ranked(1, limits['unigrams'])
     bigrams = ranked(2, limits['bigrams'])

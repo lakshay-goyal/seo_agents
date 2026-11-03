@@ -27,6 +27,13 @@ LANGUAGES = {
 TEMPLATE_LANGUAGES = {'javascript', 'typescript', 'vue', 'svelte', 'astro', 'html', 'mdx', 'erb', 'php',
                       'twig', 'liquid', 'nunjucks', 'handlebars', 'ejs', 'pug', 'razor', 'jinja', 'markdown'}
 CONTEXT_LINES = 3
+# Repository prose (never served): README, changelogs, licences. `docs/` counts as prose unless the repo
+# has a documentation-site generator that serves it (Docusaurus, VitePress, MkDocs, Starlight, Nextra...).
+DOC_NAMES = re.compile(r'(?:^|/)(?:README|CHANGELOG|CHANGES|HISTORY|LICENSE|LICENCE|CONTRIBUTING|CODE_OF_CONDUCT|'
+                       r'SECURITY|AUTHORS|NOTICE|UPGRADING|MIGRATION)[^/]*$', re.I)
+DOCS_DIR = re.compile(r'^(?:docs?|documentation|\.github)/', re.I)
+DOCS_SITE_MARKERS = re.compile(r'(?:^|/)(?:docusaurus\.config\.[cm]?[jt]s|mkdocs\.ya?ml|\.vitepress/config\.[cm]?[jt]s|'
+                               r'\.vuepress/config\.[cm]?[jt]s|book\.toml|theme\.config\.[jt]sx?|_config\.ya?ml)$|starlight')
 MAX_SNIPPET_LINES = 80
 OPENERS, CLOSERS = '([{', ')]}'
 
@@ -60,14 +67,32 @@ class SourceIndex:
         self.assets = snapshot.get('assets', {})
         self._offsets, self._lines = {}, {}
         self.records = {}          # id -> evidence record
+        self._docs_served, self._roles = None, None
         self.referenced = {}       # file -> [record ids]
 
     # ---- file access -------------------------------------------------
-    def paths(self, *globs, languages=None, exclude_tests=True):
+    def is_doc(self, path):
+        """Repository documentation that is never served as a page (excluded from content/keywords)."""
+        if self._roles is None:
+            self._roles = {row['path']: row.get('roles') or [] for row in self.snapshot.get('inventory', [])
+                           if isinstance(row, dict) and row.get('path')}
+        if 'doc' in self._roles.get(path, ()) or 'doc' in file_roles(path):
+            return True
+        if DOC_NAMES.search(path):
+            return True
+        if DOCS_DIR.match(path):
+            if self._docs_served is None:
+                self._docs_served = any(DOCS_SITE_MARKERS.search(p) for p in self.files)
+            return not self._docs_served
+        return False
+
+    def paths(self, *globs, languages=None, exclude_tests=True, exclude_docs=False):
         """Captured paths matching any glob (all paths when none given)."""
         result = []
         for path in sorted(self.files):
             if exclude_tests and 'tests-fixtures' in file_roles(path):
+                continue
+            if exclude_docs and self.is_doc(path):
                 continue
             if globs and not any(glob_match(path, g) for g in globs):
                 continue
@@ -77,7 +102,8 @@ class SourceIndex:
         return result
 
     def templates(self):
-        return self.paths(languages=TEMPLATE_LANGUAGES)
+        """Template/content files that can render a page (repository prose excluded)."""
+        return self.paths(languages=TEMPLATE_LANGUAGES, exclude_docs=True)
 
     def lines(self, path):
         if path not in self._lines:

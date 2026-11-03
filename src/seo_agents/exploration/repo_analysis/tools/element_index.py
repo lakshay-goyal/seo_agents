@@ -78,7 +78,119 @@ HEADING_COMPONENT_PROPS = (('level', None), ('order', None), ('variant', 'h'), (
 
 
 def element_id(file, line, col, tag):
+    """Provisional positional ID; `anchor_ids` replaces it with a content-anchored one per file."""
     return 'e_' + hashlib.sha1(f'{file}:{line}:{col}:{tag}'.encode()).hexdigest()[:12]
+
+
+FINGERPRINT_ATTRS = ('id', 'name', 'property', 'rel', 'itemprop', 'type', 'key', 'hreflang', 'http-equiv', 'slot')
+
+
+def _fingerprint(element, with_text):
+    attrs = element.get('attrs') or {}
+    parts = [f'{name}={attrs[name].get("literal")}' for name in FINGERPRINT_ATTRS
+             if name in attrs and isinstance(attrs[name].get('literal'), str)]
+    if with_text and element.get('text_literal'):
+        parts.append('t=' + element['text_literal'][:24])
+    return '&'.join(parts)
+
+
+def anchor_ids(elements):
+    """Content-anchored element IDs for one file's records (in place).
+
+    id = sha1(file | element path), where each path step is `tag{fingerprint}[n]` and n counts only
+    earlier siblings with the same tag AND fingerprint. Inserting lines (or unrelated siblings) above
+    an element no longer changes its ID; `line`/`col` keep the current location.
+    """
+    if not elements:
+        return
+    by_old = {e['id']: e for e in elements}
+    ordered = sorted(elements, key=lambda e: (e['line'], e.get('col', 0)))
+    counters = defaultdict(int)
+    steps = {}
+    for element in ordered:
+        step = element['tag'] + '{' + _fingerprint(element, False) + '}'
+        key = (element.get('parent'), step, _fingerprint(element, True))
+        steps[element['id']] = f'{step}[{counters[key]}]'
+        counters[key] += 1
+    paths = {}
+
+    def path_of(old):
+        if old in paths:
+            return paths[old]
+        chain, current, guard = [], old, 0
+        while current in by_old and guard < 200:
+            chain.append(steps[current])
+            current = by_old[current].get('parent')
+            guard += 1
+        paths[old] = '/'.join(reversed(chain))
+        return paths[old]
+
+    mapping, used = {}, set()
+    for element in ordered:
+        text_fp = _fingerprint(element, True)
+        base = 'e_' + hashlib.sha1(f'{element["file"]}|{path_of(element["id"])}|{text_fp}'.encode()).hexdigest()[:12]
+        new, n = base, 1
+        while new in used:
+            new, n = f'{base}~{n}', n + 1
+        used.add(new)
+        mapping[element['id']] = new
+    for element in elements:
+        element['id'] = mapping[element['id']]
+        if element.get('parent') in mapping:
+            element['parent'] = mapping[element['parent']]
+
+
+def span(lines, start, end):
+    """{line, col, end_line, end_col} for a [start, end) character range (cols 0-based, end exclusive)."""
+    line, col = lines.position(start)
+    end_line, end_col = lines.position(max(start, end))
+    return {'line': line, 'col': col, 'end_line': end_line, 'end_col': end_col}
+
+
+def contiguous_text(source, segments):
+    """True when every gap between consecutive text segments is whitespace (one editable source range)."""
+    for (_, prev_end, _), (start, _, _) in zip(segments, segments[1:]):
+        if source[prev_end:start].strip():
+            return False
+    return True
+
+
+LOOP_OPEN = [
+    (re.compile(r'\{%-?\s*for\s+(?P<param>\w+)(?:\s*,\s*\w+)?\s+in\s+(?P<source>[\w.\[\]\'"]+)'), 'for'),       # Liquid/Jinja/Twig/Nunjucks
+    (re.compile(r'\{#each\s+(?P<source>[\w.$\[\]]+)\s+as\s+(?P<param>\w+)(?:\s*,\s*(?P<index>\w+))?'), 'each'),  # Svelte
+    (re.compile(r'\{\{#each\s+(?P<source>[\w.@/]+)(?:\s+as\s+\|(?P<param>\w+))?'), 'hbs-each'),                 # Handlebars
+    (re.compile(r'@foreach\s*\(\s*\$?(?P<source>[\w\->.\[\]\'"]+)\s+as\s+(?:\$\w+\s*=>\s*)?\$(?P<param>\w+)'), 'blade'),
+    (re.compile(r'\bforeach\s*\(\s*\$(?P<source>[\w\->\[\]\'"]+)\s+as\s+(?:\$\w+\s*=>\s*)?\$(?P<param>\w+)\s*\)\s*:'), 'php'),
+    (re.compile(r'\bwhile\s*\(\s*(?P<source>(?:\$\w+->)?have_posts\s*\(\s*\))\s*\)\s*:'), 'php'),                 # WordPress loop
+    (re.compile(r'\{\{-?\s*range\s+(?:\$(?P<index>\w+)\s*,\s*)?(?:\$(?P<param>\w+)\s*:=\s*)?(?P<source>[\w.$]+)'), 'go'),
+    (re.compile(r'(?P<source>[@\w.]+)\.each(?:_with_index)?\s+do\s*\|\s*(?P<param>\w+)'), 'erb'),
+]
+LOOP_CLOSE = {
+    'for': re.compile(r'\{%-?\s*endfor\b'), 'each': re.compile(r'\{/each\}'), 'hbs-each': re.compile(r'\{\{/each\}\}'),
+    'blade': re.compile(r'@endforeach\b'), 'php': re.compile(r'\bend(?:foreach|while)\s*;'),
+}
+GO_BLOCK_OPEN = re.compile(r'\{\{-?\s*(?:if|with|range|define|block)\b')
+GO_BLOCK_END = re.compile(r'\{\{-?\s*end\s*-?\}\}')
+ERB_BLOCK_OPEN = re.compile(r'<%-?\s*(?:if|unless|case|while|for)\b|\bdo\s*(?:\|[^|]*\|)?\s*-?%>')
+ERB_BLOCK_END = re.compile(r'<%-?\s*end\s*-?%>')
+ATTR_LOOP = [
+    re.compile(r'^\s*\(?\s*(?P<param>\w+)(?:\s*,\s*(?P<index>\w+))?\s*\)?\s+(?:in|of)\s+(?P<source>[\w.$\[\]]+)'),  # v-for
+    re.compile(r'^\s*let\s+(?P<param>\w+)\s+of\s+(?P<source>[\w.$\[\]]+)(?:\s*;\s*let\s+(?P<index>\w+)\s*=\s*index)?'),  # *ngFor
+]
+
+
+def loop_from_attrs(attrs):
+    for name in ('v-for', '*ngFor', 'x-for', 'th:each'):
+        value = attrs.get(name) or attrs.get(name.lstrip(':'))
+        source = (value or {}).get('expr') or (value or {}).get('literal')
+        if not source:
+            continue
+        for regex in ATTR_LOOP:
+            match = regex.match(source.strip('"\''))
+            if match:
+                return {'param': match.group('param'), 'source': match.group('source'), 'index': match.groupdict().get('index'), 'syntax': name}
+        return {'param': None, 'source': source[:120], 'syntax': name}
+    return None
 
 
 def norm_text(value):
@@ -197,6 +309,52 @@ class MarkupIndexer(HTMLParser):
         self.sink, self.stack = sink, []
         self.count = 0
         self.truncated = False
+        self.loops = []    # template-language loop context ({% for %}, {#each}, @foreach, {{range}}, ...)
+        self.blocks = []   # Go-template / ERB block kinds, so `{{ end }}` / `<% end %>` closes the right one
+
+    def _scan_directives(self, text):
+        """Track loop open/close directives inside masked template text, in source order."""
+        events = []
+        for regex, kind in LOOP_OPEN:
+            for match in regex.finditer(text):
+                events.append((match.start(), 'open', kind, match))
+        for kind, regex in LOOP_CLOSE.items():
+            for match in regex.finditer(text):
+                events.append((match.start(), 'close', kind, match))
+        for match in GO_BLOCK_OPEN.finditer(text):
+            if not re.match(r'\{\{-?\s*range\b', match.group(0)):
+                events.append((match.start(), 'block', 'go', match))
+        for match in GO_BLOCK_END.finditer(text):
+            events.append((match.start(), 'end', 'go', match))
+        for match in ERB_BLOCK_OPEN.finditer(text):
+            if not re.search(r'\.each(?:_with_index)?\s+do', text[max(0, match.start() - 80):match.end()]):
+                events.append((match.start(), 'block', 'erb', match))
+        for match in ERB_BLOCK_END.finditer(text):
+            events.append((match.start(), 'end', 'erb', match))
+        for _, action, kind, match in sorted(events, key=lambda e: e[0]):
+            if action == 'open':
+                groups = match.groupdict()
+                self.loops.append({'param': groups.get('param'), 'source': (groups.get('source') or '')[:120],
+                                   'index': groups.get('index'), 'syntax': kind})
+                if kind in {'go', 'erb'}:
+                    self.blocks.append(('loop', kind))
+            elif action == 'close':
+                for index in range(len(self.loops) - 1, -1, -1):
+                    if self.loops[index]['syntax'] == kind:
+                        del self.loops[index:]
+                        break
+            elif action == 'block':
+                self.blocks.append(('block', kind))
+            elif action == 'end':
+                for index in range(len(self.blocks) - 1, -1, -1):
+                    if self.blocks[index][1] == kind:
+                        popped = self.blocks.pop(index)
+                        if popped[0] == 'loop':
+                            for j in range(len(self.loops) - 1, -1, -1):
+                                if self.loops[j]['syntax'] == kind:
+                                    del self.loops[j:]
+                                    break
+                        break
 
     def _attrs(self, start_offset, length):
         raw = self.original[start_offset:start_offset + length]
@@ -217,11 +375,12 @@ class MarkupIndexer(HTMLParser):
                 attrs[original_name] = {'flag': True}
                 continue
             value = raw[match.start(value_group):match.end(value_group)]
+            where = span(self.lines, start_offset + match.start(value_group), start_offset + match.end(value_group))
             bound = original_name.startswith((':', 'v-bind:', 'v-', '@', '[', '(', 'bind:', 'on:', 'x-bind:', 'th:'))
             if MASK in match.group(value_group) or bound:
-                attrs[original_name.lstrip(':')] = expr_info(value) | ({'binding': original_name} if bound else {})
+                attrs[original_name.lstrip(':')] = expr_info(value) | ({'binding': original_name} if bound else {}) | where
             else:
-                attrs[original_name] = {'literal': html.unescape(value)}
+                attrs[original_name] = {'literal': html.unescape(value)} | where
         return attrs, dynamic
 
     def handle_starttag(self, tag, _attrs):
@@ -244,12 +403,18 @@ class MarkupIndexer(HTMLParser):
                   'section': section_for(name if component else tag, parent)}
         if dynamic:
             record['dynamic_attrs'] = True
+        own_loop = loop_from_attrs(attrs)
+        loop = own_loop or (self.loops[-1] if self.loops else None) or next(
+            (n['loop'] for n in reversed(self.stack) if n.get('loop')), None)
+        if loop:
+            record['in_loop'], record['loop'] = True, dict(loop)
         level = heading_level(record)
         if level:
             record['heading_level'], record['heading_method'] = level
         self.sink.append(record)
         self.count += 1
         record['_buffer'] = []
+        record['_segments'] = []
         if tag not in VOID and not raw.rstrip().endswith('/>'):
             self.stack.append(record)
         else:
@@ -271,31 +436,58 @@ class MarkupIndexer(HTMLParser):
         record['end_line'] = line
         for part in record['text']:
             part.pop('_raw', None)
+            start, end = part.pop('_start', None), part.pop('_end', None)
+            if start is not None and 'literal' in part:
+                part.update(span(self.lines, start, end))
         literal = norm_text(''.join(record.pop('_buffer', [])))
+        segments = record.pop('_segments', [])
         if literal:
             record['text_literal'] = literal[:MAX_TEXT]
+            if segments and contiguous_text(self.original, segments):
+                record['contiguous'] = True
+                record['text_span'] = span(self.lines, segments[0][0], segments[-1][1])
+            elif segments:
+                record['contiguous'] = False
+                record['segments'] = [{'text': norm_text(text), **span(self.lines, start, end)}
+                                      for start, end, text in segments[:20]]
+
+    def _segment(self, start, end, text):
+        """Record one visible text run (exact source range) on every open element."""
+        stripped = text.strip()
+        if not stripped:
+            return
+        lead = len(text) - len(text.lstrip())
+        start, end = start + lead, start + lead + len(text.strip())
+        for node in self.stack:
+            node['_segments'].append((start, end, stripped))
 
     def handle_data(self, data):
-        if not self.stack or not data:
-            return
-        if any(n['tag'].lower() in {'script', 'style'} for n in self.stack):
-            node = self.stack[-1]
-            if node['tag'].lower() == 'script' and (node['attrs'].get('type') or {}).get('literal', '').lower() == 'application/ld+json':
-                line, col = self.getpos()
-                start = self.lines.offset(line, col)
-                node.setdefault('raw_text', '')
-                node['raw_text'] += self.original[start:start + len(data)]
+        if not data:
             return
         line, col = self.getpos()
         start = self.lines.offset(line, col)
         original = self.original[start:start + len(data)]
+        if MASK in data and not any(n['tag'].lower() in {'script', 'style'} for n in self.stack):
+            directive_text = ''.join(original[m.start():m.end()] + '\n' for m in re.finditer(MASK + '+', data))
+            self._scan_directives(directive_text)
+        if not self.stack:
+            return
+        if any(n['tag'].lower() in {'script', 'style'} for n in self.stack):
+            node = self.stack[-1]
+            if node['tag'].lower() == 'script' and (node['attrs'].get('type') or {}).get('literal', '').lower() == 'application/ld+json':
+                node.setdefault('raw_text', '')
+                node['raw_text'] += original
+            return
         parts = []
         for match in re.finditer(MASK + '+|[^' + MASK + ']+', data):
             chunk = match.group(0)
             if chunk[0] == MASK:
                 parts.append(expr_info(original[match.start():match.end()]))
             elif chunk.strip():
-                parts.append({'literal': norm_text(chunk), '_raw': chunk})
+                lead = len(chunk) - len(chunk.lstrip())
+                part_start = start + match.start() + lead
+                parts.append({'literal': norm_text(chunk), '_raw': chunk, '_start': part_start, '_end': part_start + len(chunk.strip())})
+                self._segment(start + match.start(), start + match.end(), chunk)
                 for node in self.stack:
                     node['_buffer'].append(chunk)
             else:
@@ -313,9 +505,16 @@ class MarkupIndexer(HTMLParser):
                 if previous is not None and '_raw' in previous:
                     previous['_raw'] += ' '
                 continue
-            if 'literal' in part and previous is not None and '_raw' in previous:
-                previous['_raw'] += part.get('_raw', part['literal'])  # "Caf" + "é", "Tom " + "&" + " Jerry"
+            # Merge only runs that are adjacent in the source ("Caf" + "é", "Tom " + "&" + " Jerry"); a child
+            # element or expression between them (`Some <b>bold</b> text`) keeps them as separate parts.
+            adjacent = previous is not None and '_raw' in previous and 'literal' in part and (
+                previous.get('_end') is None or part.get('_start') is None
+                or not self.original[previous['_end']:part['_start']].strip())
+            if adjacent:
+                previous['_raw'] += part.get('_raw', part['literal'])
                 previous['literal'] = norm_text(previous['_raw'])
+                if part.get('_end') is not None:
+                    previous['_end'] = part['_end']
             elif len(node['text']) < 40:
                 node['text'].append(part)
 
@@ -324,10 +523,16 @@ class MarkupIndexer(HTMLParser):
             if self.stack and self.stack[-1]['tag'].lower() == 'script' and 'raw_text' in self.stack[-1]:
                 self.stack[-1]['raw_text'] += text
             return
+        line, col = self.getpos()
+        start = self.lines.offset(line, col)
+        match = re.match(r'&#?\w+;?', self.original[start:start + 40])
+        end = start + (len(match.group(0)) if match else 1)
         for node in self.stack:
             node['_buffer'].append(text)
         if text.strip():
-            self._add_parts([{'literal': norm_text(text), '_raw': text}])
+            for node in self.stack:
+                node['_segments'].append((start, end, text.strip()))
+            self._add_parts([{'literal': norm_text(text), '_raw': text, '_start': start, '_end': end}])
 
     def handle_entityref(self, name):
         self._entity(html.unescape('&' + name + ';'))
@@ -384,24 +589,171 @@ def _parser(language):
     return _PARSERS[language]
 
 
-def parse_script(file, source, sink, refs, *, language=None, line_offset=0):
-    """JSX elements + imports from a JS/TS(X) source. Returns parse-error flag."""
+I18N_HOOK = re.compile(r'(?:^|\.)(?:useTranslations|getTranslations|useTranslation|getTranslation|useI18n|useIntl|withTranslation|getFixedT)$')
+LOOP_METHODS = {'map', 'flatMap', 'forEach'}
+
+
+def parse_script(file, source, sink, refs, *, language=None, line_offset=0, consts=None):
+    """JSX elements + imports from a JS/TS(X) source. Returns parse-error flag.
+
+    Besides elements it records exact value spans (attribute values, text runs), loop context
+    (`.map()` callbacks -> `in_loop` + `loop`), conditional context (ternary / `&&` -> `conditional`
+    + `condition`), and, when `consts` is given, literal `const` declarations and i18n namespaces
+    (`useTranslations('Hero')`) for the data-flow pass in `build_element_index`.
+    """
+    from bisect import bisect_right
     suffix = PurePosixPath(file).suffix.lower()
     language = language or ('tsx' if suffix == '.tsx' else 'ts' if suffix in TS_SUFFIXES else 'js')
     data = source.encode()
     root = _parser(language).parse(data).root_node
+    line_starts = [0]
+    position = data.find(b'\n')
+    while position >= 0:
+        line_starts.append(position + 1)
+        position = data.find(b'\n', position + 1)
 
     def text(node):
         return data[node.start_byte:node.end_byte].decode('utf-8', 'replace')
 
+    def at(offset):
+        row = bisect_right(line_starts, offset) - 1
+        return row + 1 + line_offset, len(data[line_starts[row]:offset].decode('utf-8', 'replace'))
+
+    def where(start, end):
+        line, col = at(start)
+        end_line, end_col = at(max(start, end))
+        return {'line': line, 'col': col, 'end_line': end_line, 'end_col': end_col}
+
     def pos(node):
         # tree-sitter columns are byte offsets; report character columns like every other lens
-        line_start = node.start_byte - node.start_point.column
-        return node.start_point.row + 1 + line_offset, len(data[line_start:node.start_byte].decode('utf-8', 'replace'))
+        return at(node.start_byte)
+
+    def inner(node):
+        return where(node.start_byte + 1, node.end_byte - 1)
+
+    def has_subst(node):
+        return any(c.type == 'template_substitution' for c in node.named_children)
+
+    def value_of(node, depth=0):
+        """Literal JS value with spans: strings, substitution-free templates, objects, arrays."""
+        if node is None or depth > 12:
+            return None
+        kind = node.type
+        if kind == 'string' or (kind == 'template_string' and not has_subst(node)):
+            return {'__str__': text(node)[1:-1], **inner(node)}
+        if kind == 'template_string':
+            return {'__expr__': text(node)[:300], 'value_origin': 'expression', **where(node.start_byte, node.end_byte)}
+        if kind == 'object':
+            result = {'__obj__': True, **where(node.start_byte, node.end_byte)}
+            for pair in node.named_children:
+                if pair.type == 'pair':
+                    key, value = pair.child_by_field_name('key'), pair.child_by_field_name('value')
+                    if key is not None and value is not None:
+                        parsed = value_of(value, depth + 1)
+                        if parsed is not None:
+                            result[text(key).strip('\'"`')] = parsed
+            return result
+        if kind == 'array':
+            return {'__arr__': [value_of(c, depth + 1) for c in node.named_children if c.type != 'comment'],
+                    **where(node.start_byte, node.end_byte)}
+        if kind in {'satisfies_expression', 'as_expression', 'parenthesized_expression', 'non_null_expression'} and node.named_children:
+            return value_of(node.named_children[0], depth + 1)
+        if kind == 'identifier':
+            return {'__ref__': text(node), **where(node.start_byte, node.end_byte)}
+        return {'__expr__': text(node)[:300], **where(node.start_byte, node.end_byte)}
+
+    if consts is not None:
+        namespaces = consts.setdefault('__i18n_ns__', {})
+        seen_names = consts.setdefault('__declared__', {})
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            stack.extend(node.named_children)
+            if node.type != 'variable_declarator':
+                continue
+            name, value = node.child_by_field_name('name'), node.child_by_field_name('value')
+            if name is None or value is None:
+                continue
+            if value.type in {'call_expression', 'await_expression'}:
+                call = value if value.type == 'call_expression' else next((c for c in value.named_children if c.type == 'call_expression'), None)
+                function = call.child_by_field_name('function') if call is not None else None
+                if function is not None and I18N_HOOK.search(text(function)):
+                    args = call.child_by_field_name('arguments')
+                    first = next((c for c in (args.named_children if args else []) if c.type == 'string'), None)
+                    namespace = text(first)[1:-1] if first is not None else ''
+                    if name.type == 'identifier':
+                        namespaces[text(name)] = namespace
+                    elif name.type == 'object_pattern':
+                        for child in name.named_children:
+                            label = text(child).split(':')[-1].strip()
+                            if child.type in {'shorthand_property_identifier_pattern', 'pair_pattern'} and label in {'t', 'translate', 'formatMessage'}:
+                                namespaces[label] = namespace
+                continue
+            if name.type != 'identifier':
+                continue
+            parsed = value_of(value)
+            if parsed is None or not any(k in parsed for k in ('__str__', '__obj__', '__arr__')):
+                continue
+            label = text(name)
+            seen_names[label] = seen_names.get(label, 0) + 1
+            if seen_names[label] > 1:
+                consts.pop(label, None)  # shadowed / redeclared: not a single source of truth
+                continue
+            consts[label] = parsed
 
     count = 0
 
-    def visit(node, parent):
+    def loop_of(node):
+        """`items.map((item, i) => ...)` -> loop context for the callback body."""
+        function = node.child_by_field_name('function')
+        if function is None or function.type != 'member_expression':
+            return None
+        prop = function.child_by_field_name('property')
+        if prop is None or text(prop) not in LOOP_METHODS:
+            return None
+        args = node.child_by_field_name('arguments')
+        callback = next((c for c in (args.named_children if args else []) if c.type in {'arrow_function', 'function_expression', 'function'}), None)
+        if callback is None:
+            return None
+        params = []
+        single = callback.child_by_field_name('parameter')
+        if single is not None:
+            params = [single]
+        else:
+            formal = callback.child_by_field_name('parameters')
+            params = [p for p in (formal.named_children if formal else []) if p.type != 'comment']
+        loop = {'source': text(function.child_by_field_name('object'))[:120], 'param': None, 'index': None, 'syntax': '.' + text(prop),
+                'line': pos(node)[0]}
+        if params:
+            first = params[0]
+            if first.type in {'required_parameter', 'optional_parameter'} and first.named_children:
+                first = first.named_children[0]
+            if first.type == 'identifier':
+                loop['param'] = text(first)
+            elif first.type == 'object_pattern':
+                loop['destructure'] = [text(c).split(':')[0].strip() for c in first.named_children][:20]
+        if len(params) > 1:
+            second = params[1].named_children[0] if params[1].type in {'required_parameter', 'optional_parameter'} and params[1].named_children else params[1]
+            if second.type == 'identifier':
+                loop['index'] = text(second)
+        return loop
+
+    def attr_value(value):
+        if value.type == 'string':
+            return {'literal': text(value)[1:-1], **inner(value)}
+        if value.type == 'jsx_expression':
+            body = value.named_children[0] if value.named_children else None
+            if body is not None and body.type == 'string':
+                return {'literal': text(body)[1:-1], 'via': 'expression-string', **inner(body)}
+            if body is not None and body.type == 'template_string' and not has_subst(body):
+                return {'literal': text(body)[1:-1], 'via': 'template-string', **inner(body)}
+            info = expr_info(text(value)) | where(value.start_byte, value.end_byte)
+            if body is not None and body.type == 'template_string':
+                info['value_origin'] = 'expression'
+            return info
+        return expr_info(text(value)) | where(value.start_byte, value.end_byte)
+
+    def visit(node, parent, scope):
         nonlocal count
         kind = node.type
         if kind in {'import_statement', 'export_statement'}:
@@ -420,6 +772,40 @@ def parse_script(file, source, sink, refs, *, language=None, line_offset=0):
                 if literal is not None:
                     line, _ = pos(node)
                     refs.append({'file': file, 'line': line, 'kind': 'dynamic-import', 'spec': text(literal)[1:-1]})
+            loop = loop_of(node)
+            if loop is not None:
+                for child in node.named_children:
+                    visit(child, parent, {**scope, 'loop': loop} if child.type == 'arguments' else scope)
+                return
+        elif kind in {'function_declaration', 'variable_declarator', 'method_definition'}:
+            name_node = node.child_by_field_name('name')
+            value = node.child_by_field_name('value') if kind == 'variable_declarator' else node
+            label = text(name_node) if name_node is not None else ''
+            if re.match(r'[A-Z]', label) and value is not None and value.type in {
+                    'function_declaration', 'arrow_function', 'function_expression', 'function', 'method_definition', 'call_expression'}:
+                for child in node.named_children:  # function component: its elements belong to `label`
+                    visit(child, parent, {**scope, 'fn': label})
+                return
+        elif kind == 'ternary_expression':
+            condition = node.child_by_field_name('condition')
+            label = text(condition)[:160] if condition is not None else ''
+            for child in node.named_children:
+                if condition is not None and child.id == condition.id:
+                    visit(child, parent, scope)
+                else:
+                    branch = 'then' if child.id == getattr(node.child_by_field_name('consequence'), 'id', None) else 'else'
+                    visit(child, parent, {**scope, 'cond': {'condition': label, 'branch': branch}})
+            return
+        elif kind == 'binary_expression':
+            operator = node.child_by_field_name('operator')
+            if operator is not None and text(operator) in {'&&', '||', '??'}:
+                left, right = node.child_by_field_name('left'), node.child_by_field_name('right')
+                if left is not None:
+                    visit(left, parent, scope)
+                if right is not None:
+                    visit(right, parent, {**scope, 'cond': {'condition': text(left)[:160] if left is not None else '',
+                                                             'branch': 'then' if text(operator) == '&&' else 'else'}})
+                return
         if kind in {'jsx_element', 'jsx_self_closing_element'} and count < MAX_ELEMENTS_PER_FILE:
             opening = node.child_by_field_name('open_tag') if kind == 'jsx_element' else node
             name_node = opening.child_by_field_name('name') if opening is not None else None
@@ -432,21 +818,7 @@ def parse_script(file, source, sink, refs, *, language=None, line_offset=0):
                     parts = child.named_children
                     attr_name = text(parts[0]) if parts else ''
                     value = parts[1] if len(parts) > 1 else None
-                    if value is None:
-                        attrs[attr_name] = {'flag': True}
-                    elif value.type == 'string':
-                        attrs[attr_name] = {'literal': text(value)[1:-1]}
-                    elif value.type == 'jsx_expression':
-                        inner = value.named_children[0] if value.named_children else None
-                        if inner is not None and inner.type == 'string':
-                            attrs[attr_name] = {'literal': text(inner)[1:-1], 'via': 'expression-string'}
-                        elif inner is not None and inner.type == 'template_string' and not any(
-                                c.type == 'template_substitution' for c in inner.named_children):
-                            attrs[attr_name] = {'literal': text(inner)[1:-1], 'via': 'template-string'}
-                        else:
-                            attrs[attr_name] = expr_info(text(value))
-                    else:
-                        attrs[attr_name] = expr_info(text(value))
+                    attrs[attr_name] = {'flag': True} if value is None else attr_value(value)
                 elif child.type == 'jsx_expression':
                     spread = True
             record = {'id': element_id(file, line, col, name), 'file': file, 'line': line, 'col': col,
@@ -456,6 +828,14 @@ def parse_script(file, source, sink, refs, *, language=None, line_offset=0):
                       'section': section_for(name.split('.')[-1], parent)}
             if spread:
                 record['spread_props'] = True
+            if scope.get('fn'):
+                record['component_fn'] = scope['fn']
+            if scope.get('loop'):
+                record['in_loop'], record['loop'] = True, dict(scope['loop'])
+            if scope.get('cond'):
+                record['conditional'] = True
+                record['condition'] = scope['cond']['condition']
+                record['branch'] = scope['cond']['branch']
             level = heading_level(record)
             if level:
                 record['heading_level'], record['heading_method'] = level
@@ -464,35 +844,71 @@ def parse_script(file, source, sink, refs, *, language=None, line_offset=0):
                     if child.type == 'jsx_text':
                         value = norm_text(text(child))
                         if value:
-                            record['text'].append({'literal': value})
+                            raw = data[child.start_byte:child.end_byte]
+                            start = child.start_byte + len(raw) - len(raw.lstrip())
+                            record['text'].append({'literal': value, **where(start, start + len(raw.strip()))})
                     elif child.type == 'jsx_expression':
-                        inner = child.named_children[0] if child.named_children else None
-                        if inner is not None and inner.type in {'string', 'template_string'} and not any(
-                                c.type == 'template_substitution' for c in inner.named_children):
-                            record['text'].append({'literal': norm_text(text(inner)[1:-1]), 'via': 'expression-string'})
-                        elif inner is not None and inner.type != 'comment':
-                            record['text'].append(expr_info(text(child)))
+                        body = child.named_children[0] if child.named_children else None
+                        if body is not None and body.type in {'string', 'template_string'} and not has_subst(body):
+                            record['text'].append({'literal': norm_text(text(body)[1:-1]), 'via': 'expression-string', **inner(body)})
+                        elif body is not None and body.type != 'comment':
+                            info = expr_info(text(child)) | where(child.start_byte, child.end_byte)
+                            if body.type == 'template_string':
+                                info['value_origin'] = 'expression'
+                            record['text'].append(info)
                 record['text'] = record['text'][:40]
             sink.append(record)
             count += 1
             for child in node.named_children:
                 if child.type not in {'jsx_opening_element', 'jsx_closing_element'}:
-                    visit(child, record)
-            descendant = _descendant_literal(node, text)
+                    visit(child, record, scope)
+            segments = _descendant_segments(node, data)
+            descendant = norm_text(' '.join(s[2] for s in segments))
             if descendant:
                 record['text_literal'] = descendant[:MAX_TEXT]
+                if all(not data[prev[1]:nxt[0]].strip() for prev, nxt in zip(segments, segments[1:])):
+                    record['contiguous'] = True
+                    record['text_span'] = where(segments[0][0], segments[-1][1])
+                else:
+                    record['contiguous'] = False
+                    record['segments'] = [{'text': norm_text(s[2]), **where(s[0], s[1])} for s in segments[:20]]
             return
         for child in node.named_children:
-            visit(child, parent)
+            visit(child, parent, scope)
 
     import sys
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(limit, 20000))
     try:
-        visit(root, None)
+        visit(root, None, {})
     finally:
         sys.setrecursionlimit(limit)
     return root.has_error
+
+
+def _descendant_segments(node, data):
+    """(start_byte, end_byte, text) of every visible literal run under a JSX element, in source order."""
+    segments = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == 'jsx_text':
+            raw = data[current.start_byte:current.end_byte]
+            stripped = raw.strip()
+            if stripped:
+                start = current.start_byte + len(raw) - len(raw.lstrip())
+                segments.append((start, start + len(stripped), stripped.decode('utf-8', 'replace')))
+        elif current.type == 'jsx_expression':
+            body = current.named_children[0] if current.named_children else None
+            if body is not None and body.type == 'string':
+                value = data[body.start_byte + 1:body.end_byte - 1].decode('utf-8', 'replace')
+                if value.strip():
+                    segments.append((body.start_byte + 1, body.end_byte - 1, value))
+            continue
+        elif current.type in {'jsx_opening_element', 'jsx_closing_element', 'jsx_attribute'}:
+            continue
+        stack.extend(reversed(current.named_children))
+    return segments
 
 
 def _descendant_literal(node, text):
@@ -576,31 +992,40 @@ def parse_markdown(file, source, sink, data_sink):
         heading = re.match(r'^(#{1,6})\s+(.+?)\s*#*\s*$', line)
         if heading:
             level = len(heading.group(1))
+            where = {'line': number, 'col': heading.start(2), 'end_line': number, 'end_col': heading.end(2)}
+            plain = norm_text(heading.group(2))
             sink.append({'id': element_id(file, number, 0, 'h' + str(level)), 'file': file, 'line': number, 'col': 0,
                          'end_line': number, 'lang': 'markdown', 'tag': 'h' + str(level), 'kind': 'element', 'attrs': {},
-                         'text': [{'literal': norm_text(heading.group(2))}], 'text_literal': norm_text(heading.group(2)),
+                         'text': [{'literal': plain, **where}], 'text_literal': plain,
+                         'contiguous': True, 'text_span': where,
                          'parent': None, 'section': 'main', 'heading_level': level, 'heading_method': 'markdown'})
         for match in re.finditer(r'(!?)\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"([^"]*)")?\s*\)', line):
             image = bool(match.group(1))
             tag = 'img' if image else 'a'
-            attrs = {'src' if image else 'href': {'literal': match.group(3)}}
+            def at(group):
+                return {'line': number, 'col': match.start(group), 'end_line': number, 'end_col': match.end(group)}
+            attrs = {'src' if image else 'href': {'literal': match.group(3), **at(3)}}
             if image:
-                attrs['alt'] = {'literal': match.group(2)}
+                attrs['alt'] = {'literal': match.group(2), **at(2)}
             if match.group(4):
-                attrs['title'] = {'literal': match.group(4)}
+                attrs['title'] = {'literal': match.group(4), **at(4)}
             record = {'id': element_id(file, number, match.start(), tag), 'file': file, 'line': number, 'col': match.start(),
                       'end_line': number, 'lang': 'markdown', 'tag': tag, 'kind': 'element', 'attrs': attrs,
-                      'text': [] if image else [{'literal': norm_text(match.group(2))}], 'parent': None, 'section': 'main'}
+                      'text': [] if image else [{'literal': norm_text(match.group(2)), **at(2)}], 'parent': None, 'section': 'main'}
             if not image and match.group(2).strip():
                 record['text_literal'] = norm_text(match.group(2))
+                record['contiguous'], record['text_span'] = True, at(2)
             sink.append(record)
         stripped = line.strip()
         if stripped and not heading and not stripped.startswith(('<', '|', '-', '*', '>', 'import ', 'export ')) and len(stripped) > 1:
             plain = norm_text(re.sub(r'!?\[([^\]]*)\]\([^)]*\)', r'\1', re.sub(r'[*_`]', '', stripped)))
             if re.search(r'[^\W\d_]{2}', plain):
+                where = {'line': number, 'col': len(line) - len(line.lstrip()), 'end_line': number, 'end_col': len(line.rstrip())}
+                exact = plain == norm_text(stripped)  # no inline markup: the source run equals the visible text
                 sink.append({'id': element_id(file, number, 0, 'p'), 'file': file, 'line': number, 'col': 0, 'end_line': number,
-                             'lang': 'markdown', 'tag': 'p', 'kind': 'element', 'attrs': {}, 'text': [{'literal': plain[:MAX_TEXT]}],
-                             'text_literal': plain[:MAX_TEXT], 'parent': None, 'section': 'main'})
+                             'lang': 'markdown', 'tag': 'p', 'kind': 'element', 'attrs': {}, 'text': [{'literal': plain[:MAX_TEXT], **where}],
+                             'text_literal': plain[:MAX_TEXT], 'parent': None, 'section': 'main', 'contiguous': exact,
+                             **({'text_span': where} if exact else {'segments': [{'text': plain[:MAX_TEXT], **where}]})})
     return False
 
 
@@ -760,7 +1185,7 @@ def _yaml_scalar(value):
         return None
     if value[0] in '"\'' and value[-1:] == value[0] and len(value) >= 2:
         return value[1:-1]
-    value = re.split(r'\s+#', value, 1)[0].strip()
+    value = re.split(r'\s+#', value, maxsplit=1)[0].strip()
     if value.lower() in {'true', 'false', 'null', '~', 'yes', 'no'} or re.fullmatch(r'-?\d+(?:\.\d+)?', value):
         return None
     return value
@@ -816,6 +1241,7 @@ def index_data_file(file, source, data_sink, i18n):
     locale = LOCALE_FROM_PATH.search(file)
     locale = locale.group(1) if locale else None
     entries = []
+    source_lines = source.splitlines()
     if suffix == '.json':
         try:
             json.loads(source)
@@ -842,7 +1268,7 @@ def index_data_file(file, source, data_sink, i18n):
         if not visible_string(value) or NON_COPY_POINTER.search(pointer):
             continue
         line = line or first_line(source, value)
-        record = data_record(file, pointer, value, line, 'i18n' if is_i18n else 'data')
+        record = data_record(file, pointer, value, line, 'i18n' if is_i18n else 'data', **scalar_span(source_lines, line, value))
         if is_i18n:
             tokens = [t.replace('~1', '/').replace('~0', '~') for t in pointer.split('/')[1:]]
             # Rails/Shopify catalogs nest under the locale code; strip it from the key.
@@ -1036,6 +1462,251 @@ def _theme_root(file):
     return posixpath.dirname(file) + '/' if posixpath.dirname(file) else ''
 
 
+# ---------------------------------------------------------------- data flow (post-pass)
+REF_PATH = re.compile(r'''^\s*\{?\{?\s*([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[\d+\]|\[["'][^"'\]]+["']\])*)\s*\}?\}?\s*$''')
+I18N_LIBS = re.compile(r'"(?:i18next|react-i18next|next-i18next|next-intl|react-intl|vue-i18n|@nuxtjs/i18n|svelte-i18n|@inlang/[\w-]+|'
+                       r'paraglide[\w-]*|@lingui/[\w-]+|astro-i18next|typesafe-i18n|rosetta|@formatjs/[\w-]+|i18n-js|polyglot|node-polyglot|'
+                       r'next-translate|@ngx-translate/core|@angular/localize|i18n)"\s*:')
+SCRIPT_LANGS = {'jsx', 'vue', 'svelte', 'astro'}
+SHELL_FILE = re.compile(r'(?:^|/)(?:app\.html|_document\.[jt]sx?|_app\.[jt]sx?|app\.vue|root\.[jt]sx|theme\.liquid|header\.php|footer\.php|'
+                        r'baseof\.html|base\.html|application\.html\.erb|default\.(?:html|vue|astro|njk|hbs|liquid))$|'
+                        r'(?:^|/)(?:_layouts|layouts?)/|(?:^|/)app/layout\.[jt]sx?$|(?:^|/)routes/\+layout\.svelte$|(?:^|/)(?:_includes|partials|parts|template-parts)/(?:header|footer|nav)')
+SPA_SHELL = re.compile(r'''id=["'](?:root|app|__next|___gatsby|svelte)["']|<app-root\b|<script[^>]+type=["']module["']''')
+
+
+def ref_tokens(expr):
+    """`{page.href}` / `{{ site.name }}` / `items[0].title` -> ['page', 'href']; None for anything else."""
+    match = REF_PATH.match(expr or '')
+    if not match:
+        return None
+    tokens = []
+    for index, key, name in re.findall(r'''\[(\d+)\]|\[["']([^"'\]]+)["']\]|([A-Za-z_$][\w$]*)''', match.group(1).replace('?.', '.')):
+        tokens.append(int(index) if index else key or name)
+    return tokens or None
+
+
+def navigate(value, tokens):
+    for token in tokens:
+        if isinstance(token, int):
+            items = value.get('__arr__') if isinstance(value, dict) else None
+            if not isinstance(items, list) or token >= len(items):
+                return None
+            value = items[token]
+        elif isinstance(value, dict) and value.get('__obj__') and token in value:
+            value = value[token]
+        else:
+            return None
+    return value
+
+
+def json_navigate(value, tokens):
+    for token in tokens:
+        if isinstance(value, list) and isinstance(token, int) and token < len(value):
+            value = value[token]
+        elif isinstance(value, dict) and not isinstance(token, int) and token in value:
+            value = value[token]
+        else:
+            return None
+    return value
+
+
+def escape_pointer(token):
+    return str(token).replace('~', '~0').replace('/', '~1')
+
+
+def scalar_span(source_lines, line, value):
+    """Column range of a string scalar on its line (data files), or {} when it cannot be pinned exactly."""
+    if not line or line > len(source_lines) or not isinstance(value, str):
+        return {}
+    text = source_lines[line - 1]
+    for needle in (json.dumps(value, ensure_ascii=False)[1:-1], value):
+        col = text.find(needle) if needle else -1
+        if col >= 0 and text.find(needle, col + 1) < 0:
+            return {'col': col, 'end_line': line, 'end_col': col + len(needle)}
+    return {}
+
+
+class DataFlow:
+    """Resolve same-file/imported constants, loop data sources and namespaced i18n for indexed elements."""
+
+    def __init__(self, files, consts_by_file, refs, data):
+        self.files, self.consts, self.data = files, consts_by_file, data
+        self.imports = defaultdict(dict)
+        for ref in refs:
+            if ref['kind'] == 'import' and ref.get('resolved'):
+                for name in re.findall(r'[A-Za-z_$][\w$]*', ref.get('names', '')):
+                    if name not in {'as', 'type', 'default'}:
+                        self.imports[ref['file']][name] = ref['resolved']
+        self._json, self._json_lines = {}, {}
+        self.data_seen = {(r['file'], r['pointer']) for r in data}
+
+    def lookup(self, file, name):
+        """('const', repr, defining file) | ('json', parsed, json file) | None."""
+        local = self.consts.get(file, {})
+        if name in local and not name.startswith('__'):
+            return 'const', local[name], file
+        target = self.imports.get(file, {}).get(name)
+        if not target:
+            return None
+        if name in self.consts.get(target, {}):
+            return 'const', self.consts[target][name], target
+        if target.endswith('.json') and target in self.files:
+            if target not in self._json:
+                try:
+                    self._json[target] = json.loads(self.files[target])
+                except ValueError:
+                    self._json[target] = None
+            if self._json[target] is not None:
+                return 'json', self._json[target], target
+        return None
+
+    def json_line(self, file, pointer):
+        if file not in self._json_lines:
+            try:
+                self._json_lines[file] = {p: line for p, _, line in json_string_lines(self.files[file])}
+            except (ValueError, IndexError):
+                self._json_lines[file] = {}
+        return self._json_lines[file].get(pointer)
+
+    def const_record(self, file, pointer, node):
+        if (file, pointer) not in self.data_seen and visible_string(node['__str__']):
+            self.data_seen.add((file, pointer))
+            self.data.append(data_record(file, pointer, node['__str__'], node['line'], 'const', col=node['col'],
+                                         end_line=node['end_line'], end_col=node['end_col'], edit_kind='literal'))
+
+    def collection(self, file, source):
+        """Items of a loop source: (kind, defining file, pointer prefix, items) or None."""
+        tokens = ref_tokens(source)
+        if not tokens or isinstance(tokens[0], int):
+            return None
+        found = self.lookup(file, tokens[0])
+        if found is None:
+            return None
+        kind, value, where = found
+        if kind == 'const':
+            node = navigate(value, tokens[1:])
+            items = node.get('__arr__') if isinstance(node, dict) else None
+            prefix = '/' + '/'.join(escape_pointer(t) for t in tokens)
+        else:
+            items = json_navigate(value, tokens[1:])
+            prefix = ''.join('/' + escape_pointer(t) for t in tokens[1:])
+        if not isinstance(items, list):
+            return None
+        return kind, where, prefix, items
+
+    def instance(self, kind, where, prefix, index, item, path):
+        pointer = f'{prefix}/{index}' + ''.join('/' + escape_pointer(t) for t in path)
+        if kind == 'const':
+            node = navigate(item, path)
+            if not isinstance(node, dict) or '__str__' not in node:
+                return None
+            self.const_record(where, pointer, node)
+            return {'value': node['__str__'], 'file': where, 'pointer': pointer, 'kind': 'literal',
+                    **{k: node[k] for k in ('line', 'col', 'end_line', 'end_col')}}
+        value = json_navigate(item, path)
+        if not isinstance(value, str):
+            return None
+        line = self.json_line(where, pointer)
+        result = {'value': value, 'file': where, 'pointer': pointer, 'kind': 'json', 'line': line}
+        if line:
+            result.update(scalar_span(self.files[where].splitlines(), line, value))
+        return result
+
+    def resolve_element(self, element):
+        loop = element.get('loop')
+        coll = self.collection(element['file'], loop['source']) if loop and loop.get('source') else None
+        if coll:
+            kind, where, prefix, items = coll
+            element['template_n'] = len(items)
+            element['data_source'] = {'kind': kind, 'file': where, 'pointer_prefix': prefix, 'name': loop['source']}
+        exprs = [value for value in element['attrs'].values() if 'expr' in value] + [p for p in element.get('text', []) if 'expr' in p]
+        for expr in exprs:
+            tokens = ref_tokens(expr['expr'])
+            if not tokens or isinstance(tokens[0], int):
+                continue
+            path = None
+            if loop and loop.get('param') and tokens[0] == loop['param']:
+                path = tokens[1:]
+            elif loop and tokens[0] in (loop.get('destructure') or []):
+                path = tokens
+            if path is not None:
+                expr['loop_ref'] = '.'.join(str(t) for t in path)
+                if coll:
+                    instances = [self.instance(coll[0], coll[1], coll[2], i, item, path) for i, item in enumerate(coll[3][:50])]
+                    if instances and all(instances):
+                        expr['instances'] = instances
+                continue
+            found = self.lookup(element['file'], tokens[0])
+            if found is None:
+                continue
+            kind, value, where = found
+            if kind == 'const':
+                node = navigate(value, tokens[1:])
+                if isinstance(node, dict) and '__str__' in node:
+                    pointer = '/' + '/'.join(escape_pointer(t) for t in tokens)
+                    self.const_record(where, pointer, node)
+                    source = expr.pop('expr')
+                    for key in ('refs', 'strings', 'fragments', 'i18n_keys'):
+                        expr.pop(key, None)
+                    expr.update(literal=node['__str__'], via='const', value_origin='const', source_expr=source[:160],
+                                const={'name': '.'.join(str(t) for t in tokens), 'file': where, 'pointer': pointer},
+                                **{k: node[k] for k in ('line', 'col', 'end_line', 'end_col')})
+            else:
+                node = json_navigate(value, tokens[1:])
+                if isinstance(node, str):
+                    pointer = ''.join('/' + escape_pointer(t) for t in tokens[1:])
+                    expr['data_ref'] = {'file': where, 'pointer': pointer, 'line': self.json_line(where, pointer), 'value': node}
+
+
+def apply_dataflow(elements, data, refs, files, consts_by_file, i18n):
+    flow = DataFlow(files, consts_by_file, refs, data)
+    i18n_present = bool(i18n) or any(I18N_LIBS.search(text) for path, text in files.items()
+                                     if PurePosixPath(path).name == 'package.json')
+    for element in elements:
+        if consts_by_file.get(element['file']) or element.get('loop'):
+            flow.resolve_element(element)
+        exprs = [value for value in element['attrs'].values() if 'i18n_keys' in value] + \
+                [p for p in element.get('text', []) if 'i18n_keys' in p]
+        if not exprs:
+            continue
+        if element['lang'] in SCRIPT_LANGS and not i18n_present:
+            for expr in exprs:  # `t(...)`-shaped calls without any i18n library or catalog are not translations
+                expr.pop('i18n_keys', None)
+            continue
+        namespaces = (consts_by_file.get(element['file']) or {}).get('__i18n_ns__') or {}
+        for expr in exprs:
+            keys = []
+            for key in expr['i18n_keys']:
+                for var, namespace in namespaces.items():
+                    if namespace and re.search(r'(?<![\w.$])' + re.escape(var) + r'''\s*\(\s*["'`]''' + re.escape(key), expr.get('expr', '')):
+                        keys.append(namespace + '.' + key)
+                keys.append(key)
+            expr['i18n_keys'] = list(dict.fromkeys(keys))[:6]
+    return i18n_present
+
+
+def mark_shared(elements, refs, files):
+    """`shared` + `used_by` on elements of shells/layouts and of files composed into more than one file."""
+    importers = defaultdict(set)
+    for ref in refs:
+        if ref.get('resolved') and ref['resolved'] != ref['file']:
+            importers[ref['resolved']].add(ref['file'])
+    for element in elements:
+        if element.get('component_ref') and element['component_ref'] != element['file']:
+            importers[element['component_ref']].add(element['file'])
+    shells = {path for path in files if SHELL_FILE.search(path)
+              or (path.endswith('index.html') and path.count('/') <= 1 and SPA_SHELL.search(files[path] or ''))}
+    shared = {}
+    for path in {e['file'] for e in elements}:
+        users = importers.get(path, set())
+        if path in shells or len(users) > 1 or users & shells:
+            shared[path] = sorted(users)[:10] or ['*']
+    for element in elements:
+        if element['file'] in shared:
+            element['shared'], element['used_by'] = True, shared[element['file']]
+    return shells
+
+
 # ---------------------------------------------------------------- build
 def language_for(file):
     path = PurePosixPath(file.lower())
@@ -1060,6 +1731,7 @@ def build_element_index(snapshot):
     elements, data, refs = [], [], []
     i18n = {}
     file_status = {}
+    consts_by_file = {}
     aliases = load_aliases(files)
     for file in sorted(files):
         source = files[file]
@@ -1072,7 +1744,9 @@ def build_element_index(snapshot):
                 if 'node_modules' in file or file.endswith(('.d.ts', '.min.js')) or len(source) > 400_000:
                     status = 'skipped-generated'
                 else:
-                    error = parse_script(file, source, elements, refs)
+                    consts = {}
+                    error = parse_script(file, source, elements, refs, consts=consts)
+                    consts_by_file[file] = consts
                     status = 'indexed'
             elif language == 'markdown':
                 parse_markdown(file, source, elements, data)
@@ -1085,17 +1759,20 @@ def build_element_index(snapshot):
                 error, truncated = parse_markup(file, source, language, elements)
                 template_refs(file, source, language, refs)
                 if language in {'vue', 'svelte', 'astro', 'html'}:
+                    consts = {}
                     for line_offset, script_language, code in script_blocks(source):
                         sink = []
                         parse_script(file, code, sink, refs, language='tsx' if script_language == 'ts' and language == 'astro' else script_language,
-                                     line_offset=line_offset)
+                                     line_offset=line_offset, consts=consts)
                         elements.extend(e for e in sink if e['kind'] != 'fragment')
+                    consts_by_file[file] = consts
                 status = 'indexed'
             if suffix in {'.json', '.yml', '.yaml', '.toml', '.po'} and 'package' not in PurePosixPath(file).name \
                     and not re.search(r'(?:^|/)(?:tsconfig|jsconfig|composer|\.eslintrc|\.prettierrc|renovate|turbo|vercel|netlify|firebase)[\w.]*\.json$', file):
                 status = index_data_file(file, source, data, i18n)
         except RecursionError:
             status, error = 'partial', True
+        anchor_ids(elements[before:])
         entry = {'language': language or suffix.lstrip('.') or 'other', 'status': status, 'elements': len(elements) - before}
         if error:
             entry['syntax_errors'] = True
@@ -1117,10 +1794,17 @@ def build_element_index(snapshot):
         if ref['kind'] == 'import' and ref.get('resolved'):
             for name in re.findall(r'[A-Za-z_$][\w$]*', ref.get('names', '')):
                 imported[ref['file']][name] = ref['resolved']
+    local_components = defaultdict(set)  # file -> function components defined in it
+    for element in elements:
+        if element.get('component_fn'):
+            local_components[element['file']].add(element['component_fn'])
     for element in elements:
         if element['kind'] == 'component':
             head = element['tag'].split('.')[0]
             target = imported[element['file']].get(head)
+            if target is None and head in local_components.get(element['file'], ()):
+                target = element['file']  # same-file component (`function Section({title})` used as <Section title=...>)
+                element['component_fn_ref'] = head
             if target is None and element['tag'].startswith('x-'):
                 target = resolve_template(element['file'], {'spec': element['tag'][2:], 'kind': 'blade-component'}, files, by_name)
             if target is None and element['lang'] in {'vue', 'html'}:
@@ -1129,6 +1813,8 @@ def build_element_index(snapshot):
             if target:
                 element['component_ref'] = target
     shopify_sections(files, refs)
+    i18n_present = apply_dataflow(elements, data, refs, files, consts_by_file, i18n)
+    shells = mark_shared(elements, refs, files)
     return {
         'schema': 'element-index/1.0',
         'elements': elements,
@@ -1137,8 +1823,12 @@ def build_element_index(snapshot):
         'refs': refs,
         'files': file_status,
         'aliases': [{'prefix': p, 'target': t, 'source': s} for p, t, s in aliases if s != 'framework-default'],
+        'shells': sorted(shells),
+        'i18n_present': i18n_present,
         'limitations': [
-            'Template directives are masked, not evaluated: loops, conditionals and filters keep their source text as expr parts.',
+            'Template directives are masked, not evaluated: loop and conditional context is recorded (in_loop, loop, '
+            'conditional, condition), and loop/constant data sources are resolved only when they are literal arrays, '
+            'same-file/imported constants or imported JSON.',
             'Expressions inside Svelte/Astro braces are opaque; elements created inside them are not indexed.',
             'YAML support covers scalar maps/lists/block scalars only (no anchors or flow collections).',
             'Composition edges are literal references; runtime-selected templates/components remain unresolved.',

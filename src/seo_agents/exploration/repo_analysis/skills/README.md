@@ -32,4 +32,6 @@ exploration output. Route discovery uses `conventions` (path regex + `adapter`,
 optional `requires_path`, `route_map`, `route_template`) and `declarations`
 (optional structural `parser`); see `skills/routes/SKILL.md`.
 
-Add a pattern by editing JSON plus examples; no Python change is needed.
+Add a pattern by editing JSON plus examples; no Python change is needed. `tests/test_skill_docs.py`
+fails when a SKILL.md names a token that neither its profile nor its Python post-processing covers,
+so documentation cannot drift from behaviour.

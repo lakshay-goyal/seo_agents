@@ -5,13 +5,14 @@
     {
       "id": "sitemap-file",
       "label": "Static sitemap file",
-      "regex": "(?:^|/)sitemap[\\w-]*\\.xml$",
+      "regex": "(?:^|/)sitemap[\\w-]*\\.xml(?:\\.gz)?$",
       "files_only": true,
       "precision": "high",
       "examples": {
         "match": [
           "public/sitemap.xml",
-          "sitemap-index.xml"
+          "sitemap-index.xml",
+          "public/sitemap-0.xml.gz"
         ],
         "no_match": [
           "sitemaps.md"
@@ -36,7 +37,7 @@
     {
       "id": "sitemap-generator",
       "label": "Sitemap generator code/plugin",
-      "regex": "next-sitemap|@astrojs/sitemap|gatsby-plugin-sitemap|@nuxtjs/sitemap|vite-plugin-sitemap|sitemap_generator|jekyll-sitemap|laravel-sitemap|django\\.contrib\\.sitemaps|MetadataRoute\\.Sitemap|SitemapStream|\\bwp_sitemaps\\w*|WP_Sitemaps|['\\\"`/]sitemap(?:\\.xml)?['\\\"`]",
+      "regex": "next-sitemap|@astrojs/sitemap|gatsby-plugin-sitemap|@nuxtjs/sitemap|nuxt-simple-sitemap|@nuxtjs/seo|vite-plugin-sitemap|sitemap_generator|jekyll-sitemap|@11ty/eleventy-plugin-sitemap|laravel-sitemap|django\\.contrib\\.sitemaps|MetadataRoute\\.Sitemap|SitemapStream|\\bwp_sitemaps\\w*|WP_Sitemaps|svelte-sitemap|super-sitemap|enableSitemap|[\\'\"`/]sitemap(?:\\.xml)?[\\'\"`]",
       "block": true,
       "languages": [
         "@templates",
@@ -75,7 +76,7 @@
     {
       "id": "robots-generator",
       "label": "Robots generator code/plugin",
-      "regex": "MetadataRoute\\.Robots|gatsby-plugin-robots-txt|@nuxtjs/robots|enableRobotsTXT|['\"`/]robots\\.txt['\"`]",
+      "regex": "MetadataRoute\\.Robots|gatsby-plugin-robots-txt|@nuxtjs/robots|nuxt-simple-robots|astro-robots-txt|enableRobotsTXT|[\\'\"`/]robots\\.txt[\\'\"`]",
       "block": true,
       "languages": [
         "@templates",
@@ -111,8 +112,9 @@
     },
     {
       "id": "noindex",
-      "label": "noindex / nofollow directive",
-      "regex": "\\bnoindex\\b|\\bnofollow\\b|\\bindex\\s*:\\s*false\\b|X-Robots-Tag|\\bwp_robots_no_robots\\b|\\bblog_public\\b",
+      "label": "noindex directive (meta robots, X-Robots-Tag, metadata API or platform setting)",
+      "regex": "\\bnoindex\\b|\\bnone\\b(?=[^\\n]{0,40}robots)|\\bwp_robots_no_robots\\b|\\bblog_public\\b|\\bindex\\s*:\\s*false\\b(?=[^\\n]{0,80}\\bfollow\\b)|robots\\s*:\\s*\\{[^}\\n]*\\bindex\\s*:\\s*false",
+      "precision": "high",
       "ignore_case": true,
       "languages": [
         "@markup",
@@ -123,7 +125,6 @@
         "@data"
       ],
       "exclude_comments": true,
-      "precision": "medium",
       "examples": {
         "match": [
           "<meta name=\"robots\" content=\"noindex\">",
@@ -132,7 +133,9 @@
         ],
         "no_match": [
           "robots: { index: true }",
-          "indexOf(x)"
+          "indexOf(x)",
+          "<a rel=\"nofollow\" href=\"/x\">",
+          "express.static(dir, { index: false })"
         ]
       }
     },
@@ -152,6 +155,95 @@
           "feedback.ts"
         ]
       }
+    },
+    {
+      "id": "meta-robots",
+      "label": "<meta name=\"robots\"> value",
+      "value_group": 1,
+      "precision": "high",
+      "ignore_case": true,
+      "regex": "<meta\\b(?=[^>]*\\bname\\s*=\\s*[\"'](?:robots|googlebot|bingbot)[\"'])[^>]*?\\bcontent\\s*=\\s*[\"'{]\\s*[\"'`]?([^\"'`}]*)",
+      "languages": [
+        "@markup",
+        "@scripts"
+      ],
+      "exclude_comments": true,
+      "examples": {
+        "match": [
+          "<meta name=\"robots\" content=\"noindex, nofollow\">",
+          "<meta content=\"x\" name=\"robots\" content=\"index\">"
+        ],
+        "no_match": [
+          "<meta name=\"description\" content=\"noindex\">"
+        ]
+      }
+    },
+    {
+      "id": "x-robots-tag",
+      "label": "X-Robots-Tag header value",
+      "value_group": 1,
+      "precision": "high",
+      "ignore_case": true,
+      "regex": "X-Robots-Tag[\"']?\\s*[:,]?\\s*(?:[\"']?\\s*(?:value[\"']?\\s*:\\s*)?[\"']?)([\\w ,:-]+)",
+      "languages": [
+        "@scripts",
+        "@data",
+        "server-config",
+        "other",
+        "python",
+        "ruby",
+        "php"
+      ],
+      "exclude_comments": true,
+      "examples": {
+        "match": [
+          "Header set X-Robots-Tag \"noindex\"",
+          "{ key: 'X-Robots-Tag', value: 'noindex' }",
+          "X-Robots-Tag: noindex"
+        ],
+        "no_match": [
+          "X-Frame-Options: DENY"
+        ]
+      }
+    },
+    {
+      "id": "metadata-robots",
+      "label": "Framework metadata robots setting",
+      "value_group": 1,
+      "precision": "high",
+      "regex": "\\brobots\\s*:\\s*(\\{[^{}\\n]*\\}|[\"'`][^\"'`\\n]+[\"'`])",
+      "languages": [
+        "@scripts",
+        "@markup",
+        "@data"
+      ],
+      "exclude_comments": true,
+      "examples": {
+        "match": [
+          "robots: { index: false, follow: true }",
+          "robots: 'noindex'"
+        ],
+        "no_match": [
+          "robots.txt"
+        ]
+      }
+    },
+    {
+      "id": "sitemap-template",
+      "label": "Sitemap/robots generated from a template (Hugo, Jekyll, 11ty, WordPress, Liquid)",
+      "regex": "(?:^|/)(?:layouts/(?:_default/)?(?:sitemap|robots)\\.(?:xml|txt)|_includes/sitemap\\.xml|sitemap\\.(?:njk|liquid|11ty\\.js|xml\\.erb|xml\\.php|hbs)|robots\\.(?:njk|liquid|txt\\.erb|hbs))$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "layouts/sitemap.xml",
+          "layouts/_default/robots.txt",
+          "sitemap.njk"
+        ],
+        "no_match": [
+          "public/sitemap.xml"
+        ]
+      }
     }
   ],
   "gaps": [
@@ -161,7 +253,8 @@
       "when_none_of": [
         "sitemap-file",
         "sitemap-generator",
-        "sitemap-route-file"
+        "sitemap-route-file",
+        "sitemap-template"
       ]
     },
     {
@@ -170,7 +263,8 @@
       "when_none_of": [
         "robots-file",
         "robots-generator",
-        "robots-route-file"
+        "robots-route-file",
+        "sitemap-template"
       ]
     }
   ],

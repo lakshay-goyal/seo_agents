@@ -26,7 +26,7 @@
     {
       "id": "twitter-card",
       "label": "Twitter/X card declaration",
-      "regex": "twitter:(?:card|title|description|image|site|creator)|twitter\\s*:\\s*\\{\\s*card",
+      "regex": "twitter:(?:card|title|description|image|site|creator)|twitter\\s*:\\s*\\{[^}]*\\bcard\\b",
       "languages": [
         "@templates",
         "@content",
@@ -36,7 +36,8 @@
       "examples": {
         "match": [
           "twitter:card",
-          "twitter: { card"
+          "twitter: { card",
+          "twitter: { title: 'x', card: 'summary_large_image' }"
         ],
         "no_match": [
           "twitter.com"
@@ -46,7 +47,7 @@
     {
       "id": "og-image-generator",
       "label": "Generated OG image",
-      "regex": "(?:^|/)(?:opengraph|twitter)-image\\.(?:tsx|jsx|ts|js|png|jpg)$|ImageResponse\\s*\\(|@vercel/og|satori",
+      "regex": "ImageResponse\\s*\\(|@vercel/og|\\bsatori\\b",
       "files_only": false,
       "languages": [
         "@templates"
@@ -177,6 +178,23 @@
         "no_match": [
           "observable.subscribe(x => x)",
           "store.subscribe(() => {})"
+        ]
+      }
+    },
+    {
+      "id": "og-image-file",
+      "label": "Open Graph / Twitter image file convention (Next opengraph-image, twitter-image)",
+      "regex": "(?:^|/)(?:opengraph|twitter)-image(?:-\\w+)?\\.(?:tsx|jsx|ts|js|png|jpe?g|gif|webp)$|(?:^|/)og(?:-image)?\\.(?:png|jpe?g|webp)$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "app/opengraph-image.png",
+          "app/blog/[slug]/opengraph-image.tsx",
+          "public/og.png"
+        ],
+        "no_match": [
+          "public/logo.png"
         ]
       }
     }

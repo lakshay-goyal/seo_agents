@@ -93,8 +93,9 @@ class RepoContextTests(unittest.TestCase):
                    '</head><body><h1>Jasmine green tea</h1><p>Our jasmine green tea is rolled by hand.</p></body></html>')
         context = self.build()
         self.assertIn('jasmine green tea', context['agents']['keywords']['primary_candidates'])
-        occurrence = context['agents']['keywords']['trigrams'][0]['occurrences'][0]
-        self.assertEqual(occurrence['file'], 'index.html')
+        example = context['agents']['keywords']['trigrams'][0]['examples'][0]
+        self.assertEqual(example, 'index.html:1')
+        self.assertNotIn('occurrences', context['agents']['keywords']['trigrams'][0])
         sd = context['agents']['structured_data']
         self.assertEqual(sd['schema_types'], {'FAQPage': 1})
         self.assertEqual(sd['json_ld_blocks'][0]['parse_status'], 'valid-json')
