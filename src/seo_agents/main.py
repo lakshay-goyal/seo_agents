@@ -1,7 +1,7 @@
 """`seo-agents <github_url>`: clone the repository in a Docker sandbox, run the repo analysis and open a reports PR.
 
     main() -> GitHubUrlValidator -> create_sandbox() (DockerSandbox) -> SandboxPipeline.run()
-              -> inside the container: ContainerEntrypoint.analyze (RepoAnalysisWorkflow) then .publish (reports PR)
+              -> inside the container: ContainerEntrypoint.analyze (orchestrator.run_pipeline) then .publish (reports PR)
 """
 
 import argparse

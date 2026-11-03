@@ -521,6 +521,48 @@ def known_routes(fingerprint):
     return paths
 
 
+# Install directories already installed in this process (by the orchestrator's install step), so the build in
+# build_and_serve does not install twice (`npm ci` would wipe node_modules and start over).
+INSTALLED_DIRS = set()
+
+
+def install_plan(repo_path, fingerprint):
+    """Where and with which package manager the repository's dependencies get installed."""
+    root = Path(repo_path).resolve()
+    package_dir = root / Path(fingerprint.get('package_json') or 'package.json').parent
+    install_dir = workspace_root(package_dir, root) if fingerprint.get('package_json') else package_dir
+    manager, manager_version = package_manager_spec(install_dir, fingerprint.get('package_manager'))
+    return {'package_dir': package_dir, 'install_dir': install_dir, 'manager': manager,
+            'manager_version': manager_version, 'requirements': node_requirements(package_dir, install_dir)}
+
+
+def install_dependencies(repo_path, fingerprint, log, limitations, *, timeout=900):
+    """Install the repository's dependencies (as SEO_BUILD_USER, credential-free env). True when installed,
+    already installed, or nothing to install; False (with a limitation) when the install failed."""
+    plan = install_plan(repo_path, fingerprint)
+    install_dir, manager, requirements = plan['install_dir'], plan['manager'], plan['requirements']
+    if requirements:
+        log.append('node version requirement: ' + json.dumps(requirements))
+    identity = build_identity()
+    if identity:
+        hand_over(install_dir, identity)
+        log.append('install/build/preview run as unprivileged user ' + str(os.getenv('SEO_BUILD_USER')))
+    if not (fingerprint.get('package_json') and manager):
+        return True
+    if str(install_dir) in INSTALLED_DIRS:
+        log.append('dependencies already installed in ' + str(install_dir))
+        return True
+    if read_json(install_dir / 'package.json').get('packageManager') and shutil.which('corepack'):
+        run(['corepack', 'enable'], install_dir, 120, log)
+    command = install_command(manager, install_dir, plan['manager_version'])
+    if command and not run(command, install_dir, timeout, log):
+        limitations.append('Dependency install failed' + (' (declared node ' + json.dumps(requirements) + ')' if requirements else '')
+                           + '; source-only mode.')
+        return False
+    INSTALLED_DIRS.add(str(install_dir))
+    return True
+
+
 def build_and_serve(repo_path, fingerprint, *, site_url=None, build=None, timeout=900):
     root = Path(repo_path).resolve()
     build = os.getenv('SEO_BUILD', '0') == '1' if build is None else build
@@ -550,23 +592,10 @@ def build_and_serve(repo_path, fingerprint, *, site_url=None, build=None, timeou
                                if prebuilt != '0' else 'SEO_MEASURE_PREBUILT=0 and building is disabled; source-only mode.')
             return Served('source-only', log=log, limitations=limitations)
     detected = fingerprint.get('package_manager')
-    install_dir = workspace_root(package_dir, root) if fingerprint.get('package_json') else package_dir
-    manager, manager_version = package_manager_spec(install_dir, detected)
-    requirements = node_requirements(package_dir, install_dir)
-    if requirements:
-        log.append('node version requirement: ' + json.dumps(requirements))
+    manager = install_plan(root, fingerprint)['manager']
     identity = build_identity()
-    if identity:
-        hand_over(install_dir, identity)
-        log.append('install/build/preview run as unprivileged user ' + str(os.getenv('SEO_BUILD_USER')))
-    if fingerprint.get('package_json') and manager:
-        if read_json(install_dir / 'package.json').get('packageManager') and shutil.which('corepack'):
-            run(['corepack', 'enable'], install_dir, 120, log)
-        command = install_command(manager, install_dir, manager_version)
-        if command and not run(command, install_dir, timeout, log):
-            limitations.append('Dependency install failed' + (' (declared node ' + json.dumps(requirements) + ')' if requirements else '')
-                               + '; source-only mode.')
-            return Served('source-only', log=log, limitations=limitations)
+    if not install_dependencies(root, fingerprint, log, limitations, timeout=timeout):
+        return Served('source-only', log=log, limitations=limitations)
     command = list((fingerprint.get('build') or {}).get('command') or []) or None
     if command and detected and manager and command[0] == detected:
         command[0] = manager
@@ -627,3 +656,9 @@ class SiteServer:
 
     def serve(self, repo_path, fingerprint, *, site_url=None, build=None, timeout=900):
         return build_and_serve(repo_path, fingerprint, site_url=site_url, build=build, timeout=timeout)
+
+    def install(self, repo_path, fingerprint, *, timeout=900):
+        """(ok, log, limitations): install the repository's dependencies once; a later serve() reuses them."""
+        log, limitations = [], []
+        ok = install_dependencies(repo_path, fingerprint, log, limitations, timeout=timeout)
+        return ok, log, limitations

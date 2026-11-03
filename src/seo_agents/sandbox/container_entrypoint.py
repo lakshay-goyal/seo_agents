@@ -2,7 +2,7 @@
 
 Started by the host in two separate phases so the GitHub token never coexists with repository code:
 
-    python3 container_entrypoint.py analyze <github_url> [site_url]   # clone + exploration; prints SEO_BUNDLE=<path>
+    python3 container_entrypoint.py analyze <github_url> [site_url]   # orchestrator.py pipeline; prints SEO_BUNDLE=<path>
     python3 container_entrypoint.py publish <github_url> <bundle>     # commit + PR;          prints SEO_PR_URL=<url>
 
 `python3 container_entrypoint.py <github_url> [site_url]` still runs both phases in one process (local use).
@@ -15,94 +15,16 @@ import sys
 
 sys.path.insert(0, "/opt/seo_agents/src")
 
+from seo_agents.sandbox.report_bundle import BUNDLE_DIR, directory_files, site_model_files  # noqa: F401 - re-exported
 from seo_agents.utils.step_logger import done, log, start
-
-BUNDLE_DIR = "/opt/seo_agents/out"
-
-
-def directory_files(directory, prefix):
-    """{<prefix>/<relative>: text} for every text file under directory."""
-    if not directory:
-        return {}
-    root = Path(directory)
-    if not root.is_dir():
-        return {}
-    files = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            try:
-                files[prefix + "/" + path.relative_to(root).as_posix()] = path.read_text()
-            except UnicodeDecodeError:
-                continue
-    return files
-
-
-def site_model_files(directory):
-    """{seo_reports/site_model/<relative>: text} for every file the site model wrote."""
-    return directory_files(directory, "seo_reports/site_model")
-
-
-def output_files(state, target):
-    """Everything the exploration wrote (site model, sharded exploration output, keyword research, on-page proposals,
-    repo context)."""
-    files = site_model_files(state.get("site_model_dir"))
-    for key, prefix in (("exploration_dir", "seo_reports/exploration"), ("onpage_dir", "seo_reports/onpage"),
-                        ("keywords_dir", "seo_reports/keywords")):
-        files.update(directory_files(state.get(key), prefix))
-    exploration = Path(target) / "seo_reports" / "exploration"
-    if not state.get("exploration_dir") and exploration.is_dir():
-        files.update(directory_files(exploration, "seo_reports/exploration"))
-    if state.get("repo_context_path"):
-        with open(state["repo_context_path"]) as stream:
-            files["seo_reports/repo_context.json"] = stream.read()
-    return files
-
-
-def run_keyword_research(state, target):
-    """SEO_KEYWORD_RESEARCH=1: keyword research on the fresh exploration output; sets state["keywords_dir"].
-    A failure is logged and the exploration PR still opens (keywords are an optional stage)."""
-    if os.environ.get("SEO_KEYWORD_RESEARCH", "0") != "1":
-        return state
-    from seo_agents.keyword_research.keyword_research import KeywordResearchWorkflow
-    reports = Path(state["site_model_dir"]).parent if state.get("site_model_dir") else Path(target) / "seo_reports"
-    log("stage 2b: keyword research (" + str(reports) + ")")
-    try:
-        result = KeywordResearchWorkflow().run(reports)
-    except Exception as error:  # noqa: BLE001 - never lose the exploration PR over the optional keyword stage
-        log("keyword research failed: " + type(error).__name__ + ": " + str(error)[:300])
-        return state
-    state["keywords_dir"] = (result.get("written") or {}).get("out_dir") or result.get("out_dir")
-    return state
 
 
 def analyze(github_url, site_url=None):
-    from seo_agents.sandbox.git.repository_clone import RepositoryCloner
-    from seo_agents.sandbox.runners.local_runner import LocalRunner
-    from seo_agents.sandbox.git.pull_request import PullRequestPublisher, scrub_paths
-    from seo_agents.repo_analysis.repo_analysis import RepoAnalysisWorkflow
+    """Clone, install, explore, keywords, on-page + technical, bundle: see seo_agents/orchestrator.py."""
+    from seo_agents.orchestrator import run_pipeline
 
-    runner = LocalRunner()
-    log("stage 1/2: clone (fresh)")
-    cloner = RepositoryCloner()
-    target = cloner.clone(runner, github_url)
-    sha = cloner.head_sha(runner, target)
-    log("analysed commit: " + str(sha))
-    log("stage 2/2: analyze" + (" (site_url=" + site_url + ")" if site_url else ""))
-    state = RepoAnalysisWorkflow(github_url, repo_path=target, site_url=site_url).run()
-    state = run_keyword_research(state, target)
-    files = {path: scrub_paths(text, (target, str(Path(target).resolve())))
-             for path, text in output_files(state, target).items()}
-    publisher = PullRequestPublisher()
-    committed, excluded = publisher.commit_plan(files)
-    if excluded:
-        log("not committing " + str(len(excluded)) + " large files (set SEO_PR_COMMIT_FULL=1 to commit everything)")
-    bundle = {"github_url": github_url, "sha": sha, "files": committed, "excluded": excluded,
-              "summary": publisher.summary_markdown({**files}), "reports": state.get("artifacts") or {}}
-    Path(BUNDLE_DIR).mkdir(parents=True, exist_ok=True)
-    path = Path(BUNDLE_DIR) / (Path(cloner.folder(github_url)).name + "-" + (sha or "unknown")[:12] + ".json")
-    path.write_text(json.dumps(bundle, ensure_ascii=False))
-    os.chmod(path, 0o600)
-    return str(path)
+    state = run_pipeline(github_url, site_url)
+    return state.bundle_path
 
 
 def publish(github_url, bundle_path):
@@ -143,7 +65,7 @@ def main(argv=None):
 
 
 class ContainerEntrypoint:
-    """Container side: `analyze` (clone + RepoAnalysisWorkflow, writes a bundle) and `publish` (PR from the bundle)."""
+    """Container side: `analyze` (the orchestrator pipeline, writes a bundle) and `publish` (PR from the bundle)."""
 
     def analyze(self, github_url, site_url=None):
         return analyze(github_url, site_url)
