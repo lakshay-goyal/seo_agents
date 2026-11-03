@@ -170,8 +170,14 @@ class ContentWriter:
                 raw = self.ask(model, system, packet, history)
                 answer = validate(parse_json_object(raw))
                 return answer, {'skill': skill, 'tier': tier, 'attempts': attempt, 'errors': errors}
-            except (ValueError, TypeError, KeyError, AttributeError) as error:
+            except Exception as error:  # noqa: BLE001 - validation errors and a length-capped answer get a repair turn
+                if not isinstance(error, (ValueError, TypeError, KeyError, AttributeError)) \
+                        and 'LengthFinishReason' not in type(error).__name__:
+                    raise
                 feedback = type(error).__name__ + ': ' + str(error)[:400]
+                if 'LengthFinishReason' in type(error).__name__:
+                    feedback = ('Your answer hit the output token limit (too long or repeating). Write the JSON object once, '
+                                'compactly, within the word limits; do not repeat sections.')
                 errors.append(feedback)
                 history.append((raw if isinstance(raw, str) and raw else json.dumps(raw) if isinstance(raw, dict) else '{}', feedback))
                 log(f'onpage {skill}: attempt {attempt} rejected: {feedback[:160]}')

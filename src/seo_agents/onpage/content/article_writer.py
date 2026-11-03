@@ -17,18 +17,33 @@ from seo_agents.onpage.content.article_rules import (ARTICLE_LIMITS, IMAGE_FILE,
 from seo_agents.onpage.validation import content_validators as v
 from seo_agents.onpage.validation.content_policy import LIMITS
 
+_STR = {'type': 'string'}
+_STRS = {'type': 'array', 'items': _STR}
+_BLOCK = {'type': 'object', 'required': ['tag'], 'properties': {
+    'tag': {'type': 'string', 'enum': ['p', 'ul', 'ol', 'table', 'figure', 'image_brief', 'diagram', 'h3', 'blockquote']},
+    'text': _STR, 'items': _STRS, 'caption': _STR, 'header': _STRS, 'rows': {'type': 'array', 'items': _STRS},
+    'src': _STR, 'alt': _STR, 'filename': _STR, 'prompt': _STR, 'code': _STR}}
 ARTICLE_SCHEMA = {'type': 'object', 'required': ['title', 'h1', 'meta_description', 'intro', 'key_takeaways', 'sections', 'faq',
-                                                 'tags', 'category', 'link_from']}
+                                                 'tags', 'category', 'link_from'], 'properties': {
+    'title': _STR, 'h1': _STR, 'meta_description': _STR, 'intro': _STR, 'key_takeaways': _STRS,
+    'sections': {'type': 'array', 'items': {'type': 'object', 'required': ['heading', 'blocks'],
+                                            'properties': {'heading': _STR, 'blocks': {'type': 'array', 'items': _BLOCK}}}},
+    'faq': {'type': 'array', 'items': {'type': 'object', 'required': ['question', 'answer'],
+                                       'properties': {'question': _STR, 'answer': _STR}}},
+    'tags': _STRS, 'category': _STR,
+    'link_from': {'type': 'array', 'items': {'type': 'object', 'required': ['url', 'anchor'],
+                                             'properties': {'url': _STR, 'anchor': _STR}}}}}
 BLOCKS = {'p', 'ul', 'ol', 'table', 'figure', 'image_brief', 'diagram', 'h3', 'blockquote'}
 
 
 def word_target(patterns):
-    """Minimum body words: 80% of the competitor median, clamped to the article limits (1200 without data)."""
+    """Minimum body words: 80% of the competitor median, clamped to 900-1800 (1200 without data). Live runs showed one
+    model call reliably writes ~1800 validated words; longer targets were missed on every attempt."""
     median = ((patterns or {}).get('word_count') or {}).get('median')
     low, high = ARTICLE_LIMITS['WORDS']
     if not median:
         return 1200
-    return max(low, min(round(median * 0.8), 2500, high))
+    return max(low, min(round(median * 0.8), 1800, high))
 
 
 class ArticleValidator:
@@ -61,7 +76,10 @@ class ArticleValidator:
                 raise ValueError(f'{name} links to {href}: inline links must be internal site paths; cite outside facts with [S#]')
             if href.split('#')[0] == self.brief['url']:
                 raise ValueError(f'{name} links to the article itself')
-        units['claims'] += check_facts(text, name, corpus=self.corpus, sources=self.sources, run_date=self.run_date)
+        try:
+            units['claims'] += check_facts(text, name, corpus=self.corpus, sources=self.sources, run_date=self.run_date)
+        except ValueError as error:  # collected: one repair turn must fix every uncited number, not one at a time
+            units['fact_errors'].append(str(error))
         check_overlap(text, self.copy_guard, name)
         units['texts'].append((name, text))
         return text.strip()
@@ -126,7 +144,7 @@ class ArticleValidator:
     def __call__(self, a):
         v.require(a, *ARTICLE_SCHEMA['required'])
         brief, primary = self.brief, self.brief['primary_keyword']
-        units = {'texts': [], 'claims': [], 'headings': [], 'images': []}
+        units = {'texts': [], 'claims': [], 'headings': [], 'images': [], 'fact_errors': []}
         others = self.other_titles
         a['title'] = check_title(a['title'], primary=primary, run_year=self.run_year, others=others,
                                  competitor_titles=self.competitor_titles)
@@ -246,6 +264,9 @@ class ArticleValidator:
             v.check_anchor(item.get('anchor') or '', f'link_from[{i}].anchor')
             if not v.contains_query(item['anchor'], primary) and not (v.content_tokens(item['anchor']) & v.content_tokens(primary)):
                 raise ValueError(f'link_from[{i}].anchor must describe the new article (use words of "{primary}")')
+        if units['fact_errors']:
+            raise ValueError(f"{len(units['fact_errors'])} unsupported numbers; fix ALL of them in this answer (cite the [S#] "
+                             'that states each number or remove it): ' + ' | '.join(units['fact_errors'][:10]))
         a['slug'], a['url'] = brief['slug'], brief['url']
         a['claims'] = units['claims']
         a['images'] = units['images']
@@ -282,5 +303,11 @@ class ArticleWriter:
             'assets': [{'src': src, 'alt': meta.get('alt'), 'type': meta.get('type', 'image')} for src, meta in assets.items()][:30],
             'links': [{'url': u, 'title': t} for u, t in links.items() if u != brief['url']],
             'min_words': validate.min_words,
+            'words_per_section': round(validate.min_words / 7) + 40,
         }
-        return writer.write(self.skill, packet, validate, ARTICLE_SCHEMA)
+        if getattr(writer, 'attempts', 4) < 4:  # a full article needs one more repair turn than a page plan
+            from seo_agents.onpage.writer.content_writer import ContentWriter
+            writer = ContentWriter(writer.factory, writer.tier, 4)
+        # Prompt-only JSON: a strict response schema this large made the mid model loop until the token cap (live run,
+        # 2026-11-03). ARTICLE_SCHEMA stays as the documented shape; the validator enforces it.
+        return writer.write(self.skill, packet, validate, None)

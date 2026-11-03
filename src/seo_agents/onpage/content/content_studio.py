@@ -14,7 +14,9 @@ Env: SEO_ONPAGE_ARTICLES = number of articles to plan (default 3; 0 turns the st
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 import os
+import re
 import traceback
 
 from seo_agents.onpage.content.article_fact_check import fact_check
@@ -106,8 +108,9 @@ class ArticleStudio:
             titles += [t for t in (done.get('title'), done.get('h1')) if t]
         ok = sum(1 for a in articles if a['status'] == 'done')
         log(f'content studio: {ok}/{len(articles)} articles written')
+        tags, changes = site_changes(articles, prefix, links)
         return {'status': 'done' if ok else 'failed', 'plan': {'meta': plan_meta, 'url_prefix': prefix, 'briefs': briefs},
-                'pool': pool, 'articles': articles}
+                'pool': pool, 'articles': articles, 'tags': tags, 'site_changes': changes}
 
     def one(self, writer, brief, *, by_url, home, links, assets, corpus, business, brand, run_date, origin, market, titles, lang):
         pillar = by_url.get(brief.get('pillar_url')) or {}
@@ -121,9 +124,13 @@ class ArticleStudio:
         except Exception as error:  # noqa: BLE001
             research = {'keyword': brief['primary_keyword'], 'pages': [], 'patterns': {}, 'titles': [], 'sources': [],
                         'texts': [], 'errors': [f'{type(error).__name__}: {str(error)[:200]}']}
+        # the pillar and topic pages' own facts in full (their data, e.g. a bookshelf's books and takeaways, is what the
+        # article can say about the client); the home page adds who the client is
         client_facts = [f['text'] for f in facts(home)][:25]
-        if pillar and pillar is not home:
-            client_facts += [f['text'] for f in facts(pillar)][:20]
+        for ctx in [pillar] + topic_pages:
+            if ctx and ctx is not home:
+                client_facts += [f['text'] for f in facts(ctx)][:80]
+        client_facts = list(dict.fromkeys(client_facts))[:150]
         public = {k: v for k, v in research.items() if k != 'texts'}
         try:
             article, meta = self.article_writer.write(
@@ -137,9 +144,44 @@ class ArticleStudio:
                     'errors': [f'{type(error).__name__}: {str(error)[:300]}', traceback.format_exc(limit=3)[-500:]]}
         article['primary_keyword'] = brief['primary_keyword']
         article['last_updated'] = run_date
+        prefix = brief['url'].rsplit('/', 1)[0] or '/blog'
+        article['tag_links'] = [{'tag': t, 'url': tag_url(prefix, t)} for t in article['tags']]
         sources = research.get('sources') or []
         return {'status': 'done', 'brief': brief, 'article': article, 'meta': meta,
                 'fact_check': fact_check(article, sources, run_date),
                 'markdown': to_markdown(article, sources, run_date=run_date, brand=brand),
                 'json_ld': json_ld(article, origin=origin, run_date=run_date, brand=brand),
                 'research': public}
+
+
+def tag_url(prefix, tag):
+    return prefix.rstrip('/') + '/tags/' + re.sub(r'[^a-z0-9]+', '-', tag.lower()).strip('-')
+
+
+def site_changes(articles, prefix, links):
+    """Internal linking + tag taxonomy for the new articles, as reviewable proposals on the existing application:
+    tag pages, reverse links from existing pages (`link_from`), and the blog index entry."""
+    tags, changes = {}, []
+    done = [a for a in articles if a['status'] == 'done']
+    for item in done:
+        art = item['article']
+        for t in art['tag_links']:
+            tags.setdefault(t['tag'], {'url': t['url'], 'articles': []})['articles'].append(art['url'])
+        for ref in art.get('link_from') or []:
+            changes.append({'id': 'art_' + hashlib.sha1(f"{ref['url']}|{art['url']}".encode()).hexdigest()[:10],
+                            'type': 'links.new', 'page': ref['url'], 'href': art['url'], 'anchor': ref['anchor'],
+                            'html': f'<a href="{art["url"]}">{ref["anchor"]}</a>', 'status': 'proposed',
+                            'placement': 'inside the paragraph about this topic, or a "Related articles" list at the end',
+                            'rationale': 'Internal link from an existing page so crawlers and readers reach the new article'})
+        if prefix in links:
+            changes.append({'id': 'art_' + hashlib.sha1(f"index|{art['url']}".encode()).hexdigest()[:10], 'type': 'links.new',
+                            'page': prefix, 'href': art['url'], 'anchor': art['h1'], 'status': 'proposed',
+                            'html': f'<a href="{art["url"]}">{art["h1"]}</a>',
+                            'placement': 'blog index list (newest first, with the meta description as the excerpt)',
+                            'rationale': 'List the new article on the blog index page'})
+    for tag, row in sorted(tags.items()):
+        changes.append({'id': 'tag_' + hashlib.sha1(tag.encode()).hexdigest()[:10], 'type': 'site.tag_page', 'page': row['url'],
+                        'tag': tag, 'articles': row['articles'], 'status': 'proposed',
+                        'title': f'{tag.title()} articles', 'placement': 'new route listing every article with this tag',
+                        'rationale': 'Tag page: internal hub that links related articles (topic cluster, crawl depth)'})
+    return tags, changes

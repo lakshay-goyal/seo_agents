@@ -12,7 +12,7 @@ Tables   >= 2 columns, every row as wide as the header, no empty header cell.
 Diagram  Mermaid with a known diagram type on the first line and >= 2 lines.
 Facts    every number is the run year, a small count (<= 12), in the client's own corpus, or cited `[S#]` in the same
          text unit to a fresh dated source whose passage contains that number.
-Overlap  no 10-word phrase copied from a competitor page.
+Overlap  no 12-word phrase copied from a competitor page (generic 10-word phrases matched too often live).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ ARTICLE_LIMITS = {
     'H2_COUNT': (4, 12), 'WORDS': (900, 3500), 'TAKEAWAYS': (3, 5), 'TAGS': (3, 6), 'FAQ_ITEMS': (0, 6),
     'FAQ_ANSWER_WORDS': (25, 70), 'LIST_ITEMS': (2, 10), 'LIST_ITEM_WORDS': (1, 40), 'SLUG_WORDS': (2, 6),
     'SLUG_CHARS': (5, 60), 'ALT_CHARS': (5, 125), 'INTERNAL_LINKS': (3, 12), 'LINK_FROM': (1, 3),
-    'SOURCE_MAX_AGE_DAYS': (0, 730), 'SMALL_NUMBER': (0, 12), 'COPY_SHINGLE_WORDS': (10, 10),
+    'SOURCE_MAX_AGE_DAYS': (0, 730), 'SMALL_NUMBER': (0, 12), 'COPY_SHINGLE_WORDS': (12, 12),
 }
 SLUG_STOPWORDS = {'a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'for', 'on', 'with', 'your', 'our', 'is', 'are', 'how',
                   'what', 'why', 'best', 'guide'}
@@ -238,7 +238,8 @@ def check_facts(text, name, *, corpus, sources, run_date):
         if not backing:
             raise ValueError(f'{name}: "{token}" is not backed by a cited source. Cite the [S#] whose passage states it '
                              '(in the same paragraph/item/cell), or remove the number. Never invent statistics.')
-        good = [s for s in backing if fresh(s, run_date)]
+        # a past year ("published in 2013") is a historical fact: any dated source backs it; statistics need fresh ones
+        good = [s for s in backing if fresh(s, run_date) or (YEAR.match(digits) and s.get('date'))]
         if not good:
             raise ValueError(f'{name}: "{token}" comes from {backing[0]["id"]} dated {backing[0].get("date") or "unknown"}; '
                              f'numbers need a dated source from the last {ARTICLE_LIMITS["SOURCE_MAX_AGE_DAYS"][1]} days. '
@@ -254,7 +255,9 @@ def shingles(text, n):
 
 def check_overlap(text, competitor_shingles, name):
     n = ARTICLE_LIMITS['COPY_SHINGLE_WORDS'][0]
-    copied = shingles(CITATION.sub(' ', text or ''), n) & competitor_shingles
+    # titles of works are quoted, not copied: drop "...", “...” and <em>...</em> spans before comparing
+    plain = re.sub(r'<em>.*?</em>|"[^"]{3,160}"|“[^”]{3,160}”', ' ', CITATION.sub(' ', text or ''))
+    copied = shingles(plain, n) & competitor_shingles
     if copied:
         raise ValueError(f'{name} copies a competitor phrase ("{sorted(copied)[0]}"); write it in your own words')
 

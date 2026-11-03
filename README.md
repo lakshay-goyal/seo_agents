@@ -144,7 +144,8 @@ Settings: `SEO_ONPAGE_TIER`, `SEO_ONPAGE_ATTEMPTS`, `SEO_ONPAGE_ADVICE`,
 The only on-page step that reads the web (never the client source):
 
 1. **competitors** (before the checks): for every page, fetch the pages that rank for its keywords (keyword
-   research `competitor_urls` + live SERP top results via DataForSEO when configured). robots.txt is respected,
+   research `competitor_urls` + live SERP top results via DataForSEO, or without DataForSEO a keyless web search of
+   html.duckduckgo.com, robots-allowed, `SEO_CONTENT_SEARCH=0` turns it off). robots.txt is respected,
    HTML only, cached 7 days. Extract title, H1, H2/H3 outline, word count, lists/tables/images/video/FAQ, alt
    coverage, dates, JSON-LD. Find the shared patterns (depth, formats, common sub-topics, title and URL habits,
    freshness). `page_plan` gets them as `competitors` (structure only, never competitor text); `content_quality`
@@ -159,19 +160,24 @@ Enforced on every article (`content/article_rules.py`, `content/article_writer.p
 | Area | Rule |
 | --- | --- |
 | Intent | primary keyword + questions come from the topic pool; every question gets its own H2/H3 (or FAQ) with a direct 40-70 word answer; answer-first intro |
-| Depth | body ≥ 80% of the competitor median word count (900-2500 floor), 4-12 H2s, no 10-word phrase copied from a competitor |
+| Depth | body ≥ 80% of the competitor median word count (floor clamped to 900-1800), 4-12 H2s, no 12-word phrase copied from a competitor (quoted / `<em>` titles exempt) |
 | Title / H1 | title 30-60 chars with the primary keyword and a CTR hook (number, current year, brackets, question, colon benefit, power word) learned from ranking titles; no other year; differs from competitor titles |
 | URL | `/<blog folder>/<slug>`: 2-6 lowercase hyphenated words, no repeated word, no folder word repeat, no year, no ids, names the topic, unique |
 | Visuals | at least one table, one list, one Mermaid diagram and one image (client asset or `image_brief` to create) |
 | Image SEO | unique descriptive alt (5-125 chars, 3+ words, no "image of" / file names / stuffing), descriptive image file names |
 | Bullets | plain items (no typed markers), 2-10 per list, 1-40 words, consistent end punctuation, no duplicates; rendered as `- ` / `1. ` |
-| Facts / freshness | every number is a small count, the run year, client content, or cited `[S#]` to a source dated within 2 years whose passage contains it; `Last updated` = run date; `fact_check` verdict + review-by date |
-| Internal links | ≥ 3 inline links to real site pages incl. the pillar; `link_from` = existing pages that should link to the article; 3-6 tags + category |
+| Facts / freshness | every number is a small count, the run year, client content, or cited `[S#]` to a source dated within 2 years whose passage contains it (past years: any dated source); `Last updated` = run date; `fact_check` verdict + review-by date |
+| Internal links / tags | ≥ 3 inline links to real site pages incl. the pillar; `link_from` = existing pages that should link to the article; 3-6 tags linked to `/blog/tags/<tag>`; `articles/index.json` `site_changes` proposes the tag pages, reverse links and blog-index entries |
 
 Outputs: `onpage/competitors/index.json`, `onpage/articles/index.json`, `articles/<slug>.md` (ready-to-publish draft),
 `articles/<slug>.json` (article data, `fact_check`, `json_ld`, research). Settings: `SEO_ONPAGE_ARTICLES` (0 = off),
 `SEO_CONTENT_COMPETITORS` (pages per topic, default 5), `SEO_CONTENT_FETCH` (0 = no network),
 `SEO_CONTENT_CACHE_DIR`, `SEO_CONTENT_CACHE_TTL_DAYS`, `SEO_ARTICLE_MAX_TOKENS`.
+
+Apply step (explicit, after review): `python -m seo_agents.onpage.content.article_publisher seo_reports/onpage/articles
+<app>` copies every `done` + fact-check `pass` article into a static-Markdown blog (`public/blog/<slug>.md`,
+`<slug>.ld.json`, `blog.json` entry with `description`, `tags`, `linkFrom`) and draws an SVG illustration for any image
+the app does not have yet. The app renders tag pages and "related articles" links from `blog.json`.
 
 ## Keyword research stage (`seo_agents.keyword_research`)
 

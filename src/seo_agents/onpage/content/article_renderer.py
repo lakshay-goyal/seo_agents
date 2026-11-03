@@ -23,10 +23,10 @@ def inline(text, numbering, sources):
     text = re.sub(r'</?code>', '`', text)
 
     def cite(match):
-        sid = match.group(1)
-        if sid not in numbering:
-            numbering[sid] = len(numbering) + 1
-        return f'[[{numbering[sid]}]]({sources.get(sid, {}).get("url", "#sources")})'
+        url = sources.get(match.group(1), {}).get('url', '#sources')   # one number per source URL, not per passage
+        if url not in numbering:
+            numbering[url] = len(numbering) + 1
+        return f'[[{numbering[url]}]]({url})'
     return CITATION.sub(cite, text).strip()
 
 
@@ -80,10 +80,15 @@ def to_markdown(article, sources, *, run_date, brand=None):
         body += ['', '## Frequently asked questions', '']
         for q in article['faq']:
             body += ['### ' + q['question'], '', inline(q['answer'], numbering, by_id), '']
+    if article.get('tag_links'):
+        body += ['', '**Tags:** ' + ' · '.join(f'[{t["tag"]}]({t["url"]})' for t in article['tag_links'])]
     if numbering:
         body += ['', '## Sources', '']
-        for sid, n in sorted(numbering.items(), key=lambda kv: kv[1]):
-            s = by_id.get(sid) or {}
+        by_url = {}
+        for item in sources:
+            by_url.setdefault(item['url'], item)
+        for url, n in sorted(numbering.items(), key=lambda kv: kv[1]):
+            s = by_url.get(url) or {'url': url}
             dated = f', published/updated {s["date"]}' if s.get('date') else ''
             body += [f'{n}. [{s.get("title") or s.get("url")}]({s.get("url")}){dated}, accessed {run_date}']
     front = {'title': article['title'], 'description': article['meta_description'], 'slug': article['slug'],

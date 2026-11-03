@@ -89,8 +89,10 @@ def market_from(country=None, location_code=None, language=None):
 
 
 def targets_from(targets=None, max_iterations=None):
+    """Explicit max_iterations > explicit targets > SEO_KEYWORD_MAX_ITERATIONS > ResearchTargets default."""
+    explicit = targets is not None
     targets = targets or ResearchTargets()
-    iterations = max_iterations or env_int('SEO_KEYWORD_MAX_ITERATIONS', 0)
+    iterations = max_iterations or (0 if explicit else env_int('SEO_KEYWORD_MAX_ITERATIONS', 0))
     return replace(targets, max_iterations=iterations) if iterations else targets
 
 

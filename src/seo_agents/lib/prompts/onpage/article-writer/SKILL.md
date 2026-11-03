@@ -15,7 +15,8 @@ order: 23
 - `title_inspiration`: ranking titles, their patterns (numbers, year, brackets, questions, power words), people_also_ask
 - `sources`: [{id: "S1", url, title, date, passage}] - the ONLY outside facts you may use; cite them as [S1]
 - `client_facts`: facts about the client (only these may be said about the brand); `assets`: client images you may use
-- `links`: site pages you may link to internally; `min_words`: the minimum body length
+- `links`: site pages you may link to internally; `min_words`: the minimum body length; `words_per_section`: write
+  about this many words in each of ~7 H2 sections (several paragraphs, a list or table, examples) to reach `min_words`
 
 ## Output (JSON only)
 {"title": "<SEO title tag, {{A.TITLE_CHARS}} chars, primary keyword + one click-through hook>",
@@ -63,6 +64,8 @@ order: 23
    passage and be cited as [S#] in the same paragraph, list item or table row/caption - only sources dated within the
    last 2 years may back a number. Claims about the brand only from `client_facts`. If a number would help but no
    source has it, leave it out. Small counts of your own structure ("3 steps") are fine.
+   Paraphrase every source in your own words: never reuse a run of 12+ words from a passage (copies are rejected). Put titles of books, tools or
+   studies in <em>...</em>.
 8. Internal links: inline `<a href="/path">descriptive anchor</a>` to at least {{A.INTERNAL_LINKS.min}} different
    `links[].url` pages where they genuinely help the reader, always including `brief.pillar_url` when set. No external
    inline links (cite sources with [S#] instead). `link_from`: {{A.LINK_FROM}} existing pages that should link to this

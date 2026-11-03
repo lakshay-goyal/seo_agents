@@ -12,6 +12,7 @@ import tempfile
 import unittest
 
 from seo_agents.onpage.content import article_rules as rules
+from seo_agents.onpage.content.article_publisher import publish
 from seo_agents.onpage.content.competitor_analyzer import analyze
 from seo_agents.onpage.content.competitor_fetcher import CompetitorFetcher
 from seo_agents.onpage.content.competitor_research import CompetitorResearch
@@ -310,12 +311,21 @@ class ArticleRuleTests(unittest.TestCase):
         claims = rules.check_facts('87% of deployments finish fast [S1].', 'p', **kw)
         self.assertEqual(claims, [{'number': '87%', 'source': 'S1'}])
         self.assertEqual(rules.check_facts('Follow these 5 steps in 2026.', 'p', **kw), [])   # small count + run year
+        self.assertEqual(rules.check_facts('First published in 2019 [S2].', 'p', **{**kw, 'sources': [
+            {**sources[1], 'passage': 'The book was first published in 2019.'}]}), [{'number': '2019', 'source': 'S2'}])
         for text, why in (('87% of deployments finish fast.', 'not backed'), ('45% of teams deploy manually [S2].', 'fresher'),
                           ('30% of teams use previews [S3].', 'unknown'), ('Cited [S9].', 'not in sources'),
                           ('By 2030 everyone deploys.', 'future year'), ('Over 300 teams agree [S1].', 'not backed')):
             with self.assertRaises(ValueError, msg=text) as caught:
                 rules.check_facts(text, 'p', **kw)
             self.assertIn(why, str(caught.exception), text)
+
+    def test_copy_guard_allows_quoted_titles(self):
+        guard = rules.shingles('The 12 Week Year Get More Done in 12 Weeks Than Others Do in 12 Months by Brian Moran', 12)
+        rules.check_overlap('I read <em>The 12 Week Year Get More Done in 12 Weeks Than Others Do in 12 Months</em> by Brian '
+                            'Moran last spring.', guard, 'p')
+        with self.assertRaises(ValueError):
+            rules.check_overlap('The 12 Week Year Get More Done in 12 Weeks Than Others Do in 12 Months by Brian Moran.', guard, 'p')
 
     def test_skills_render_article_limits(self):
         system, meta = load_skill('article-writer')
@@ -390,6 +400,37 @@ class ContentStudioRunTest(unittest.TestCase):
         self.assertIn(f'[[1]]({COMP_A})', md)
         self.assertIn('## Sources', md)
         self.assertNotIn('[S', md)
+        self.assertIn('**Tags:** [react](/blog/tags/react)', md)
+
+    def test_publisher_applies_articles_tags_links_and_images_to_the_app(self):
+        app = Path(self.res['tmp']) / 'app'
+        (app / 'public' / 'blog').mkdir(parents=True)
+        (app / 'public' / 'blog' / 'blog.json').write_text(json.dumps({'HTML': [{'title': 'Old', 'link': '/blog/old', 'date': 'July 1, 2023'}]}))
+        report = publish(self.out / 'articles', app)
+        self.assertEqual(report['applied'], ['/blog/deploy-react-app-vercel'])
+        self.assertEqual(report['skipped'][0]['slug'], 'react-deployment-checklist')
+        catalog = json.loads((app / 'public' / 'blog' / 'blog.json').read_text())
+        self.assertEqual(catalog['HTML'][0]['link'], '/blog/old')               # existing posts are kept
+        entry = catalog['Guides'][0]
+        self.assertEqual(entry['tags'], ['react', 'vercel', 'deployment', 'web hosting'])
+        self.assertEqual(entry['linkFrom'], [{'url': '/blog/deploying-your-site-with-vercel', 'anchor': 'deploy a React app to Vercel'}])
+        md = (app / 'public' / 'blog' / 'deploy-react-app-vercel.md').read_text()
+        self.assertIn('/images/vercel-deployment-history-rollback.svg', md)
+        svg = (app / 'public' / 'images' / 'vercel-deployment-history-rollback.svg').read_text()
+        self.assertIn('aria-label="Vercel deployment history list with the rollback button highlighted"', svg)
+        self.assertIn('#react', svg)
+        self.assertTrue((app / 'public' / 'blog' / 'deploy-react-app-vercel.ld.json').exists())
+        publish(self.out / 'articles', app)                                    # idempotent: no duplicate entries
+        self.assertEqual(len(json.loads((app / 'public' / 'blog' / 'blog.json').read_text())['Guides']), 1)
+
+    def test_internal_links_and_tag_pages_for_the_application(self):
+        index = json.loads((self.out / 'articles' / 'index.json').read_text())
+        self.assertEqual(index['tags']['web hosting']['url'], '/blog/tags/web-hosting')
+        changes = index['site_changes']
+        reverse = [c for c in changes if c['type'] == 'links.new' and c['page'] == '/blog/deploying-your-site-with-vercel']
+        self.assertEqual(reverse[0]['href'], '/blog/deploy-react-app-vercel')
+        self.assertTrue(any(c['type'] == 'links.new' and c['page'] == '/blog' for c in changes))   # blog index entry
+        self.assertEqual(sum(1 for c in changes if c['type'] == 'site.tag_page'), 4)
 
 
 if __name__ == '__main__':

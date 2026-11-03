@@ -74,6 +74,7 @@ TOOL_CLASSES = {
     'article_fact_checker': 'seo_agents.onpage.content.article_fact_check:ArticleFactChecker',
     'article_renderer': 'seo_agents.onpage.content.article_renderer:ArticleRenderer',
     'article_studio': 'seo_agents.onpage.content.content_studio:ArticleStudio',
+    'article_publisher': 'seo_agents.onpage.content.article_publisher:ArticlePublisher',
     # ---- keyword research stage (seo_agents/keyword_research)
     'keyword_page_selector': f'{_KR}.page_selection:PageSelector',
     'keyword_research_toolkit': f'{_KR}.providers.research_toolkit:ProviderResearchToolkit',
@@ -161,6 +162,8 @@ AGENT_TOOLS = {
     'onpage.articles': ('article_studio', 'article_planner', 'competitor_research', 'article_writer', 'content_writer',
                         'article_rules', 'article_fact_checker', 'article_renderer'),
     'onpage.write': ('onpage_output_writer',),
+    # explicit, human-run apply step (not a workflow node): approved articles -> static-Markdown blog in the client app
+    'onpage.publish_articles': ('article_publisher',),
 
     # ---- keyword research workflow (keyword_research/keyword_research.py), in execution order
     'keyword_research.load': ('keyword_page_selector', 'exploration_reports', 'page_context', 'keyword_research_toolkit',

@@ -17,7 +17,14 @@ from seo_agents.onpage.validation import content_validators as v
 
 FORMATS = {'guide', 'how-to', 'listicle', 'comparison', 'explainer', 'checklist', 'case-study', 'glossary'}
 INTENTS = {'informational', 'commercial', 'transactional'}
-PLAN_SCHEMA = {'type': 'object', 'required': ['articles']}
+_STR = {'type': 'string'}
+_STRS = {'type': 'array', 'items': _STR}
+PLAN_SCHEMA = {'type': 'object', 'required': ['articles'], 'properties': {'articles': {'type': 'array', 'items': {
+    'type': 'object',
+    'required': ['topic_ids', 'primary_keyword', 'questions', 'search_intent', 'format', 'angle', 'working_title', 'slug'],
+    'properties': {'topic_ids': _STRS, 'primary_keyword': _STR, 'secondary_keywords': _STRS, 'questions': _STRS,
+                   'search_intent': _STR, 'format': _STR, 'angle': _STR, 'audience': _STR, 'working_title': _STR,
+                   'slug': _STR, 'pillar_url': {'type': ['string', 'null']}}}}}}
 POOL_LIMIT = 80
 
 

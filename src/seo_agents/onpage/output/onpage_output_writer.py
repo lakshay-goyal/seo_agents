@@ -34,7 +34,9 @@ Generated from the exploration JSON only; no client source was read or changed. 
 - `competitors/index.json` - competitor content research: for every page, the ranking pages fetched (title, H1,
   outline, word count, formats, dates; no copied body text), their shared patterns (depth, formats, common
   sub-topics, title and URL habits, freshness) and the SERP / People Also Ask used.
-- `articles/index.json` - the content studio plan: topic pool (user demand), one brief per article, status.
+- `articles/index.json` - the content studio plan: topic pool (user demand), one brief per article, status, `tags`
+  (tag -> tag page URL + articles) and `site_changes` for the existing application: tag pages, internal links from
+  existing pages to each article (`link_from`), and the blog index entry.
 - `articles/<slug>.md` - a ready-to-publish article draft (frontmatter: SEO title, meta description, URL, tags,
   category, images + alt; body: H1, last-updated date, answer-first intro, key takeaways, sections with lists,
   tables, Mermaid diagrams and images, FAQ, sources). `<!-- IMAGE TO CREATE -->` marks images to produce.
@@ -184,9 +186,12 @@ def write_research(out, state, files):
     if studio:
         dump(out / 'articles' / 'index.json', {'schema': SCHEMA, 'status': studio.get('status'), 'reason': studio.get('reason'),
                                                'stage': studio.get('stage'), 'errors': studio.get('errors'),
-                                               'plan': studio.get('plan'), 'pool': studio.get('pool'), 'articles': rows})
+                                               'plan': studio.get('plan'), 'pool': studio.get('pool'), 'articles': rows,
+                                               'tags': studio.get('tags'), 'site_changes': studio.get('site_changes')})
         files.append('articles/index.json')
     return competitors_file, {'status': studio.get('status'), 'reason': studio.get('reason'), 'rows': rows} if studio else None
+
+
 
 
 class OnpageOutputWriter:
