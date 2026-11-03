@@ -1,0 +1,81 @@
+{
+  "framework": "astro",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "title": "Stargazer Observatory",
+        "description": "Night sky tours every weekend.",
+        "h1": [
+          "See the stars"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/blog",
+            "Blog"
+          ]
+        ],
+        "images": [
+          [
+            "/telescope.jpg",
+            "Telescope at dusk"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "src/pages/index.astro",
+          "line": 4
+        },
+        "h1": {
+          "file": "src/pages/index.astro",
+          "line": 5
+        }
+      }
+    },
+    {
+      "url": "/blog",
+      "fields": {
+        "title": "Blog | Stargazer",
+        "h1": [
+          "Blog"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/blog",
+            "Blog"
+          ],
+          [
+            "/blog/first-light",
+            "First light"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "src/pages/blog/index.astro",
+          "line": 4
+        },
+        "h1": {
+          "file": "src/pages/blog/index.astro",
+          "line": 5
+        }
+      }
+    },
+    {
+      "url": "/blog/[slug]",
+      "alt_urls": [
+        "/blog/first-light"
+      ],
+      "fields": {}
+    }
+  ]
+}

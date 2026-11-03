@@ -1,0 +1,16 @@
+{
+ "file_inventory": [
+  {
+   "path": "vercel.json"
+  },
+  {
+   "path": "public/logo.png"
+  },
+  {
+   "path": "public/Image/UnlovableWeb.png"
+  },
+  {
+   "path": "public/Image/FozoApp.png"
+  }
+ ]
+}

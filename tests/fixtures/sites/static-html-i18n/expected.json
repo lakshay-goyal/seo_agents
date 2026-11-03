@@ -1,0 +1,111 @@
+{
+  "framework": "static-html",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "title": "Atlas Maps",
+        "description": "Hand-drawn maps of European cities.",
+        "canonical": "https://atlas.test/",
+        "h1": [
+          "Maps worth framing"
+        ],
+        "headings": [
+          [
+            1,
+            "Maps worth framing"
+          ],
+          [
+            2,
+            "New this month"
+          ]
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/about.html",
+            "About"
+          ],
+          [
+            "/fr/",
+            "Français"
+          ]
+        ],
+        "images": [
+          [
+            "/img/lisbon.jpg",
+            "Map of Lisbon"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "index.html",
+          "line": 5
+        },
+        "h1": {
+          "file": "index.html",
+          "line": 18
+        }
+      }
+    },
+    {
+      "url": "/about",
+      "alt_urls": [
+        "/about.html"
+      ],
+      "fields": {
+        "title": "About | Atlas Maps",
+        "description": "The illustrators behind Atlas.",
+        "h1": [
+          "About us"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "about.html",
+          "line": 4
+        },
+        "h1": {
+          "file": "about.html",
+          "line": 12
+        }
+      }
+    },
+    {
+      "url": "/fr",
+      "fields": {
+        "title": "Atlas Cartes",
+        "canonical": "https://atlas.test/fr/",
+        "h1": [
+          "Des cartes à encadrer"
+        ],
+        "links": [
+          [
+            "/",
+            "English"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "fr/index.html",
+          "line": 4
+        },
+        "h1": {
+          "file": "fr/index.html",
+          "line": 11
+        }
+      }
+    }
+  ]
+}

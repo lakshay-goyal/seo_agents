@@ -1,0 +1,102 @@
+{
+  "$schema": "./schema.json",
+  "name": "client-diagnostics",
+  "signals": [
+    {
+      "id": "effect-fetch",
+      "label": "Data fetched after mount (effect/mounted hook)",
+      "regex": "(?:\\b(?:useEffect|useLayoutEffect|onMounted|onMount)\\s*\\(|\\b(?:mounted|ngOnInit|componentDidMount)\\s*\\(\\s*\\)\\s*\\{)[\\s\\S]{0,300}?\\b(?:fetch|axios|\\$http|httpClient|\\.get)\\s*[(<]",
+      "block": true,
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "useEffect(() => { fetch('/api') })"
+        ],
+        "no_match": [
+          "useEffect(() => { setOpen(true) })"
+        ]
+      }
+    },
+    {
+      "id": "runtime-head",
+      "label": "Runtime head mutation",
+      "regex": "document\\.title\\s*=|document\\.head\\.appendChild|setAttribute\\s*\\(\\s*['\"]content['\"]",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "document.title = 'x'"
+        ],
+        "no_match": [
+          "const title = 'x'"
+        ]
+      }
+    },
+    {
+      "id": "hash-router",
+      "label": "Hash-based routing",
+      "regex": "createHashRouter|HashRouter|createWebHashHistory|useHash\\s*:\\s*true|withHashLocation|mode\\s*:\\s*['\"]hash['\"]",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "createHashRouter(",
+          "mode: 'hash'"
+        ],
+        "no_match": [
+          "createBrowserRouter("
+        ]
+      }
+    },
+    {
+      "id": "js-navigation",
+      "label": "Navigation via JS click handler instead of link",
+      "regex": "onClick\\s*=\\s*\\{[^}]*(?:navigate|router\\.push|history\\.push|location\\.href)|@click\\s*=\\s*['\\\"][^'\\\"]*(?:router\\.push|\\$router)|on:click=\\{[^}]*goto|\\(click\\)\\s*=\\s*['\\\"][^'\\\"]*router\\.navigate",
+      "languages": [
+        "@templates"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "onClick={() => navigate('/x')}",
+          "(click)=\"router.navigate(['/x'])\""
+        ],
+        "no_match": [
+          "<Link to=\"/x\">"
+        ]
+      }
+    },
+    {
+      "id": "js-only-anchor",
+      "label": "<a> without a crawlable href (missing, \"#\" or javascript:)",
+      "regex": "<a\\b(?![^>]*\\bhref\\s*=\\s*(?:\\{|[\"'](?!#[\"']|javascript:)))[^>]*>",
+      "precision": "medium",
+      "languages": [
+        "@templates"
+      ],
+      "exclude_comments": true,
+      "examples": {
+        "match": [
+          "<a onClick={go}>Go</a>",
+          "<a href=\"#\">Menu</a>",
+          "<a href=\"javascript:void(0)\">x</a>"
+        ],
+        "no_match": [
+          "<a href=\"/about\">About</a>",
+          "<a href={url}>x</a>",
+          "<a href=\"#section-2\">x</a>"
+        ]
+      }
+    }
+  ],
+  "gaps": [],
+  "framework_agnostic": true,
+  "execution_hint": "Move content data loading to the server/build step (loader, getStaticProps, server component, load function), replace JS-only navigation with real links, use history-mode routing, set head tags through the framework head API rather than document.title, and render random/date values only after hydration."
+}

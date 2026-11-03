@@ -1,0 +1,26 @@
+{
+  "framework": "express",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Bistro home"
+        ],
+        "title": "Bistro home"
+      }
+    },
+    {
+      "url": "/menu",
+      "fields": {
+        "h1": [
+          "Bistro menu"
+        ]
+      }
+    },
+    {
+      "url": "/menu/:dish",
+      "fields": {}
+    }
+  ]
+}

@@ -15,14 +15,13 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import PrivateAttr
 
-from seo_agents.exploration.checks.agents.extractor import ExtractionFailed, ExtractionPlan, repository_tools, run_exploration_agent
-from seo_agents.exploration.checks.agents.handoff import PRIOR_WORK, build_handoff
-from seo_agents.exploration.checks.agents.repository import snapshot_repository
-from seo_agents.exploration.checks.agents.verification import ObservationValidationError, execute_script, validate_observations, verify_and_extract
-from seo_agents.exploration.checks.graph import CHECKS, ExplorationIncomplete, run_onpage_graph, validate_artifact_links
-from seo_agents.exploration.checks.json_analysis import analyze_reports
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
-from seo_agents.sandbox.host import sync_sources
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent import ExtractionFailed, ExtractionPlan, repository_tools, run_exploration_agent
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.prior_report_handoff import PRIOR_WORK, build_handoff
+from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification import ObservationValidationError, execute_script, validate_observations, verify_and_extract
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.legacy_extraction_workflow import CATEGORIES as CHECKS, ExplorationIncomplete, run_legacy_extraction, validate_artifact_links
+from seo_agents.repo_analysis.tools.repository.repository_constants import REPORT_FILES
+from seo_agents.sandbox.host_pipeline import sync_sources
 
 
 def generated_script(category):
@@ -159,32 +158,47 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertIn('DONE agent content: verify and extract', output)
         self.assertNotIn('Observed heading', output)  # Source text is not a progress message.
 
-    def test_graph_emits_each_report_before_starting_the_next_agent(self):
+    def test_graph_runs_agents_on_dependency_dag_after_their_prerequisites(self):
+        from seo_agents.repo_analysis.agents.legacy_llm_extractors.legacy_extraction_workflow import DEPENDENCIES
+        import threading
         terminal = io.StringIO()
-        called = []
+        called, lock = [], threading.Lock()
         reports = {key: execute_script(generated_script(key), self.snapshot) for key in CHECKS}
 
         def extract(category, **kwargs):
-            if called:
-                self.assertIn('report ready: ' + REPORT_FILES[called[-1]], terminal.getvalue())
-                self.assertIn('on-page progress: ' + str(len(called)) + '/7', terminal.getvalue())
-            called.append(category)
-            self.assertEqual(tuple(called), CHECKS[:len(called)])
+            with lock:
+                for prerequisite in DEPENDENCIES[category]:
+                    self.assertIn(prerequisite, called)
+                    self.assertIn('report ready: ' + REPORT_FILES[prerequisite], terminal.getvalue())
+                called.append(category)
             self.assertEqual(set(kwargs['handoff']), set(PRIOR_WORK[category]))
             for key, entry in kwargs['handoff'].items():
                 self.assertIs(entry['report'], reports[key])
+            self.assertIn('element_index', kwargs)
+            if category == 'urls':
+                self.assertEqual(kwargs['route_candidates'][0]['template'], 'index.html')
             if category == 'content':
                 self.assertIn('internal_links', kwargs['handoff'])
                 self.assertIn('media', kwargs['handoff'])
             return {'report': reports[category], 'run': {'verification': 'passed'}}
 
-        with patch('seo_agents.exploration.checks.graph.run_exploration_agent', side_effect=extract), redirect_stdout(terminal):
-            run_onpage_graph(self.repo, mode='agent')
-        self.assertEqual(tuple(called), CHECKS)
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.run_exploration_agent', side_effect=extract), redirect_stdout(terminal):
+            run_legacy_extraction(self.repo, mode='agent')
+        self.assertEqual(set(called), set(CHECKS))
+        self.assertEqual((called[0], called[-2], called[-1]), ('urls', 'content', 'eeat'))
         output = terminal.getvalue()
         self.assertIn('on-page progress: 7/7', output)
         self.assertIn('agent content: page "/" completed', output)
         self.assertIn('DONE cross-report validation', output)
+
+    def test_graph_reuses_a_precomputed_snapshot_instead_of_capturing_again(self):
+        reports = {key: execute_script(generated_script(key), self.snapshot) for key in CHECKS}
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.run_exploration_agent',
+                   side_effect=lambda category, **kwargs: {'report': reports[category], 'run': {}}), patch(
+                'seo_agents.repo_analysis.tools.repository.repository_snapshot.snapshot_repository') as capture, redirect_stdout(io.StringIO()):
+            state = run_legacy_extraction(self.repo, mode='agent', snapshot=self.snapshot)
+        capture.assert_not_called()
+        self.assertIs(state['snapshot'], self.snapshot)
 
     def test_agent_can_consult_prior_evidence_then_independently_inspect_source(self):
         links = execute_script(generated_script('internal_links'), self.snapshot)
@@ -242,10 +256,14 @@ class ExplorationAgentTests(unittest.TestCase):
                 elif self._calls == 2:
                     name, args = 'ExtractionPlan', {'framework': 'html', 'notes': 'data-row reference', 'source': invalid}
                 elif self._calls == 3:
+                    # Repairs get a small fresh tool budget (read/grep/draft tools and prior reports).
                     test.assertIn('query_prior_report', self._available)
-                    test.assertNotIn('read_source', self._available)
-                    test.assertNotIn('search_sources', self._available)
+                    test.assertIn('read', self._available)
+                    test.assertIn('edit_file', self._available)
+                    test.assertIn('test_script', self._available)
                     test.assertTrue(any('/pages/0/link_refs/0' in str(m.content) for m in messages))
+                    # Fresh compact repair turn: the discovery transcript is not resent.
+                    test.assertFalse(any(isinstance(m, ToolMessage) and m.name == 'read_source' for m in messages))
                     name, args = 'query_prior_report', {'category': 'internal_links', 'url': '/', 'field': 'links'}
                 else:
                     self._saw_prior = any(isinstance(m, ToolMessage) and m.name == 'query_prior_report' and 'source_id' in m.content for m in messages)
@@ -257,7 +275,7 @@ class ExplorationAgentTests(unittest.TestCase):
         result = run_exploration_agent('content', snapshot=self.snapshot, model=model, handoff=handoff, max_discovery_rounds=1)
         self.assertTrue(model._saw_prior)
         self.assertEqual(result['run']['attempts'], 2)
-        self.assertEqual(result['run']['metrics']['repair_context_model_calls'], 2)
+        self.assertEqual(result['run']['metrics']['repair_model_calls'], 2)
         self.assertEqual(result['report']['pages'][0]['link_refs'][0]['source_id'], reports['internal_links']['pages'][0]['links'][0]['source_id'])
         self.assertEqual(result['report']['pages'][0]['blocks'][0]['text'], 'Observed heading')
 
@@ -284,7 +302,7 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertTrue(any('references remain unresolved' in limitation for limitation in page['coverage']['limitations']))
         self.assertEqual(result['run']['attempts'], 2)
 
-    def test_persistent_content_mismatch_stops_before_metadata_or_eeat(self):
+    def test_persistent_content_mismatch_stops_before_eeat(self):
         called = []
 
         def factory(**kwargs):
@@ -298,17 +316,20 @@ class ExplorationAgentTests(unittest.TestCase):
             agent.invoke.return_value = {'structured_response': ExtractionPlan('html', 'entry', source)}
             return agent
 
-        with patch('seo_agents.exploration.checks.agents.extractor.create_agent', side_effect=factory), patch(
-                'seo_agents.exploration.checks.agents.extractor.get_chat_model', return_value=Mock()):
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.create_agent', side_effect=factory), patch(
+                'seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.get_chat_model', return_value=Mock()):
             with self.assertRaises(ExplorationIncomplete) as caught:
-                run_onpage_graph(self.repo, mode='agent')
-        self.assertEqual(called, ['urls', 'page_structure', 'internal_links', 'media', 'content'])
-        self.assertEqual(caught.exception.checkpoint['checkpoint']['completed'], ['urls', 'page_structure', 'internal_links', 'media'])
+                run_legacy_extraction(self.repo, mode='agent')
+        self.assertEqual(called[0], 'urls')
+        self.assertEqual(set(called), {'urls', 'page_structure', 'internal_links', 'media', 'metadata', 'content'})
+        self.assertEqual(called[-1], 'content')  # eeat never starts.
+        self.assertEqual(caught.exception.checkpoint['checkpoint']['completed'],
+                         ['urls', 'page_structure', 'internal_links', 'media', 'metadata'])
         self.assertIn('Unmatched cross-report reference', caught.exception.checkpoint['agent_runs']['content']['previous_errors'][0])
 
     def test_invalid_discovery_budgets_are_rejected_before_model_use(self):
         for value in (0, -1, 101, '2'):
-            with self.subTest(value=value), patch('seo_agents.exploration.checks.agents.extractor.get_chat_model') as model:
+            with self.subTest(value=value), patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.get_chat_model') as model:
                 with self.assertRaises(ValueError):
                     run_exploration_agent('content', snapshot=self.snapshot, max_discovery_rounds=value)
                 model.assert_not_called()
@@ -330,7 +351,7 @@ class ExplorationAgentTests(unittest.TestCase):
         def factory(**kwargs):
             next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
             return fake
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
             result = run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
         self.assertEqual(worker.call_count, 2)  # Only the accepted script's trial and extraction.
         self.assertEqual(result['run']['attempts'], 2)
@@ -500,7 +521,7 @@ class ExplorationAgentTests(unittest.TestCase):
         def factory(**kwargs):
             next(t for t in kwargs['tools'] if t.name == 'read_source').invoke({'path': 'index.html'})
             return agent
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification.subprocess.run', wraps=__import__('subprocess').run) as worker:
             with self.assertRaises(ExtractionFailed) as caught:
                 run_exploration_agent('content', snapshot=self.snapshot, model=Mock(), agent_factory=factory)
         self.assertEqual(worker.call_count, 1)
@@ -514,10 +535,17 @@ class ExplorationAgentTests(unittest.TestCase):
         failure = ExtractionFailed('page_structure', {'category': 'page_structure', 'verification': 'failed',
             'script': 'rejected script', 'previous_errors': ['bad section']})
         checkpoints = []
-        with patch('seo_agents.exploration.checks.graph.run_exploration_agent',
-                   side_effect=[{'report': urls, 'run': {'verification': 'passed'}}, failure]):
+        def extract(category, **kwargs):
+            if category == 'urls':
+                return {'report': urls, 'run': {'verification': 'passed'}}
+            if category == 'page_structure':
+                raise failure
+            __import__('time').sleep(0.3)  # Parallel siblings finish after the failure is raised.
+            return {'report': execute_script(generated_script(category), self.snapshot), 'run': {'verification': 'passed'}}
+
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.run_exploration_agent', side_effect=extract):
             with self.assertRaises(ExplorationIncomplete) as caught:
-                run_onpage_graph(self.repo, mode='agent', on_checkpoint=checkpoints.append)
+                run_legacy_extraction(self.repo, mode='agent', on_checkpoint=checkpoints.append)
         checkpoint = caught.exception.checkpoint
         self.assertEqual(checkpoint['checkpoint']['completed'], ['urls'])
         self.assertEqual(set(checkpoint['artifacts']), {'urls'})
@@ -551,14 +579,14 @@ class ExplorationAgentTests(unittest.TestCase):
                   'files.clear()', '(lambda: 1)()']
         for body in bodies:
             source = body + '\ndef extract(files, assets):\n    return {}' if body.startswith('import') else 'def extract(files, assets):\n    ' + body
-            with self.subTest(body=body), patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+            with self.subTest(body=body), patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification.subprocess.run') as worker:
                 with self.assertRaises(ValueError):
                     execute_script(source, self.snapshot)
                 worker.assert_not_called()
 
     def test_policy_reports_multiple_violation_kinds_in_one_bounded_repair(self):
         source = 'VALUE = 1\ndef extract(files, assets):\n    try:\n        private = [_ for _ in []]\n        return open("private")\n    except ValueError:\n        return {}'
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification.subprocess.run') as worker:
             with self.assertRaises(ValueError) as caught:
                 execute_script(source, self.snapshot)
         message = str(caught.exception)
@@ -571,7 +599,7 @@ class ExplorationAgentTests(unittest.TestCase):
         source = 'def extract(files, assets):\n    def title(text):\n        return parse_html(text)[0]["text"]\n    return {"title": title(files["index.html"])}'
         self.assertEqual(execute_script(source, self.snapshot)['title'], 'Example')
         unsafe = source.replace('return parse_html(text)[0]["text"]', 'return open(text)')
-        with patch('seo_agents.exploration.checks.agents.verification.subprocess.run') as worker:
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification.subprocess.run') as worker:
             with self.assertRaisesRegex(ValueError, 'Unavailable function: open'):
                 execute_script(unsafe, self.snapshot)
         worker.assert_not_called()
@@ -631,7 +659,7 @@ class ExplorationAgentTests(unittest.TestCase):
         self.assertEqual(result['last_parts'], ['a:b', ':', 'c'])
 
     def test_agent_receives_the_workers_method_allowlist(self):
-        from seo_agents.exploration.checks.agents.script_policy import METHODS
+        from seo_agents.repo_analysis.agents.legacy_llm_extractors.sandboxed_script.script_policy import METHODS
         captured = {}
 
         def factory(**kwargs):
@@ -663,7 +691,7 @@ class ExplorationAgentTests(unittest.TestCase):
         valid = execute_script(generated_script('content'), self.snapshot)
         changed = copy.deepcopy(valid)
         changed['extraction']['changed'] = True
-        with patch('seo_agents.exploration.checks.agents.verification.execute_script', side_effect=[valid, changed]):
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification.execute_script', side_effect=[valid, changed]):
             with self.assertRaisesRegex(ValueError, 'changed between'):
                 verify_and_extract('content', generated_script('content'), self.snapshot)
 
@@ -690,16 +718,15 @@ class ExplorationAgentTests(unittest.TestCase):
             agent.invoke.return_value = {'structured_response': ExtractionPlan('html', 'entry verified', generated_script(category))}
             return agent
         before = sorted(p.relative_to(self.repo).as_posix() for p in self.repo.rglob('*'))
-        with patch('seo_agents.exploration.checks.agents.extractor.create_agent', side_effect=factory), patch(
-                'seo_agents.exploration.checks.agents.extractor.get_chat_model', return_value=Mock()), patch.object(
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.create_agent', side_effect=factory), patch(
+                'seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.get_chat_model', return_value=Mock()), patch.object(
                 Path, 'write_text', side_effect=AssertionError('analysis wrote source')), patch.object(
                 Path, 'write_bytes', side_effect=AssertionError('analysis wrote bytes')):
-            state = run_onpage_graph(str(self.repo), mode='agent')
+            state = run_legacy_extraction(str(self.repo), mode='agent')
         self.assertEqual(set(state['artifacts']), set(REPORT_FILES))
         self.assertEqual(set(state['agent_runs']), set(REPORT_FILES))
         self.assertEqual(len(set(prompts)), 7)
         self.assertEqual(before, sorted(p.relative_to(self.repo).as_posix() for p in self.repo.rglob('*')))
-        self.assertIn('findings', analyze_reports(state['artifacts']))
         state['artifacts']['internal_links']['pages'][0]['links'] = []
         with self.assertRaisesRegex(ValueError, 'Unmatched cross-report'):
             validate_artifact_links(state)
@@ -709,7 +736,10 @@ class ExplorationAgentTests(unittest.TestCase):
         sync_sources(sandbox)
         paths = [call.args[0] for call in sandbox.write.call_args_list]
         self.assertTrue(any(p.endswith('/skills/content/SKILL.md') for p in paths))
-        self.assertTrue(any(p.endswith('/agents/script_worker.py') for p in paths))
+        self.assertTrue(any(p.endswith('/sandboxed_script/script_worker.py') for p in paths))
+        self.assertTrue(any(p.endswith('/signal_profiles/skills/routes/SKILL.md') for p in paths))
+        self.assertTrue(any(p.endswith('/pyproject.toml') for p in paths))
+        self.assertFalse(any('__pycache__' in p for p in paths))
 
 
 if __name__ == '__main__':

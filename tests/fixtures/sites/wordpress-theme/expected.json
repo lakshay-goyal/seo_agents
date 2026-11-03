@@ -1,0 +1,71 @@
+{
+  "framework": "wordpress-theme",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Welcome to Maple Bakery"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/menu",
+            "Our menu"
+          ],
+          [
+            "/privacy-policy",
+            "Privacy policy"
+          ]
+        ]
+      },
+      "attribution": {
+        "h1": {
+          "file": "front-page.php",
+          "line": 3
+        }
+      }
+    },
+    {
+      "url": "/:post",
+      "fields": {
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/menu",
+            "Our menu"
+          ],
+          [
+            "/privacy-policy",
+            "Privacy policy"
+          ]
+        ]
+      }
+    },
+    {
+      "url": "/:page",
+      "fields": {
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/menu",
+            "Our menu"
+          ],
+          [
+            "/privacy-policy",
+            "Privacy policy"
+          ]
+        ]
+      }
+    }
+  ]
+}

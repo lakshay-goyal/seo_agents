@@ -1,0 +1,82 @@
+{
+  "framework": "next",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "title": "Northwind Coffee",
+        "description": "Small-batch coffee roasted weekly.",
+        "canonical": "https://northwind.test/",
+        "h1": [
+          "Fresh coffee, delivered"
+        ],
+        "headings": [
+          [
+            1,
+            "Fresh coffee, delivered"
+          ]
+        ],
+        "links": [
+          [
+            "/about",
+            "About us"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "pages/index.js",
+          "line": 8
+        },
+        "h1": {
+          "file": "pages/index.js",
+          "line": 12
+        }
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "title": "About | Northwind",
+        "description": "Meet the roasters behind Northwind.",
+        "h1": [
+          "Our story"
+        ],
+        "headings": [
+          [
+            1,
+            "Our story"
+          ],
+          [
+            2,
+            "The roastery"
+          ]
+        ],
+        "images": [
+          [
+            "/roastery.jpg",
+            "Coffee roaster in our workshop"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "pages/about.js",
+          "line": 7
+        },
+        "h1": {
+          "file": "pages/about.js",
+          "line": 10
+        }
+      }
+    },
+    {
+      "url": "/products/[id]",
+      "fields": {
+        "h1": [
+          "Product details"
+        ]
+      }
+    }
+  ]
+}

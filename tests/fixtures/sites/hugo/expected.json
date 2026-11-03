@@ -1,0 +1,94 @@
+{
+  "framework": "hugo",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Trail running club"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/about",
+            "About"
+          ],
+          [
+            "/posts",
+            "Posts"
+          ]
+        ]
+      },
+      "attribution": {
+        "h1": {
+          "file": "layouts/index.html",
+          "line": 2
+        }
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "description": "Who we are and when we run.",
+        "headings": [
+          [
+            1,
+            "About"
+          ],
+          [
+            2,
+            "Who we are"
+          ]
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/about",
+            "About"
+          ],
+          [
+            "/posts",
+            "Posts"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "content/about.md",
+          "line": 2
+        }
+      }
+    },
+    {
+      "url": "/posts",
+      "fields": {}
+    },
+    {
+      "url": "/posts/spring-race",
+      "fields": {
+        "headings": [
+          [
+            1,
+            "Spring race recap"
+          ],
+          [
+            2,
+            "Results"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "content/posts/spring-race.md",
+          "line": 2
+        }
+      }
+    }
+  ]
+}

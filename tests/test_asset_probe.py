@@ -11,7 +11,7 @@ import zlib
 # Load only the standalone helper, without running package initialization.
 _SPEC = importlib.util.spec_from_file_location(
     'asset_probe', Path(__file__).resolve().parents[1]
-    / 'src/seo_agents/exploration/checks/tools/asset_probe.py')
+    / 'src/seo_agents/repo_analysis/tools/content/asset_probe.py')
 probe_module = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(probe_module)
 probe_asset = probe_module.probe_asset

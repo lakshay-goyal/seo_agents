@@ -1,0 +1,189 @@
+{
+  "$schema": "./schema.json",
+  "name": "local-business-presence",
+  "signals": [
+    {
+      "id": "local-schema",
+      "label": "LocalBusiness-type schema",
+      "regex": "['\"]@type['\"]\\s*:\\s*['\"](LocalBusiness|Restaurant|Store|MedicalBusiness|ProfessionalService|LegalService|Dentist|AutoRepair|HomeAndConstructionBusiness|FinancialService|HealthAndBeautyBusiness|LodgingBusiness|FoodEstablishment)['\"]",
+      "value_group": 1,
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "\"@type\": \"LocalBusiness\"",
+          "\"@type\": \"Restaurant\""
+        ],
+        "no_match": [
+          "\"@type\": \"Organization\""
+        ]
+      }
+    },
+    {
+      "id": "postal-address",
+      "label": "PostalAddress / address fields",
+      "regex": "PostalAddress|streetAddress|addressLocality|postalCode|<address\\b",
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "streetAddress",
+          "<address>"
+        ],
+        "no_match": [
+          "emailAddress"
+        ]
+      }
+    },
+    {
+      "id": "phone",
+      "label": "Phone number",
+      "regex": "tel:\\+?[\\d\\s().-]{6,}|['\"]telephone['\"]\\s*:\\s*['\"]([^'\"]{6,})['\"]|(?<![\\w.\\-/+])\\+\\d{1,3}[\\s.-]\\(?\\d{2,4}\\)?[\\s.-]\\d{3,4}[\\s.-]?\\d{3,4}(?![\\w.\\-/])|(?<![\\w.\\-/])\\(\\d{3}\\)\\s?\\d{3}-\\d{4}(?![\\w.\\-/])",
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "exclude_comments": true,
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "tel:+1-555-123-4567",
+          "+44 20 7946 0958",
+          "(555) 123-4567",
+          "\"telephone\": \"+1 555 123 4567\""
+        ],
+        "no_match": [
+          "version 1.2.3456.7890",
+          "id=+12345678901234",
+          "1.0.0-beta.12345"
+        ]
+      }
+    },
+    {
+      "id": "email",
+      "label": "Contact email",
+      "regex": "mailto:([\\w.+-]+@[\\w-]+\\.[\\w.]+)|['\"]email['\"]\\s*:\\s*['\"](?:mailto:)?([\\w.+-]+@[\\w-]+\\.[\\w.]+)",
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "mailto:hi@acme.com"
+        ],
+        "no_match": [
+          "email: string"
+        ]
+      }
+    },
+    {
+      "id": "map-embed",
+      "label": "Map embed / directions link",
+      "regex": "google\\.com/maps|maps\\.google|goo\\.gl/maps|maps\\.app\\.goo\\.gl|mapbox|leaflet|openstreetmap",
+      "ignore_case": true,
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "https://www.google.com/maps/embed?pb=x",
+          "maps.app.goo.gl/abc"
+        ],
+        "no_match": [
+          "mapState"
+        ]
+      }
+    },
+    {
+      "id": "opening-hours",
+      "label": "Opening hours",
+      "regex": "openingHours|OpeningHoursSpecification|opening\\s*hours|business\\s*hours",
+      "ignore_case": true,
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "openingHours",
+          "Opening hours"
+        ],
+        "no_match": [
+          "hours"
+        ]
+      }
+    },
+    {
+      "id": "geo",
+      "label": "Geo coordinates",
+      "regex": "GeoCoordinates|['\"]latitude['\"]\\s*:|geo\\.position|ICBM",
+      "languages": [
+        "@templates",
+        "@content",
+        "@data"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "GeoCoordinates",
+          "\"latitude\": 1"
+        ],
+        "no_match": [
+          "latitudeLabel"
+        ]
+      }
+    },
+    {
+      "id": "contact-or-location-page",
+      "label": "Contact/location page",
+      "regex": "(?:^|/|-|\\.)(?:contact|contact-us|locations?|find-us|visit|store-locator|our-stores)(?:/(?:index|page|\\+page)\\.\\w+|\\.(?:html?|astro|vue|svelte|md|mdx|php|liquid|erb|hbs|njk|[jt]sx?|json)|/)$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "src/pages/contact.astro",
+          "page-contact.php"
+        ],
+        "no_match": [
+          "src/components/contact-form.tsx",
+          "src/stores/cart.ts",
+          "src/store/data/contacts.json",
+          "src/components/contact-form.tsx"
+        ]
+      },
+      "exclude": "(?:^|/)(?:components?|stores?|store|state|hooks|utils?|lib|data|assets|styles?|redux|slices?|composables|api|services|types|__tests__|tests?)/|\\.(?:ya?ml|ya?ml|toml|css|scss|less|test\\.\\w+|spec\\.\\w+|d\\.ts)$"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "no-local-schema",
+      "label": "Address/phone present but no LocalBusiness schema",
+      "when_none_of": [
+        "local-schema"
+      ],
+      "only_if_any": [
+        "postal-address",
+        "map-embed",
+        "opening-hours"
+      ]
+    }
+  ],
+  "framework_agnostic": true,
+  "execution_hint": "If the business serves a physical area, add LocalBusiness (most specific subtype) JSON-LD with the exact NAP used in the footer/contact page, geo and openingHoursSpecification; keep NAP text identical everywhere; create one page per location."
+}

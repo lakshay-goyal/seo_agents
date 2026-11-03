@@ -1,0 +1,73 @@
+{
+  "framework": "jekyll",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Welcome to Driftwood"
+        ],
+        "headings": [
+          [
+            1,
+            "Welcome to Driftwood"
+          ]
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/about",
+            "About"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "index.md",
+          "line": 3
+        },
+        "h1": {
+          "file": "index.md",
+          "line": 6
+        }
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "h1": [
+          "About Driftwood"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/about",
+            "About"
+          ]
+        ],
+        "images": [
+          [
+            "/assets/van.jpg",
+            "Our van by the sea"
+          ]
+        ]
+      },
+      "attribution": {
+        "title": {
+          "file": "about.md",
+          "line": 3
+        },
+        "h1": {
+          "file": "about.md",
+          "line": 7
+        }
+      }
+    }
+  ]
+}

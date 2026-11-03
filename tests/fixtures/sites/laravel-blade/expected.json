@@ -1,0 +1,73 @@
+{
+  "framework": "laravel",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Research that ships"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/about",
+            "About"
+          ]
+        ],
+        "images": [
+          [
+            "/img/lab.png",
+            "Our lab bench"
+          ]
+        ]
+      },
+      "attribution": {
+        "h1": {
+          "file": "resources/views/welcome.blade.php",
+          "line": 6
+        }
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "h1": [
+          "About the lab"
+        ],
+        "headings": [
+          [
+            1,
+            "About the lab"
+          ],
+          [
+            2,
+            "Team"
+          ]
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/about",
+            "About"
+          ]
+        ]
+      },
+      "attribution": {
+        "h1": {
+          "file": "resources/views/about.blade.php",
+          "line": 4
+        }
+      }
+    },
+    {
+      "url": "/posts/{post}",
+      "fields": {}
+    }
+  ]
+}

@@ -1,0 +1,213 @@
+"""Write seo_reports/onpage/: index.json, site.json, client_inputs.json, pages/<id>.json (+ .expected.html),
+competitors/index.json, articles/ (index, <slug>.json, <slug>.md), README."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+
+from seo_agents.onpage.writer.content_writer import skill_catalog
+
+SCHEMA = 'seo-onpage/2.0'
+README = """# On-page SEO proposals (`seo_reports/onpage/`)
+
+Generated from the exploration JSON only; no client source was read or changed. Review, then apply what you approve.
+
+- `index.json` - run metadata, checklist definition, one row per page (counts, before/after checklist).
+- `site.json` - site-wide changes: platform changes (prerender / per-route head, permanent host redirect, soft 404),
+  robots.txt, sitemap.xml, llms.txt, cross-page duplicates, topic clusters.
+- `client_inputs.json` - facts only the owner can supply (`[VERIFY: ...]`, unconfirmed names, share image, dates).
+- `pages/<id>.json`:
+  - `changes`      : at most 15 deduplicated, high-confidence atomic changes (the default review view)
+  - `changes_more` : the remaining lower-impact / lower-confidence changes
+  - `advice`       : guidance and reports that are not a single edit (prerender rationale, image weight, E-E-A-T)
+  Each change is ONE operation: `op` (set_text | set_attr | set_json | insert_node | remove | platform_config) on
+  `target` (file, pointer or line/col, attr, `scope`: literal | data | template | layout | shell | page | platform,
+  `shared_by`, `verified`), with `current`, `value`, `depends_on`, `conflicts_with`, `supersedes` and
+  `status`: proposed | blocked (waits for `depends_on`, e.g. `chg_prerender`, or `blocked_by: fact_check` = a claim not
+  supported by the page facts) | needs_input (unverified target or facts). `serves` = the keywords/questions it serves.
+  `keyword_coverage` = before/after per keyword (researched in seo_reports/keywords/ when present, else model hypotheses);
+  `quality` = fact-check / helpfulness / freshness verdict (pass | needs_work | fail).
+- `pages/<id>.expected.html` - review aid generated from the change list; NOT directly applicable.
+- `competitors/index.json` - competitor content research: for every page, the ranking pages fetched (title, H1,
+  outline, word count, formats, dates; no copied body text), their shared patterns (depth, formats, common
+  sub-topics, title and URL habits, freshness) and the SERP / People Also Ask used.
+- `articles/index.json` - the content studio plan: topic pool (user demand), one brief per article, status, `tags`
+  (tag -> tag page URL + articles) and `site_changes` for the existing application: tag pages, internal links from
+  existing pages to each article (`link_from`), and the blog index entry.
+- `articles/<slug>.md` - a ready-to-publish article draft (frontmatter: SEO title, meta description, URL, tags,
+  category, images + alt; body: H1, last-updated date, answer-first intro, key takeaways, sections with lists,
+  tables, Mermaid diagrams and images, FAQ, sources). `<!-- IMAGE TO CREATE -->` marks images to produce.
+- `articles/<slug>.json` - the same article as data + `fact_check` (every number with its cited, dated source;
+  verdict pass | needs_review), `json_ld` (BlogPosting, FAQPage, BreadcrumbList), `link_from` (existing pages that
+  should link to it), the competitor research it was written against and `title_hooks` (why the title gets clicks).
+"""
+
+
+def dump(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n')
+
+
+def model_info():
+    try:
+        from seo_agents.llm.model_tiers import model_for_tier
+        from seo_agents.llm.usage_tracking import usage_summary
+        return {'tier_override': os.getenv('SEO_ONPAGE_TIER'), 'small': model_for_tier('small'), 'mid': model_for_tier('mid'),
+                'usage': usage_summary()}
+    except Exception as error:  # noqa: BLE001
+        return {'error': str(error)}
+
+
+def trimmed(res):
+    data = dict(res.get('data') or {})
+    for key in ('expected_page_html', 'changes', 'changes_more', 'advice', 'client_inputs', 'site_changes', 'keyword_coverage'):
+        data.pop(key, None)
+    return {'status': res.get('status'), 'meta': res.get('meta'), 'errors': res.get('errors'), 'data': data}
+
+
+def counts(changes, key):
+    out = {}
+    for c in changes:
+        out[c[key]] = out.get(c[key], 0) + 1
+    return out
+
+
+def write_outputs(out_dir, state):
+    out = Path(out_dir)
+    files = []
+    contexts, results = state['contexts'], state.get('results') or {}
+    from seo_agents.onpage.checks.checklist import CHECKS
+    order = [check.name for check in CHECKS]
+    rows, all_inputs = [], []
+    for page_id, ctx in contexts.items():
+        page_results = results.get(page_id) or {}
+        qa = (page_results.get('qa') or {}).get('data') or {}
+        changes, more = qa.get('changes') or [], qa.get('changes_more') or []
+        inputs = qa.get('client_inputs') or []
+        all_inputs += [{**item, 'page': page_id, 'url': ctx['url']} for item in inputs]
+        record = {
+            'schema': SCHEMA, 'id': page_id, 'url': ctx['url'], 'absolute_url': ctx['absolute_url'], 'template': ctx['template'],
+            'lang': ctx['lang'], 'run_date': ctx['run_date'], 'framework': ctx['fingerprint'], 'head_scope': ctx['head_scope'],
+            'framework_hint': ctx['framework_hint'], 'hosting': ctx['hosting'],
+            'intent': (page_results.get('intent') or {}).get('data'),
+            'keyword_plan': (page_results.get('keyword_plan') or {}).get('data'),
+            'keyword_research': ctx.get('keyword_research') if ctx.get('keyword_plan') else None,
+            'keyword_coverage': qa.get('keyword_coverage'),
+            'quality': qa.get('quality'),
+            'checklist': qa.get('checklist'),
+            'changes': changes, 'changes_more': more, 'advice': qa.get('advice') or [], 'client_inputs': inputs,
+            'site_changes': [c['id'] for c in qa.get('site_changes') or []],
+            'checks': {name: trimmed(page_results[name]) for name in order if name in page_results},
+        }
+        dump(out / 'pages' / (page_id + '.json'), record)
+        files.append('pages/' + page_id + '.json')
+        if qa.get('expected_page_html'):
+            (out / 'pages' / (page_id + '.expected.html')).write_text(qa['expected_page_html'])
+            files.append('pages/' + page_id + '.expected.html')
+        checklist = qa.get('checklist') or {}
+        rows.append({'id': page_id, 'url': ctx['url'], 'file': 'pages/' + page_id + '.json',
+                     'expected_html': 'pages/' + page_id + '.expected.html' if qa.get('expected_page_html') else None,
+                     'primary_query': ((page_results.get('intent') or {}).get('data') or {}).get('primary_query'),
+                     'query_source': ((page_results.get('intent') or {}).get('data') or {}).get('query_source'),
+                     'quality': (qa.get('quality') or {}).get('verdict'),
+                     'head_scope': ctx['head_scope'], 'changes': len(changes), 'changes_more': len(more),
+                     'advice': len(qa.get('advice') or []), 'client_inputs': len(inputs),
+                     'by_status': counts(changes + more, 'status'), 'by_impact': counts(changes + more, 'impact'),
+                     'checks': {name: (page_results.get(name) or {}).get('status') for name in order},
+                     'checklist_after_pass': sum(1 for x in checklist.values() if x.get('after') is True),
+                     'checklist_before_pass': sum(1 for x in checklist.values() if x.get('before') is True),
+                     'checklist_total': len(checklist)})
+    site = state.get('site') or {}
+    dump(out / 'site.json', {'schema': SCHEMA, **site})
+    files.append('site.json')
+    all_inputs += [{**item, 'page': None, 'url': None} for item in site.get('client_inputs') or []]
+    dump(out / 'client_inputs.json', {'schema': SCHEMA, 'inputs': merge_site_inputs(all_inputs)})
+    files.append('client_inputs.json')
+    skills = {s['name']: s for s in skill_catalog()}
+    index = {
+        'schema': SCHEMA,
+        'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        'source': state.get('reports_meta'),
+        'model': model_info(),
+        'workflow': 'LangGraph linear: load -> competitors -> ' + ' -> '.join(order) + ' -> site -> articles -> write',
+        'checklist': [{'order': i + 1, 'check': check.name, 'skill': check.skill, 'uses_llm': check.uses_model,
+                       'tier': (skills.get(check.skill) or {}).get('tier'),
+                       'description': (skills.get(check.skill) or {}).get('description')} for i, check in enumerate(CHECKS)],
+        'how_to_review': 'Start with site.json platform changes (they unblock `blocked` page changes), then pages/<id>.json '
+                         'changes[]. Apply only `proposed` changes whose target.verified is true; needs_input items need the owner.',
+        'pages': rows,
+        'site_file': 'site.json',
+        'client_inputs_file': 'client_inputs.json',
+    }
+    index['competitors_file'], index['articles'] = write_research(out, state, files)
+    dump(out / 'index.json', index)
+    files.append('index.json')
+    (out / 'README.md').write_text(README)
+    files.append('README.md')
+    return {'out_dir': str(out), 'files': files}
+
+
+def write_research(out, state, files):
+    """competitors/index.json and articles/ (index, <slug>.json, <slug>.md). Returns (competitors file, article rows)."""
+    competitors = state.get('competitors') or {}
+    competitors_file = None
+    if competitors:
+        dump(out / 'competitors' / 'index.json', {'schema': SCHEMA, **competitors})
+        competitors_file = 'competitors/index.json'
+        files.append(competitors_file)
+    studio = state.get('articles') or {}
+    rows = []
+    for item in studio.get('articles') or []:
+        brief = item.get('brief') or {}
+        slug = brief.get('slug') or 'article'
+        row = {'slug': slug, 'url': brief.get('url'), 'primary_keyword': brief.get('primary_keyword'), 'status': item.get('status')}
+        if item.get('status') == 'done':
+            article = item['article']
+            record = {'schema': SCHEMA, 'status': 'done', 'brief': brief, 'article': article, 'fact_check': item['fact_check'],
+                      'json_ld': item['json_ld'], 'link_from': article.get('link_from'), 'meta': item.get('meta'),
+                      'research': item.get('research')}
+            (out / 'articles').mkdir(parents=True, exist_ok=True)
+            (out / 'articles' / (slug + '.md')).write_text(item['markdown'])
+            files.append('articles/' + slug + '.md')
+            row.update({'title': article['title'], 'h1': article['h1'], 'words': article.get('word_count'),
+                        'tags': article.get('tags'), 'fact_check': item['fact_check']['verdict'],
+                        'markdown': 'articles/' + slug + '.md'})
+        else:
+            record = {'schema': SCHEMA, 'status': item.get('status'), 'brief': brief, 'errors': item.get('errors'),
+                      'research': item.get('research')}
+            row['errors'] = (item.get('errors') or [])[-2:]
+        dump(out / 'articles' / (slug + '.json'), record)
+        files.append('articles/' + slug + '.json')
+        row['file'] = 'articles/' + slug + '.json'
+        rows.append(row)
+    if studio:
+        dump(out / 'articles' / 'index.json', {'schema': SCHEMA, 'status': studio.get('status'), 'reason': studio.get('reason'),
+                                               'stage': studio.get('stage'), 'errors': studio.get('errors'),
+                                               'plan': studio.get('plan'), 'pool': studio.get('pool'), 'articles': rows,
+                                               'tags': studio.get('tags'), 'site_changes': studio.get('site_changes')})
+        files.append('articles/index.json')
+    return competitors_file, {'status': studio.get('status'), 'reason': studio.get('reason'), 'rows': rows} if studio else None
+
+
+
+def merge_site_inputs(rows):
+    """Site-wide facts (scope 'site', same id on every page) are asked once, listing every page that needs them."""
+    out, by_id = [], {}
+    for row in rows:
+        if row.get('scope') != 'site':
+            out.append(row)
+        elif row['id'] in by_id:
+            by_id[row['id']]['urls'].append(row.get('url'))
+        else:
+            by_id[row['id']] = {**row, 'urls': [row.get('url')]}
+            out.append(by_id[row['id']])
+    return out
+
+class OnpageOutputWriter:
+    """Tool: write seo_reports/onpage/ (index, pages/<id>.json, site.json, client_inputs.json)."""
+
+    def write(self, out_dir, state):
+        return write_outputs(out_dir, state)

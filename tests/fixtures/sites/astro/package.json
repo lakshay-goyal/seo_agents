@@ -1,0 +1,11 @@
+{
+  "name": "stargazer",
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "4.15.0"
+  }
+}

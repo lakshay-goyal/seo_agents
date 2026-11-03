@@ -1,0 +1,10 @@
+{% load i18n %}<!doctype html>
+<html lang="en">
+  <head>
+    <title>{% block title %}Olive Bistro{% endblock %}</title>
+  </head>
+  <body>
+    {% include "partials/nav.html" %}
+    <main>{% block content %}{% endblock %}</main>
+  </body>
+</html>

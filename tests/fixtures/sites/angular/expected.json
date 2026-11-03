@@ -1,0 +1,21 @@
+{
+  "framework": "angular",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Studio home"
+        ]
+      }
+    },
+    {
+      "url": "/about",
+      "fields": {
+        "h1": [
+          "About the studio"
+        ]
+      }
+    }
+  ]
+}

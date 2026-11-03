@@ -3,16 +3,16 @@
 import copy
 import json
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from seo_agents.exploration.checks.graph import run_onpage_graph
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
-from seo_agents.sandbox.pr import create_pr
-from seo_agents.sandbox.tools.docker import DockerSandbox
-from seo_agents.sandbox.tools.local import LocalResult
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.legacy_extraction_workflow import run_legacy_extraction
+from seo_agents.repo_analysis.tools.repository.repository_constants import REPORT_FILES
+from seo_agents.sandbox.git.repository_clone import repo_folder
+from seo_agents.sandbox.git.pull_request import create_pr
+from seo_agents.sandbox.runners.docker_sandbox import DockerSandbox
+from seo_agents.sandbox.runners.local_runner import LocalResult
 
 
 def reports_in_memory():
@@ -30,7 +30,7 @@ class MemoryWorkflowTests(unittest.TestCase):
             with patch.object(Path, 'write_text', side_effect=AssertionError('analysis wrote text')), patch.object(
                     Path, 'write_bytes', side_effect=AssertionError('analysis wrote bytes')), patch(
                     'builtins.open', side_effect=AssertionError('unexpected file open')):
-                state = run_onpage_graph(str(repo), mode='static')
+                state = run_legacy_extraction(str(repo), mode='static')
             self.assertEqual(set(state['artifacts']), set(REPORT_FILES))
             self.assertEqual(state['artifacts']['content']['pages'][0]['blocks'][0]['text'], 'Example page')
             self.assertEqual(sorted(str(p.relative_to(repo)) for p in repo.rglob('*')), before)
@@ -52,14 +52,15 @@ class MemoryWorkflowTests(unittest.TestCase):
                 output = ''
             return LocalResult(output, '', 0)
         runner.run.side_effect = run
-        with patch('seo_agents.sandbox.pr.login_env', return_value={}):
+        with patch('seo_agents.sandbox.git.pull_request.login_env', return_value={}):
             result = create_pr(runner, 'https://github.com/example-owner/example-site', reports)
         self.assertTrue(result.endswith('/pull/1'))
         writes = {args[0]: args[1] for args, kwargs in runner.write.call_args_list}
-        self.assertEqual(len(writes), 8)  # Seven reports and the PR documentation.
-        self.assertTrue(all(path.startswith('/tmp/example-site/') for path in writes))
+        self.assertEqual(len(writes), 7)  # Seven reports; no extra readme is committed to the client repo.
+        checkout = repo_folder('https://github.com/example-owner/example-site')
+        self.assertTrue(all(path.startswith(checkout + '/') for path in writes))
         for category, filename in REPORT_FILES.items():
-            self.assertEqual(json.loads(writes['/tmp/example-site/seo_reports/onpage/' + filename]), reports[category])
+            self.assertEqual(json.loads(writes[checkout + '/seo_reports/onpage/' + filename]), reports[category])
         self.assertEqual(reports, original)
         create_command = next(args[0] for args, kwargs in runner.run.call_args_list if args[0].startswith('gh pr create '))
         self.assertIn(' --body ', create_command)
@@ -69,7 +70,7 @@ class MemoryWorkflowTests(unittest.TestCase):
         for reports in (None, {}):
             with self.subTest(reports=reports):
                 runner = Mock()
-                with patch('seo_agents.sandbox.pr.login_env') as login:
+                with patch('seo_agents.sandbox.git.pull_request.login_env') as login:
                     with self.assertRaises((ValueError, RuntimeError)):
                         create_pr(runner, 'https://github.com/example-owner/example-site', reports)
                 login.assert_not_called()
@@ -80,7 +81,7 @@ class MemoryWorkflowTests(unittest.TestCase):
         reports = reports_in_memory()
         reports['media']['extraction']['invalid_number'] = float('nan')
         runner = Mock()
-        with patch('seo_agents.sandbox.pr.login_env') as login:
+        with patch('seo_agents.sandbox.git.pull_request.login_env') as login:
             with self.assertRaises(ValueError):
                 create_pr(runner, 'https://github.com/example-owner/example-site', reports)
         login.assert_not_called()
@@ -89,7 +90,7 @@ class MemoryWorkflowTests(unittest.TestCase):
 
     def test_docker_transfer_streams_bytes_without_a_host_tempfile(self):
         sandbox = DockerSandbox('example-sandbox')
-        with patch('seo_agents.sandbox.tools.docker.subprocess.run') as run, patch(
+        with patch('seo_agents.sandbox.runners.docker_sandbox.subprocess.run') as run, patch(
                 'tempfile.NamedTemporaryFile', side_effect=AssertionError('host tempfile created')):
             sandbox.write('/tmp/example-site/seo_reports/onpage/content.json', '{"text":"Example"}')
         args, kwargs = run.call_args

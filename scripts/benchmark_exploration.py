@@ -1,67 +1,94 @@
-"""Synthetic, offline comparison. No model calls, client repositories or retained fixtures."""
+"""Offline benchmark of the site model (not the legacy LLM extractors) over the golden fixtures.
 
-from contextlib import redirect_stdout
-import io
+Per fixture: wall time per stage (snapshot, fingerprint, element index, URL manifest, full source-only
+site model), URL count, output size in bytes and an approximate token count (bytes / 4). Hermetic: no model
+calls, no network, temporary caches (same guard as scripts/score_fixtures.py).
+
+    PYTHONPATH=src python scripts/benchmark_exploration.py [--fixture NAME ...] [--repeats 3] [--json out.json]
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
 import json
-from pathlib import Path
+import shutil
 import statistics
+import sys
 import tempfile
 import time
-from unittest.mock import patch
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from pathlib import Path
 
-from seo_agents.exploration.checks.agents.repository import snapshot_repository
-from seo_agents.exploration.checks.agents.retrieval import encoded_size, repository_summary, repository_tools
-from seo_agents.exploration.checks.graph import run_onpage_graph
-from seo_agents.exploration.checks.tools import inventory
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'src'))
+spec = importlib.util.spec_from_file_location('score_fixtures', ROOT / 'scripts' / 'score_fixtures.py')
+scorer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(scorer)
 
 
-def main():
-    with tempfile.TemporaryDirectory(prefix='seo-exploration-benchmark-') as directory:
-        repo = Path(directory).resolve()
-        for index in range(20):
-            name = 'index.html' if index == 0 else f'page-{index}.html'
-            (repo / name).write_text(f'<title>Page {index}</title><nav>Shared navigation</nav>'
-                f'<main><h1>Topic {index}</h1><p>Unique page content {index}.</p><a href="/page-1">Related topic</a></main>')
-        before, after, parse_counts = [], [], []
-        with redirect_stdout(io.StringIO()):
-            for _ in range(5):
-                with patch.object(inventory, 'pages', wraps=inventory.pages) as pages:
-                    begun = time.perf_counter()
-                    old_reports = {category: inventory.inventory(repo, category) for category in REPORT_FILES}
-                    before.append((time.perf_counter() - begun) * 1000)
-                    old_count = pages.call_count
-                with patch.object(inventory, 'pages', wraps=inventory.pages) as pages:
-                    begun = time.perf_counter()
-                    state = run_onpage_graph(repo, mode='static')
-                    after.append((time.perf_counter() - begun) * 1000)
-                    parse_counts.append((old_count, pages.call_count))
-                assert old_reports == state['artifacts'], 'Seven report payloads differ'
-        snapshot = snapshot_repository(repo)
-        paths = list(snapshot['files'])[:8]
-        old_metrics, new_metrics = {}, {}
-        tools = {t.name: t for t in repository_tools(snapshot, metrics=old_metrics)}
-        old_text = [tools['read_source'].invoke({'path': path})['lines'] for path in paths]
-        tools = {t.name: t for t in repository_tools(snapshot, metrics=new_metrics)}
-        new_text = [r['lines'] for r in tools['read_sources'].invoke({'paths': paths})['results']]
-        assert old_text == new_text, 'Batched retrieval lost source text'
-        large = dict(snapshot, files={f'websites/storefront/src/components/catalog/category_{i:04d}/descriptive_component.tsx': '' for i in range(2000)})
-        large.pop('inventory')
-        old_manifest = {'source_files': list(large['files']), 'assets': {}, 'limitations': []}
-        compact = repository_summary(large, {'records': [], 'packages': [], 'parse_errors': []})
-        print(json.dumps({
-            'fixture': {'html_pages': 20, 'repeats': 5, 'network_requests': 0, 'model_calls': 0},
-            'quality': {'seven_reports_identical': True, 'batched_source_text_identical': True},
-            'page_composition_passes': {'before': parse_counts[0][0], 'after': parse_counts[0][1]},
-            'known_eight_file_tool_round_trips': {'before': old_metrics['tool_calls'], 'after': new_metrics['tool_calls']},
-            'initial_manifest_bytes_2000_paths': {'before': encoded_size(old_manifest), 'after': encoded_size(compact)},
-            'wall_time_ms': {'before_median': round(statistics.median(before), 3), 'before_range': [round(min(before), 3), round(max(before), 3)],
-                             'after_median': round(statistics.median(after), 3), 'after_range': [round(min(after), 3), round(max(after), 3)]},
-            'limits': ['Synthetic offline baseline, not a paid-model/token or production performance benchmark.',
-                       'After timing also includes new inventory/context/evidence/checkpoint work; before contains only seven legacy reports.',
-                       'Agent mode still verifies accepted scripts with two worker executions per category.']
-        }, indent=2))
+def timed(fn, *args, **kwargs):
+    begun = time.perf_counter()
+    value = fn(*args, **kwargs)
+    return value, (time.perf_counter() - begun) * 1000
+
+
+def bench_fixture(name, repeats):
+    from seo_agents.repo_analysis.site_model.site_model_builder import explore_site
+    from seo_agents.repo_analysis.tools.parsing.element_index import build_element_index
+    from seo_agents.repo_analysis.tools.repository.framework_detection import detect_frameworks
+    from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
+    from seo_agents.repo_analysis.site_model.url_manifest import build_manifest
+    stages = {key: [] for key in ('snapshot', 'fingerprint', 'element_index', 'url_manifest', 'site_model')}
+    result = {'fixture': name}
+    with tempfile.TemporaryDirectory() as temp:
+        repo = Path(temp) / name
+        shutil.copytree(scorer.FIXTURES / name, repo, ignore=shutil.ignore_patterns('expected.json'))
+        for _ in range(repeats):
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                snapshot, ms = timed(snapshot_repository, repo)
+                stages['snapshot'].append(ms)
+                fingerprint, ms = timed(detect_frameworks, snapshot)
+                stages['fingerprint'].append(ms)
+                _, ms = timed(build_element_index, snapshot)
+                stages['element_index'].append(ms)
+                (pages, _), ms = timed(build_manifest, snapshot, fingerprint)
+                stages['url_manifest'].append(ms)
+                out = Path(temp) / 'out'
+                model, ms = timed(explore_site, repo, render=False, output_dir=out)
+                stages['site_model'].append(ms)
+        size = sum(p.stat().st_size for p in out.rglob('*.json')) if out.exists() else len(json.dumps(model))
+        result.update(framework=fingerprint['primary'], urls=len(pages), output_bytes=size, approx_tokens=size // 4,
+                      ms={key: round(statistics.median(values), 2) for key, values in stages.items()})
+    return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--fixture', action='append')
+    parser.add_argument('--repeats', type=int, default=3)
+    parser.add_argument('--json', type=Path)
+    args = parser.parse_args(argv)
+    rows = []
+    with scorer.hermetic(True):
+        for name in args.fixture or scorer.fixture_names():
+            try:
+                rows.append(bench_fixture(name, max(1, args.repeats)))
+            except Exception as error:  # noqa: BLE001 - one broken fixture must not hide the others
+                rows.append({'fixture': name, 'error': type(error).__name__ + ': ' + str(error)[:200]})
+    for row in rows:
+        if 'error' in row:
+            print(f"{row['fixture']:<20} ERROR {row['error']}")
+            continue
+        ms = row['ms']
+        print(f"{row['fixture']:<20} {row['framework']:<16} urls={row['urls']:<3} tokens~{row['approx_tokens']:<7} "
+              f"snapshot={ms['snapshot']}ms manifest={ms['url_manifest']}ms model={ms['site_model']}ms")
+    payload = {'model_calls': 0, 'network_requests': 0, 'repeats': args.repeats, 'fixtures': rows}
+    if args.json:
+        args.json.write_text(json.dumps(payload, indent=2) + '\n')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -1,0 +1,701 @@
+{
+ "id": "p_42099b4af0",
+ "url": "/",
+ "route": "/",
+ "template": "index.html",
+ "kind": "page",
+ "instance_status": "static",
+ "rendering": {
+  "raw_html_words": 0,
+  "rendered_words": 200,
+  "method": "measured"
+ },
+ "http": {
+  "http_status": 200,
+  "final_url": "https://www.lakshaygoyal.in/",
+  "redirect_chain": [
+   {
+    "url": "https://lakshaygoyal.in/",
+    "http_status": 307,
+    "location": "https://www.lakshaygoyal.in/"
+   }
+  ]
+ },
+ "head": {
+  "title": {
+   "value": "Lakshay Goyal \u2014 Software Engineer",
+   "method": "rendered",
+   "edit": {
+    "kind": "literal",
+    "file": "index.html",
+    "line": 14,
+    "col": 4,
+    "shared_by": [
+     "/",
+     "/about",
+     "/bookshelf",
+     "/blog",
+     "/blog/deploying-your-site-with-vercel"
+    ],
+    "scope": "shell",
+    "verify": "grounded"
+   },
+   "confidence": 0.97
+  },
+  "description": {
+   "value": "Lakshay Goyal is a Software Engineer building thoughtful mobile and web products.",
+   "method": "rendered",
+   "edit": {
+    "kind": "literal",
+    "file": "index.html",
+    "line": 7,
+    "col": 4,
+    "shared_by": [
+     "/",
+     "/about",
+     "/bookshelf",
+     "/blog",
+     "/blog/deploying-your-site-with-vercel"
+    ],
+    "scope": "shell",
+    "verify": "grounded",
+    "attr": "content"
+   },
+   "confidence": 0.97
+  },
+  "canonical": {
+   "value": null,
+   "method": "rendered",
+   "edit": null,
+   "confidence": 0.6
+  },
+  "robots": {
+   "value": null,
+   "method": "rendered",
+   "edit": null,
+   "confidence": 0.6
+  },
+  "lang": {
+   "value": "en",
+   "method": "rendered",
+   "edit": {
+    "kind": "literal",
+    "file": "index.html",
+    "line": 2,
+    "col": 4,
+    "shared_by": [
+     "/",
+     "/about",
+     "/bookshelf",
+     "/blog",
+     "/blog/deploying-your-site-with-vercel"
+    ],
+    "scope": "shell",
+    "verify": "grounded",
+    "attr": "lang"
+   },
+   "confidence": 0.97
+  },
+  "viewport": {
+   "value": "width=device-width, initial-scale=1.0",
+   "method": "rendered",
+   "edit": {
+    "kind": "literal",
+    "file": "index.html",
+    "line": 6,
+    "col": 4,
+    "shared_by": [
+     "/",
+     "/about",
+     "/bookshelf",
+     "/blog",
+     "/blog/deploying-your-site-with-vercel"
+    ],
+    "scope": "shell",
+    "verify": "grounded",
+    "attr": "content"
+   },
+   "confidence": 0.97
+  },
+  "og": {},
+  "twitter": {},
+  "hreflang": [],
+  "json_ld": [],
+  "add_target": {
+   "kind": "add",
+   "file": "index.html",
+   "line": 15,
+   "anchor": "before </head>",
+   "shared_by": [
+    "/",
+    "/about",
+    "/bookshelf",
+    "/blog",
+    "/blog/deploying-your-site-with-vercel"
+   ],
+   "scope": "shell",
+   "verify": "grounded"
+  }
+ },
+ "headings": [
+  {
+   "level": 2,
+   "text": "Work Experience",
+   "method": "rendered",
+   "section": "section",
+   "confidence": 0.9,
+   "edit": {
+    "kind": "prop",
+    "file": "src/App.jsx",
+    "line": 147,
+    "col": 4,
+    "attr": "title",
+    "verify": "grounded",
+    "scope": "literal",
+    "shared_by": [
+     "/"
+    ]
+   }
+  },
+  {
+   "level": 3,
+   "text": "Testsigma",
+   "method": "rendered",
+   "section": "section",
+   "confidence": 0.9,
+   "edit": {
+    "kind": "json",
+    "file": "src/store/data/experiences.json",
+    "line": 3,
+    "pointer": "/0/company",
+    "template": {
+     "file": "src/App.jsx",
+     "line": 160,
+     "col": 10
+    },
+    "verify": "grounded"
+   }
+  },
+  {
+   "level": 2,
+   "text": "Projects",
+   "method": "rendered",
+   "section": "section",
+   "confidence": 0.9,
+   "edit": {
+    "kind": "prop",
+    "file": "src/App.jsx",
+    "line": 183,
+    "col": 4,
+    "attr": "title",
+    "verify": "grounded",
+    "scope": "literal",
+    "shared_by": [
+     "/"
+    ]
+   }
+  },
+  {
+   "level": 3,
+   "text": "Unlovable - Application Builder.",
+   "method": "rendered",
+   "section": "section",
+   "confidence": 0.9,
+   "edit": {
+    "kind": "json",
+    "file": "src/store/data/majorProjects.json",
+    "line": 3,
+    "pointer": "/0/title",
+    "template": {
+     "file": "src/App.jsx",
+     "line": 190,
+     "col": 12
+    },
+    "verify": "grounded"
+   }
+  },
+  {
+   "level": 3,
+   "text": "FOZO - Food Ordering App.",
+   "method": "rendered",
+   "section": "section",
+   "confidence": 0.9,
+   "edit": {
+    "kind": "json",
+    "file": "src/store/data/majorProjects.json",
+    "line": 12,
+    "pointer": "/1/title",
+    "template": {
+     "file": "src/App.jsx",
+     "line": 190,
+     "col": 12
+    },
+    "verify": "grounded"
+   }
+  }
+ ],
+ "content": {
+  "main_words": 200,
+  "blocks": [
+   {
+    "tag": "p",
+    "text": "Software Engineer",
+    "section": "header",
+    "in_main": false,
+    "edit": {
+     "kind": "literal",
+     "file": "src/App.jsx",
+     "line": 446,
+     "col": 10,
+     "shared_by": [
+      "/",
+      "/about",
+      "/bookshelf",
+      "/blog",
+      "/blog/deploying-your-site-with-vercel"
+     ],
+     "scope": "layout",
+     "verify": "grounded"
+    }
+   },
+   {
+    "tag": "h2",
+    "text": "Work Experience"
+   },
+   {
+    "tag": "p",
+    "text": "Just a curious builder with a bad habit of going down every rabbit hole, building random things for the web, and figuring out life beyond code.",
+    "section": "section",
+    "in_main": true,
+    "edit": {
+     "kind": "literal",
+     "file": "src/App.jsx",
+     "line": 150,
+     "col": 12,
+     "verify": "grounded",
+     "scope": "literal",
+     "shared_by": [
+      "/"
+     ]
+    }
+   },
+   {
+    "tag": "h3",
+    "text": "Testsigma"
+   },
+   {
+    "tag": "p",
+    "text": "Software Engineer at Testsigma working on test automation for web and mobile apps.",
+    "section": "section",
+    "in_main": true,
+    "edit": {
+     "kind": "json",
+     "file": "src/store/data/experiences.json",
+     "line": 5,
+     "pointer": "/0/summary",
+     "verify": "grounded"
+    }
+   },
+   {
+    "tag": "h2",
+    "text": "Projects"
+   },
+   {
+    "tag": "h3",
+    "text": "Unlovable - Application Builder."
+   },
+   {
+    "tag": "p",
+    "text": "Unlovable builds web apps from a prompt.",
+    "section": "section",
+    "in_main": true,
+    "edit": {
+     "kind": "json",
+     "file": "src/store/data/majorProjects.json",
+     "line": 4,
+     "pointer": "/0/description",
+     "verify": "grounded"
+    }
+   },
+   {
+    "tag": "h3",
+    "text": "FOZO - Food Ordering App."
+   },
+   {
+    "tag": "p",
+    "text": "FOZO is a food ordering app for college campuses.",
+    "section": "section",
+    "in_main": true,
+    "edit": {
+     "kind": "json",
+     "file": "src/store/data/majorProjects.json",
+     "line": 13,
+     "pointer": "/1/description",
+     "verify": "grounded"
+    }
+   },
+   {
+    "tag": "p",
+    "text": "Read more",
+    "section": "section",
+    "in_main": true
+   }
+  ]
+ },
+ "links": {
+  "out": [
+   {
+    "href": "/",
+    "anchor": "Home",
+    "aria_label": null,
+    "section": "nav",
+    "in_main": false,
+    "kind": "internal",
+    "visible": true,
+    "edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 2,
+     "col": 32,
+     "attr": "href",
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 2,
+     "col": 13,
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.95,
+    "status": 200
+   },
+   {
+    "href": "/about",
+    "anchor": "About",
+    "aria_label": null,
+    "section": "nav",
+    "in_main": false,
+    "kind": "internal",
+    "visible": true,
+    "edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 3,
+     "col": 32,
+     "attr": "href",
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 3,
+     "col": 13,
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.95,
+    "status": 200
+   },
+   {
+    "href": "/bookshelf",
+    "anchor": "Bookshelf",
+    "aria_label": null,
+    "section": "nav",
+    "in_main": false,
+    "kind": "internal",
+    "visible": true,
+    "edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 4,
+     "col": 32,
+     "attr": "href",
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 4,
+     "col": 13,
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.95,
+    "status": 200
+   },
+   {
+    "href": "/blog",
+    "anchor": "Blogs",
+    "aria_label": null,
+    "section": "nav",
+    "in_main": false,
+    "kind": "internal",
+    "visible": true,
+    "edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 5,
+     "col": 32,
+     "attr": "href",
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/components/PageRail.jsx",
+     "line": 5,
+     "col": 13,
+     "scope": "data",
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.95,
+    "status": 200
+   },
+   {
+    "href": "https://github.com/lakshay-goyal",
+    "anchor": "",
+    "aria_label": "GitHub",
+    "section": "nav",
+    "in_main": false,
+    "kind": "absolute",
+    "visible": true,
+    "edit": {
+     "kind": "json",
+     "file": "src/components/ContactRail.jsx",
+     "line": 8,
+     "col": 5,
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/components/ContactRail.jsx",
+     "line": 78,
+     "col": 9,
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.9,
+    "status": 200
+   },
+   {
+    "href": "https://www.linkedin.com/in/lakshay-goyal",
+    "anchor": "",
+    "aria_label": "LinkedIn",
+    "section": "nav",
+    "in_main": false,
+    "kind": "absolute",
+    "visible": true,
+    "edit": {
+     "kind": "json",
+     "file": "src/components/ContactRail.jsx",
+     "line": 9,
+     "col": 5,
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/components/ContactRail.jsx",
+     "line": 78,
+     "col": 9,
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.9,
+    "status": 999
+   },
+   {
+    "href": "mailto:lakshay@example.com",
+    "anchor": "",
+    "aria_label": "Email",
+    "section": "nav",
+    "in_main": false,
+    "kind": "action",
+    "visible": true,
+    "edit": {
+     "kind": "json",
+     "file": "src/components/ContactRail.jsx",
+     "line": 7,
+     "col": 5,
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/components/ContactRail.jsx",
+     "line": 78,
+     "col": 9,
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.9,
+    "status": 200
+   },
+   {
+    "href": "https://twitter.com/intent/tweet?text=hi",
+    "anchor": "Share",
+    "section": "footer",
+    "in_main": false,
+    "kind": "absolute",
+    "visible": true,
+    "edit": null,
+    "method": "rendered",
+    "confidence": 0.5,
+    "status": 200
+   },
+   {
+    "href": "/blog",
+    "anchor": "Read more",
+    "section": "section",
+    "in_main": true,
+    "kind": "internal",
+    "visible": true,
+    "edit": {
+     "kind": "literal",
+     "file": "src/App.jsx",
+     "line": 260,
+     "col": 8,
+     "attr": "href",
+     "verify": "grounded"
+    },
+    "anchor_edit": {
+     "kind": "literal",
+     "file": "src/App.jsx",
+     "line": 260,
+     "col": 30,
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.9,
+    "status": 200
+   },
+   {
+    "href": "https://github.com/lakshay-goyal/Exness",
+    "anchor": "Exness - Mobile Application.",
+    "section": "section",
+    "in_main": true,
+    "kind": "absolute",
+    "visible": false,
+    "live": "",
+    "edit": {
+     "kind": "json",
+     "file": "src/store/data/majorProjects.json",
+     "line": 30,
+     "pointer": "/3/github",
+     "verify": "grounded"
+    },
+    "method": "rendered",
+    "confidence": 0.5,
+    "status": 200
+   }
+  ]
+ },
+ "images": [
+  {
+   "src": "/Image/UnlovableWeb.png",
+   "alt": "UnlovableWeb interface screenshot",
+   "alt_missing": false,
+   "width": null,
+   "height": null,
+   "loading": "lazy",
+   "srcset": false,
+   "natural": [
+    1920,
+    1080
+   ],
+   "rendered": [
+    324,
+    209
+   ],
+   "above_fold": false,
+   "transfer_bytes": 531168,
+   "format": "png",
+   "edit": {
+    "kind": "json",
+    "file": "src/store/data/majorProjects.json",
+    "line": 6,
+    "pointer": "/0/image",
+    "verify": "grounded"
+   },
+   "alt_edit": {
+    "kind": "json",
+    "file": "src/store/data/majorProjects.json",
+    "line": 3,
+    "pointer": "/0",
+    "composed_from": [
+     "/0/title"
+    ],
+    "template": {
+     "file": "src/App.jsx",
+     "line": 193,
+     "col": 14
+    },
+    "verify": "grounded"
+   },
+   "method": "rendered",
+   "oversized_ratio": 5.93
+  },
+  {
+   "src": "/Image/FozoApp.png",
+   "alt": "FozoApp interface screenshot",
+   "alt_missing": false,
+   "width": null,
+   "height": null,
+   "loading": "lazy",
+   "srcset": false,
+   "natural": [
+    1920,
+    1080
+   ],
+   "rendered": [
+    324,
+    209
+   ],
+   "above_fold": false,
+   "transfer_bytes": 531168,
+   "format": "png",
+   "edit": {
+    "kind": "json",
+    "file": "src/store/data/majorProjects.json",
+    "line": 15,
+    "pointer": "/1/image",
+    "verify": "grounded"
+   },
+   "alt_edit": {
+    "kind": "json",
+    "file": "src/store/data/majorProjects.json",
+    "line": 12,
+    "pointer": "/1",
+    "composed_from": [
+     "/1/title"
+    ],
+    "template": {
+     "file": "src/App.jsx",
+     "line": 193,
+     "col": 14
+    },
+    "verify": "grounded"
+   },
+   "method": "rendered",
+   "oversized_ratio": 5.93
+  }
+ ],
+ "eeat": [
+  {
+   "signal": "authorship",
+   "status": "not_observed"
+  },
+  {
+   "signal": "dates",
+   "status": "not_observed"
+  }
+ ],
+ "keywords": {}
+}

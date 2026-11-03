@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEO Agents Audit</title>
+<meta name="description" content="Critical audit of the seo_agents exploration pipeline, tools, category agents, skills, on-page stage and PR #8 output, with a redesign for accuracy, smaller context and cheaper models.">
+<style>
+:root{
+  --bg:#fbfaf7;--surface:#ffffff;--surface-2:#f3f1ec;--ink:#1d1d1b;--ink-2:#55534e;--ink-3:#8a877f;
+  --line:#e3e0d8;--accent:#c2410c;--accent-soft:#fdecdf;--ok:#15803d;--ok-soft:#e3f4e8;
+  --warn:#a16207;--warn-soft:#fbf1d4;--bad:#b91c1c;--bad-soft:#fbe4e4;--info:#1d4ed8;--info-soft:#e3eafc;
+  --code-bg:#f3f1ec;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#151513;--surface:#1d1d1a;--surface-2:#252521;--ink:#eceae4;--ink-2:#b5b2aa;--ink-3:#85827a;
+  --line:#34332e;--accent:#fb923c;--accent-soft:#3a2516;--ok:#4ade80;--ok-soft:#163222;
+  --warn:#facc15;--warn-soft:#3a3214;--bad:#f87171;--bad-soft:#3d1a1a;--info:#93b4fd;--info-soft:#1b2540;--code-bg:#252521;
+}}
+:root[data-theme="dark"]{
+  --bg:#151513;--surface:#1d1d1a;--surface-2:#252521;--ink:#eceae4;--ink-2:#b5b2aa;--ink-3:#85827a;
+  --line:#34332e;--accent:#fb923c;--accent-soft:#3a2516;--ok:#4ade80;--ok-soft:#163222;
+  --warn:#facc15;--warn-soft:#3a3214;--bad:#f87171;--bad-soft:#3d1a1a;--info:#93b4fd;--info-soft:#1b2540;--code-bg:#252521;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:15.5px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);padding:.1em .35em;border-radius:4px;word-break:break-word}
+pre{font-family:var(--mono);font-size:12.8px;line-height:1.5;background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+pre code{background:none;padding:0;font-size:inherit}
+.layout{display:grid;grid-template-columns:260px minmax(0,1fr);max-width:1320px;margin:0 auto}
+nav.toc{position:sticky;top:0;height:100vh;overflow-y:auto;padding:28px 18px 28px 24px;border-right:1px solid var(--line);font-size:13.5px}
+nav.toc .brand{font-weight:700;font-size:15px;margin-bottom:4px}
+nav.toc .sub{color:var(--ink-3);font-size:12px;margin-bottom:18px}
+nav.toc ol{list-style:none;margin:0;padding:0;counter-reset:t}
+nav.toc li{margin:2px 0}
+nav.toc a{color:var(--ink-2);text-decoration:none;display:block;padding:4px 8px;border-radius:6px}
+nav.toc a:hover{background:var(--surface-2);color:var(--ink)}
+main{padding:40px 48px 120px;min-width:0}
+header.hero{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:12px}
+.eyebrow{text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--accent);font-weight:600}
+h1{font-size:34px;line-height:1.15;margin:8px 0 12px;letter-spacing:-.01em}
+h2{font-size:24px;margin:56px 0 12px;padding-top:12px;letter-spacing:-.005em}
+h3{font-size:18px;margin:30px 0 8px}
+h4{font-size:15px;margin:20px 0 6px}
+p{margin:8px 0 12px;max-width:78ch}
+ul,ol{max-width:80ch;padding-left:22px}
+li{margin:4px 0}
+.lead{font-size:17px;color:var(--ink-2);max-width:72ch}
+.meta{color:var(--ink-3);font-size:13px}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.stat .n{font-size:28px;font-weight:700;line-height:1.1}
+.stat .l{color:var(--ink-2);font-size:13px}
+.callout{border-left:3px solid var(--accent);background:var(--accent-soft);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0;max-width:86ch}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout.info{border-color:var(--info);background:var(--info-soft)}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;vertical-align:1px;margin-right:6px;white-space:nowrap}
+.t-crit{background:var(--bad-soft);color:var(--bad)}
+.t-high{background:var(--warn-soft);color:var(--warn)}
+.t-med{background:var(--info-soft);color:var(--info)}
+.t-ok{background:var(--ok-soft);color:var(--ok)}
+.table-wrap{overflow-x:auto;margin:12px 0 18px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.8px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--surface-2);font-weight:600;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td.v-hit{color:var(--ok);font-weight:600;white-space:nowrap}
+td.v-miss{color:var(--bad);font-weight:600;white-space:nowrap}
+td.v-part{color:var(--warn);font-weight:600;white-space:nowrap}
+details{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:10px 0;padding:0 16px}
+details[open]{padding-bottom:12px}
+summary{cursor:pointer;padding:12px 0;font-weight:600;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸";display:inline-block;width:16px;color:var(--ink-3);transition:transform .15s}
+details[open] summary::before{transform:rotate(90deg)}
+.prio{counter-reset:p;list-style:none;padding:0;max-width:none}
+.prio li{counter-increment:p;position:relative;padding:12px 14px 12px 52px;background:var(--surface);border:1px solid var(--line);border-radius:10px;margin:8px 0}
+.prio li::before{content:counter(p);position:absolute;left:14px;top:12px;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:13px;display:grid;place-items:center}
+.diagram{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0;overflow-x:auto}
+.diagram svg{display:block;min-width:720px;width:100%;height:auto}
+.diagram svg text{font-family:var(--sans);fill:var(--ink)}
+.diagram .box{fill:var(--surface-2);stroke:var(--line)}
+.diagram .box-a{fill:var(--accent-soft);stroke:var(--accent)}
+.diagram .box-ok{fill:var(--ok-soft);stroke:var(--ok)}
+.diagram .box-i{fill:var(--info-soft);stroke:var(--info)}
+.diagram .arrow{stroke:var(--ink-3);stroke-width:1.5;fill:none;marker-end:url(#ah)}
+.diagram .small{font-size:11px;fill:var(--ink-2)}
+.diagram .lbl{font-size:13px;font-weight:600}
+.theme-btn{position:fixed;top:14px;right:16px;z-index:5;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer}
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr}
+  nav.toc{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:20px 16px}
+  main{padding:24px 16px 80px}
+  h1{font-size:27px}
+}
+</style>
+</head>
+<body>
+<button class="theme-btn" id="themeBtn" type="button">Theme</button>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">SEO Agents Audit</div>
+  <div class="sub">seo_agents @ f958bdf + uncommitted onpage/ · PR my-portfolio#8 · 2 Nov 2026</div>
+  <ol>
+    <li><a href="#summary">1. Executive summary</a></li>
+    <li><a href="#priorities">2. Top 12 priorities</a></li>
+    <li><a href="#today">3. How the system works today</a></li>
+    <li><a href="#security">4. Security (fix first)</a></li>
+    <li><a href="#orchestration">5. Orchestration &amp; pipeline</a></li>
+    <li><a href="#tools">6. Tool layer &amp; framework support</a></li>
+    <li><a href="#agents">7. Category agents (per agent)</a></li>
+    <li><a href="#skills">8. Skills &amp; prompts</a></li>
+    <li><a href="#pr-explore">9. PR #8: exploration output</a></li>
+    <li><a href="#pr-onpage">10. PR #8: on-page proposals</a></li>
+    <li><a href="#json">11. One JSON vs many: proposed layout</a></li>
+    <li><a href="#target">12. Target architecture</a></li>
+    <li><a href="#engineering">13. Prompt, context &amp; harness engineering</a></li>
+    <li><a href="#tiering">14. Model tiering &amp; cost</a></li>
+    <li><a href="#framework">15. Framework-agnostic strategy</a></li>
+    <li><a href="#missing">16. Missing SEO data</a></li>
+    <li><a href="#evals">17. Evals &amp; tests</a></li>
+    <li><a href="#roadmap">18. Roadmap</a></li>
+    <li><a href="#method">19. Method &amp; caveats</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">Critical review · exploration + on-page stages</div>
+  <h1>SEO agents: what works, what's wrong, and how to make exploration accurate and cheap</h1>
+  <p class="lead">This review covers every exploration agent, tool, profile and skill in <code>seo_agents</code>, the new on-page stage in <code>src/seo_agents/onpage/</code>, and the output pushed to <code>lakshay-goyal/my-portfolio</code> PR #8. Findings were checked against the client's source and the live site. Accuracy is ranked first, then context size, then model cost.</p>
+  <p class="meta">Five independent audits ran in parallel: orchestration core, tool layer, category agents and skills, on-page stage, and PR #8 output. Claims marked <span class="tag t-ok">verified</span> were reproduced with a probe script or checked against the live site with curl.</p>
+</header>
+
+<!-- ============ 1 ============ -->
+<section id="summary">
+<h2>1. Executive summary</h2>
+<p>The design direction is right: deterministic facts first, an edit location attached to every value, cheap models only for gaps, and a JSON hand-off to a later stage. The implementation has three structural problems that hurt accuracy more than any prompt change could fix:</p>
+<ol>
+  <li><strong>Pages and served behaviour are under-discovered.</strong> On PR #8 the model found 1 of 5 routes. <code>/about</code>, <code>/bookshelf</code>, <code>/blog</code> and <code>/blog/:slug</code> were missed because the SPA adapter only recognises router libraries, and this site routes on <code>window.location.pathname</code>. Robots, sitemap, soft-404, HSTS and trailing-slash were all measured against the apex host that 307-redirects, so they came back null or wrong.</li>
+  <li><strong>Edit locations are often wrong, and the validator doesn't notice.</strong> About 70% of link edit pointers in PR #8 are wrong: nav links point at section titles in <code>App.jsx</code> rather than <code>PageRail.jsx:2-5</code>, and contact links point at unrelated components rather than <code>ContactRail.jsx:7-11</code>. <code>computed</code>/<code>add</code> edits and <code>line:1</code> placeholders pass grounding, and <code>validation.issue_count</code> still reports 0.</li>
+  <li><strong>Three or four parallel implementations of the same thing.</strong> Route discovery, import resolution, heading/link/media extraction and front-matter parsing each exist 3-5 times (<code>routes.py</code>, <code>adapters.py</code>, <code>inventory.py</code>, <code>react_source.py</code>, <code>page_inventory.py</code>, <code>element_index.py</code>, <code>source_context.py</code>). They disagree. <code>repo_context.pages[0]</code> says <code>/</code> has 0 headings and 0 links, while the page shard says 10 and 19, and nothing says which one wins.</li>
+</ol>
+<p>The on-page stage runs end to end at about $0.39/page. Of the 86 proposed changes for <code>/</code>, roughly 22-28 are distinct and applicable. The rest are duplicates, conflicts, false positives or prose advice. Several high-priority changes (canonical, title, OG, JSON-LD, H1) would <em>hurt</em> this site if applied: the Vite SPA serves one <code>index.html</code> for every route, so they would turn into site-wide duplicates.</p>
+<p>The single 406 KB <code>repo_context.json</code> (about 101k tokens) should not be an execution input. 34% of it is keyword occurrence lists, 24% comes from <code>README.md</code> being treated as page content, and 5% is empty <code>count:0</code> signals. A planner summary of about 6k tokens plus per-category shards of 1-3k tokens would hold the same facts. That cuts the per-fix working set from about 108k to under 8k tokens.</p>
+<div class="callout bad"><strong>Security, fix before the next run on a third-party repo:</strong> <code>build_serve.run</code> passes the full environment, including <code>GITHUB_TOKEN</code> (classic PAT, <code>repo</code> scope) and <code>OPENROUTER_API_KEY</code>, into <code>npm install</code>/<code>build</code> of untrusted code (<code>runtime/build_serve.py:203,274</code>). Any <code>postinstall</code> script can exfiltrate them. Details in <a href="#security">section 4</a>.</div>
+
+<div class="grid g4" style="margin-top:18px">
+  <div class="card stat"><div class="n">1 / 5</div><div class="l">routes discovered on PR #8 site</div></div>
+  <div class="card stat"><div class="n">~12 / 29</div><div class="l">sampled exploration facts fully correct</div></div>
+  <div class="card stat"><div class="n">~25 / 86</div><div class="l">on-page changes distinct and applicable</div></div>
+  <div class="card stat"><div class="n">101k → &lt;8k</div><div class="l">tokens per fix with sharded JSON</div></div>
+</div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="priorities">
+<h2>2. Top 12 priorities (accuracy-weighted)</h2>
+<ol class="prio">
+  <li><span class="tag t-crit">security</span><strong>Scrub the build environment and split containers.</strong> Clone and PR steps get the token. Build and serve run credential-less, as non-root, in a fresh per-run container with limits. Kill builds by process group. Stop passing secrets through <code>docker exec -e</code>, where they show up in the host process list.</li>
+  <li><span class="tag t-crit">accuracy</span><strong>Discover URLs from the rendered site, not only router patterns.</strong> Seed the crawl from rendered <code>&lt;a href&gt;</code>, pathname comparisons (<code>location.pathname === '/x'</code>), nav arrays, sitemaps and content folders. Feed gap-worker <code>instances_suggested</code> back into the manifest; today they are dropped.</li>
+  <li><span class="tag t-crit">accuracy</span><strong>Resolve the canonical host before measuring served behaviour.</strong> Follow apex→www and http→https first, then probe robots, sitemap, soft-404, headers and trailing slash on the final host. Remove the hard-coded <code>/about</code> trailing-slash probe (<code>site_model.py:424</code>).</li>
+  <li><span class="tag t-crit">accuracy</span><strong>Make the grounding validator real.</strong> Reject <code>line:1</code> and template-call-site fallbacks for <code>computed</code>. Derive <code>edit_kind</code> in code from the chosen candidate instead of trusting the LLM (<code>gap_workers.py:302</code>). Add JSON Schema validation, since docs/site-model.md exists only as prose. Add a sampled edit-replay check: apply a sentinel edit, re-render, and confirm the value changed.</li>
+  <li><span class="tag t-high">accuracy</span><strong>Collapse to one IR.</strong> Keep <code>element_index</code> + <code>adapters</code> + <code>source_lens</code>. Delete or demote <code>inventory.py</code>, <code>react_source.py</code>, <code>page_inventory.py</code>, <code>source_context</code> extraction, the 7 dead agent wrappers, and the legacy LLM extractor path. Compute <code>repo_context</code> signals <em>from</em> the IR.</li>
+  <li><span class="tag t-high">accuracy</span><strong>Mark scope on every edit location:</strong> <code>shell</code> (index.html / root layout, affects all routes), <code>layout</code>, <code>template(n)</code> (<code>.map()</code> over data, affects N instances), <code>data</code> (JSON pointer, safe per-instance), or <code>literal</code>. Add <code>shared_by: [routes]</code>. Without this, the on-page stage can't tell a safe edit from a site-wide one.</li>
+  <li><span class="tag t-high">accuracy</span><strong>Fix the verified extractor bugs:</strong> framework misdetection (<code>config.json</code>→hugo, <code>urls.py</code>→django), <code>canonical_values</code> reading neighbouring lines, <code>html lang={expr}</code>→"params", <code>noindex</code> matching <code>nofollow</code>, social-profile false positives, <code>redirects</code>/<code>redirect_rules</code> key mismatch, the Svelte <code>{#if}</code> comment bug, and the static-site crash in <code>react_source.discover_app</code>.</li>
+  <li><span class="tag t-high">context</span><strong>Shard the output.</strong> Use manifest, summary, routes, pages, images, links, metadata, structured_data, performance and evidence files. Stable content-hashed IDs, compact JSON, no empty containers, README/docs excluded from content. Stop committing the full JSON to the client repo.</li>
+  <li><span class="tag t-high">on-page</span><strong>Add a deterministic scope gate and dedup pass to the on-page stage.</strong> One atomic op per change, keyed by <code>dedup_key</code>. Block head changes on a shared SPA shell behind <code>depends_on: prerender</code>. Separate <code>changes[]</code> from <code>advice[]</code>/<code>client_inputs[]</code>. Fix the HIGH-priority key bug (<code>checks.py:30</code>) and the duplicate IDs.</li>
+  <li><span class="tag t-med">cost</span><strong>Tier models by task and turn on caching.</strong> Honour the skill <code>tier:</code> frontmatter. Use structured outputs (<code>response_format</code> JSON schema). Add <code>cache_control</code> on shared principles. Separate transport retries from validation retries. Stop forcing <code>reasoning_effort=none</code> on the mid tier.</li>
+  <li><span class="tag t-med">framework</span><strong>Add attribution via build instrumentation.</strong> A Babel/SWC/Vite plugin stamps <code>data-src="file:line:col"</code> on rendered nodes (React <code>jsx-source</code>, Vue <code>__file</code>, Svelte inspector, Astro dev toolbar). String-match attribution stays as the fallback.</li>
+  <li><span class="tag t-med">evals</span><strong>Build a real eval set.</strong> About 20 pinned OSS sites across stacks, plus this portfolio, scored on URL recall, field accuracy and edit-location accuracy in rendered mode. Track cost and latency per commit. The current 13 toy fixtures are scored source-only against self-authored targets.</li>
+</ol>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="today">
+<h2>3. How the system works today</h2>
+<p>A run boots a long-lived container and clones the repo. It then runs <strong>three stacked output systems</strong> over one snapshot, and optionally the on-page stage.</p>
+<div class="diagram" role="img" aria-label="Current pipeline: host, container, snapshot, then three parallel systems (repo_context regex agents, site model LangGraph, optional legacy LLM extractors) writing to seo_reports, then the on-page stage and a force-pushed PR.">
+<svg viewBox="0 0 1000 400" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="fill:var(--ink-3)"/></marker></defs>
+<rect class="box" x="10" y="160" width="130" height="70" rx="8"/><text class="lbl" x="75" y="190" text-anchor="middle">main.py</text><text class="small" x="75" y="208" text-anchor="middle">hard-coded repo</text>
+<rect class="box" x="170" y="160" width="140" height="70" rx="8"/><text class="lbl" x="240" y="190" text-anchor="middle">Snapshot</text><text class="small" x="240" y="208" text-anchor="middle">≤2000 files · 20 MB</text>
+<path class="arrow" d="M140 195 H168"/>
+<rect class="box" x="350" y="30" width="250" height="80" rx="8"/><text class="lbl" x="475" y="58" text-anchor="middle">A. explore_codebase</text><text class="small" x="475" y="76" text-anchor="middle">18 regex "agents" + profiles</text><text class="small" x="475" y="92" text-anchor="middle">→ repo_context.json (406 KB)</text>
+<rect class="box-a" x="350" y="150" width="250" height="90" rx="8"/><text class="lbl" x="475" y="176" text-anchor="middle">B. site_model (LangGraph)</text><text class="small" x="475" y="194" text-anchor="middle">acquire → build_serve → url_manifest</text><text class="small" x="475" y="210" text-anchor="middle">→ measure (Send/URL) → attribute</text><text class="small" x="475" y="226" text-anchor="middle">→ gap workers (Send) → assemble</text>
+<rect class="box" x="350" y="280" width="250" height="80" rx="8"/><text class="lbl" x="475" y="308" text-anchor="middle">C. legacy LLM extractors</text><text class="small" x="475" y="326" text-anchor="middle">opt-in · 7 tool-using agents</text><text class="small" x="475" y="342" text-anchor="middle">write Python scripts per category</text>
+<path class="arrow" d="M310 185 C330 185 330 70 348 70"/><path class="arrow" d="M310 195 H348"/><path class="arrow" d="M310 205 C330 205 330 320 348 320"/>
+<rect class="box-i" x="640" y="150" width="160" height="90" rx="8"/><text class="lbl" x="720" y="182" text-anchor="middle">seo_reports/</text><text class="small" x="720" y="200" text-anchor="middle">site_model/*.json</text><text class="small" x="720" y="216" text-anchor="middle">repo_context.json</text>
+<path class="arrow" d="M600 70 C620 70 620 170 638 170"/><path class="arrow" d="M600 195 H638"/><path class="arrow" d="M600 320 C620 320 620 220 638 220"/>
+<rect class="box" x="830" y="110" width="160" height="70" rx="8"/><text class="lbl" x="910" y="140" text-anchor="middle">onpage stage</text><text class="small" x="910" y="158" text-anchor="middle">15 linear checks</text>
+<rect class="box" x="830" y="220" width="160" height="70" rx="8"/><text class="lbl" x="910" y="250" text-anchor="middle">Force-push PR</text><text class="small" x="910" y="268" text-anchor="middle">fixed fork branch</text>
+<path class="arrow" d="M800 180 C815 180 815 145 828 145"/><path class="arrow" d="M800 210 C815 210 815 255 828 255"/>
+</svg>
+</div>
+<ul>
+  <li><strong>Deterministic vs LLM:</strong> everything in the site model is code except the gap workers (single-shot, tool-less, small model with escalation to mid) and the learned route adapter. The legacy path is entirely LLM-written code.</li>
+  <li><strong>"Sub-agents"</strong> in the site model are stateless single completions over a task packet. That is the right shape. The orchestrator should stay code, not an LLM supervisor.</li>
+  <li><strong>Models:</strong> <code>small</code> = <code>OPENROUTER_SMALL_MODEL</code>, falling back to DeepSeek Flash. <code>mid</code> = hard-coded <code>anthropic/claude-sonnet-5.5</code> (<code>tools/llm.py:30</code>). There is no Haiku-class tier between them.</li>
+  <li><strong>Default run is the weakest lens.</strong> Without <code>--site-url</code> or <code>--render</code>, a Vite SPA is analysed source-only. The source lens doesn't evaluate conditionals or mapped lists (<code>source_lens.py:563</code>).</li>
+</ul>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="security">
+<h2>4. Security (fix first)</h2>
+<div class="table-wrap"><table>
+<tr><th>Severity</th><th>Issue</th><th>Where</th><th>Fix</th></tr>
+<tr><td><span class="tag t-crit">critical</span></td><td>Full env (GitHub PAT with <code>repo</code> scope, OpenRouter key) is passed to <code>npm ci/install/build</code> and the preview server of untrusted repos. Any postinstall script can steal it.</td><td><code>runtime/build_serve.py:203,274</code>; <code>sandbox/.../local.py:25-27</code></td><td>Allowlist env (<code>PATH, HOME, CI, *_TELEMETRY_DISABLED</code>). Separate build container with no secrets. Egress only during install, through a proxy.</td></tr>
+<tr><td><span class="tag t-crit">critical</span></td><td>Stale or wrong repo analysed: <code>test -d /tmp/&lt;name&gt;/.git || git clone</code>. Two owners' repos with the same name share a dir, so repo A's code gets analysed and pushed as a PR to repo B.</td><td><code>sandbox/clone.py:9-19</code>, <code>pr.py:86,144</code></td><td>Key the dir by <code>owner/repo@sha</code> and always clone fresh. Record the SHA in <code>index.json</code> and use it as the PR base.</td></tr>
+<tr><td><span class="tag t-high">high</span></td><td>Secrets visible in host process list via <code>docker exec -e KEY=VALUE</code>.</td><td><code>sandbox/tools/docker.py:29-30</code></td><td><code>--env-file</code> or stdin.</td></tr>
+<tr><td><span class="tag t-high">high</span></td><td>Container runs as root, with no CPU/memory limit and no network policy. Chromium runs with <code>--no-sandbox</code>. One shared, long-lived named container, so concurrent runs collide and state leaks between repos.</td><td><code>docker.py:9,79</code>, <code>render.py:97</code>, <code>lighthouse.py:79</code></td><td><code>--rm</code>, unique name, non-root, <code>--cpus/--memory</code>, per run.</td></tr>
+<tr><td><span class="tag t-high">high</span></td><td>Sitemap fetcher follows sitemap indexes and <code>robots.txt</code> <code>Sitemap:</code> lines to any host (SSRF), and fetches each one twice.</td><td><code>site_model.py:352-374</code></td><td>Same-origin check. Single fetch through the isolated probe.</td></tr>
+<tr><td><span class="tag t-med">medium</span></td><td>Learned-adapter cache key isn't per-repo, so rules from repo A are silently reused on repo B. The gap cache key excludes validator/code version.</td><td><code>gap_workers.py:144-148,365</code></td><td>Include repo id, snapshot hash and code version in the key.</td></tr>
+<tr><td><span class="tag t-med">medium</span></td><td><code>grep</code> tool compiles model-supplied regex with no timeout (catastrophic backtracking hangs the run).</td><td><code>tools/agent_retrieval.py:301</code></td><td><code>regex</code> module with timeout, or RE2.</td></tr>
+</table></div>
+<p><span class="tag t-ok">good</span><code>http_probe</code> runs in a subprocess with <code>env={}</code>. Generated scripts run under an AST allowlist plus rlimits in an env-less worker. Safe XML rejects entities. Extend that discipline to the build path.</p>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="orchestration">
+<h2>5. Orchestration &amp; pipeline</h2>
+<h3>Correctness defects</h3>
+<ul>
+  <li><strong>Grounding is bypassed by the most common fallbacks.</strong> <code>computed</code>/<code>cms</code>/<code>add</code> edits only need the file to exist (<code>site_model.py:121-122</code>). Attribution fallbacks emit <code>{kind: computed, line: 1}</code> (<code>attribution.py:199,332</code>), and <code>add_location</code> emits <code>line: 1</code> (<code>source_lens.py:819</code>). Any <code>via</code>/<code>i18n_key</code> disables the value check (<code>site_model.py:136</code>). The "schema" check listed at <code>site_model.py:342</code> doesn't exist.</li>
+  <li><strong>The LLM's <code>edit_kind</code> overrides the candidate's real kind</strong> (<code>gap_workers.py:302</code>). <code>explain_computed</code> with <code>none</code> changes the kind but keeps the old file and line.</li>
+  <li><strong>Route adapter, the most consequential LLM task, gets one attempt</strong> (<code>gap_workers.py:176</code>, <code>tier: mid</code> skips the ladder).</li>
+  <li><strong><code>instances_suggested</code> is never used</strong> (<code>gap_workers.py:333</code>). There is no loop edge from gap results back to <code>url_manifest</code>.</li>
+  <li><strong>Build artifacts are indexed as source.</strong> <code>SKIP_DIRS</code> misses <code>out</code>, <code>_site</code>, <code>public</code> (Hugo output) and <code>docs</code>. Stale committed <code>dist/</code> is served as ground truth by default (<code>SEO_MEASURE_PREBUILT</code>, <code>build_serve.py:34,245</code>).</li>
+  <li><strong>Snapshot starvation.</strong> Assets count toward <code>max_files=2000</code>, and the sorted walk visits <code>public/</code> before <code>src/</code>. An image-heavy repo can end up capturing no source.</li>
+  <li><strong>Hidden files are excluded</strong>, so the <code>.env.production</code> host hints in <code>url_manifest.py:59-60</code> never fire.</li>
+  <li><strong><code>SEO_MEASURE_WORKERS</code> can't lower concurrency:</strong> <code>max(workers, SEO_GAP_CONCURRENCY)</code> (<code>site_graph.py:373</code>). Each URL also launches a fresh Chromium.</li>
+  <li><strong>Lighthouse is serial</strong> (12 pages × 2 form factors × 3 runs × 180 s) inside <code>attribute</code>. One failed run discards the others (<code>lighthouse.py:86</code>). On PR #8 performance <code>status:"failed"</code>, yet the ledger says <code>measured</code>.</li>
+  <li><strong>Repeated content blocks lose their edit locations</strong> because matching uses a dict keyed by normalised text (<code>attribution.py:341</code>).</li>
+  <li><strong>A legacy-agent failure kills the PR.</strong> <code>ExplorationIncomplete</code> is uncaught (<code>pipeline.py:139</code>), even though the site model is already on disk.</li>
+  <li><strong>Settings and config gaps:</strong> <code>FORWARDED_ENV</code> omits <code>SEO_MEASURE_PREBUILT</code>, <code>SEO_MAX_CRAWL_DEPTH</code>, the cache vars and all <code>LANGSMITH_*</code>. A global <code>OPENROUTER_REASONING_EFFORT=none</code> disables Sonnet reasoning on escalation. An invalid URL exits 0. The PR branch is fixed and force-pushed, so every run overwrites the previous one.</li>
+</ul>
+<h3>Duplication &amp; dead code</h3>
+<ul>
+  <li>Three parsers over the same source: <code>SourceIndex</code>/<code>page_inventory</code> (→ repo_context), <code>element_index</code>/<code>source_lens</code> (→ site model), and <code>inventory.py</code> + LLM extractors (legacy). <code>build_element_index</code> runs twice (<code>pipeline.py:138</code>), and the manifest is rebuilt three times (<code>site_graph.py:140,230,248</code>).</li>
+  <li>Dead code: <code>gap_workers.run_gap_workers</code> (tests only), <code>render.close_browsers</code> (stub), the seven <code>agents/*.py</code> wrappers around <code>extract_category</code>, and <code>json_analysis.py</code>. <code>benchmark_exploration.py</code> benchmarks legacy static mode, not the site model.</li>
+</ul>
+<h3>Cost leaks</h3>
+<ul>
+  <li>Transport and auth errors are caught as "invalid answer" and retried through the ladder (<code>gap_workers.py:195</code>). Stacked on <code>max_retries=2</code>, that is up to 9 HTTP calls per task, and a bad key burns about 3×N calls before anything surfaces.</li>
+  <li>The legacy path serialises the whole snapshot plus an index of up to 24 MB to a subprocess per <code>test_script</code>, and runs accepted scripts twice. The design doc records about 354k input tokens for one content agent.</li>
+  <li>Cost accounting assumes cache reads cost 10% for every provider and ignores cache writes. <code>USAGE</code> is process-global and never reset.</li>
+</ul>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="tools">
+<h2>6. Tool layer &amp; framework support</h2>
+<h3>LLM tool-calling surface</h3>
+<p>Only <code>tools/agent_retrieval.py:62 repository_tools()</code> is exposed to models, and only in the legacy path. It builds 17-19 tools across two overlapping surfaces: <code>read</code>/<code>read_source</code>/<code>read_sources</code>, <code>grep</code>/<code>search_source</code>/<code>search_sources</code>, and <code>query_index</code>/<code>query_context</code>. Problems:</p>
+<ul>
+  <li>Schemas come from type hints plus a one-line docstring. <strong>No parameter descriptions</strong>, and enums such as <code>query_index(kind=…)</code> are free strings. Small models pay for this with invalid calls.</li>
+  <li><code>read</code> silently truncates lines over 2000 chars (<code>:277</code>). <code>query_index(page=…)</code> with no match returns empty with no error (<code>:381</code>). <code>find_definition</code>'s <code>break</code> exits only the inner loop.</li>
+  <li><code>grep</code> collects every match before paginating, and <code>page_records</code> re-serialises the growing list each row (quadratic).</li>
+  <li>No history trimming. The worst case resends about 60 × 16 KB per round.</li>
+</ul>
+<p><strong>Recommendation:</strong> retire "LLM writes an extractor script". The model should choose among deterministic candidates, as gap workers already do. Where a tool-using worker is needed (computed values), give it about 5 tools with documented params, scope them to one page's composition bundle, and cap calls at 3.</p>
+
+<h3>Framework detection: verified misfires</h3>
+<div class="table-wrap"><table>
+<tr><th>Input</th><th>Detected as</th><th>Cause</th></tr>
+<tr><td>React+Vite SPA with a root <code>config.json</code></td><td class="v-miss">hugo</td><td><code>^(?:hugo|config)\.(toml|ya?ml|json)$</code> scores a non-weak 2, and non-weak wins (<code>framework.py:57,187</code>) <span class="tag t-ok">verified</span></td></tr>
+<tr><td>Any repo with <code>scripts/urls.py</code></td><td class="v-miss">django</td><td><code>(?:^|/)urls\.py$</code> (<code>:74</code>)</td></tr>
+<tr><td>Any <code>theme.json</code> / <code>*.info.yml</code></td><td class="v-miss">WP block theme / Drupal</td><td>Generic file triggers</td></tr>
+<tr><td>Monorepo: Next + Docusaurus</td><td class="v-part">one site only</td><td>Only the primary adapter runs (<code>adapters.py:634</code>)</td></tr>
+</table></div>
+
+<h3>Route discovery: concrete failures</h3>
+<ul>
+  <li><strong>Pathname-switch SPAs</strong> (PR #8): no router library, so they fall back to <code>spa-single-entry</code> (<code>adapters.py:483,642</code>).</li>
+  <li><strong>Next.js:</strong> intercepting route <code>app/(.)photo/[id]</code> becomes URL <code>/(.)photo/[id]</code>. <code>[locale]</code> has no locale semantics. App-router i18n (middleware, next-intl) isn't covered.</li>
+  <li><strong>Remix v1:</strong> nested <code>app/routes/blog/$slug.tsx</code> is dropped (the regex excludes <code>/</code>).</li>
+  <li><strong>React Router:</strong> paths from constants (<code>path: P.ABOUT</code>) are silently dropped with no gap recorded. Separately, <code>parse_object_routes</code> treats any <code>{path:'…'}</code> (for example <code>{ path: '/api/v1' }</code>) as a route.</li>
+  <li><strong><code>static_params</code></strong> misses <code>posts.map(p =&gt; ({slug: p.slug}))</code>, and any literal <code>slug: 'x'</code> in the file becomes a page <span class="tag t-ok">verified</span>.</li>
+  <li><strong>Other stacks:</strong> Gatsby <code>createPage</code> breaks on a nested <code>context:{}</code>. Front matter is single-line only, with no Hugo TOML <code>+++</code>. Express routes count only with <code>res.render</code> within 400 chars. Laravel reads only <code>routes/web.php</code> and misses groups and resources. Rails ignores nesting.</li>
+  <li><strong>Fixture coverage:</strong> 13 tiny fixtures (111 files total). No fixtures for Remix, Gatsby, Angular, 11ty, Docusaurus, VitePress, Qwik, Solid, Rails, Flask, Express, Razor, Ghost, Drupal or Magento, despite the README claiming them.</li>
+</ul>
+
+<h3>Source attribution (<code>element_index.py</code>)</h3>
+<ul>
+  <li><strong>No value spans.</strong> Attributes and text have no start/end col, so the editor has to re-search the literal, which is ambiguous when <code>alt</code> and <code>title</code> share text.</li>
+  <li><strong>Text split by children</strong> becomes a non-contiguous "literal": <code>&lt;p&gt;Some &lt;b&gt;bold&lt;/b&gt; text&lt;/p&gt;</code> gives <code>"Some text"</code>, so find-replace fails <span class="tag t-ok">verified</span>.</li>
+  <li><strong>Element IDs</strong> are <code>sha1(file:line:col:tag)</code>, so they're invalidated by any line insert above.</li>
+  <li><strong>No data flow:</strong> same-file constants, Astro frontmatter constants, Vue <code>:title</code> and parent→child props are not linked. Template literals keep only static fragments.</li>
+  <li><strong>i18n:</strong> namespaces aren't resolved (<code>useTranslations('Hero')</code> + <code>t('title')</code> records <code>title</code>). <code>\b_\(</code> and <code>t(</code> match any such function.</li>
+  <li><strong>Shared components aren't flagged.</strong> Editing <code>Hero.tsx</code> silently changes every page.</li>
+</ul>
+
+<h3>Runtime</h3>
+<ul>
+  <li><strong>Next.js SSR (no <code>output:'export'</code>) likely can't be served.</strong> Preview passes <code>--host</code>, which <code>next start</code> doesn't accept (it uses <code>-H</code>). Remix and Nuxt read <code>PORT</code>. <code>wait_for</code> treats a 500 as "up", and preview output goes to <code>DEVNULL</code>. <em>(CLI flag behaviour from docs, not executed.)</em></li>
+  <li><strong>Package managers:</strong> Yarn 2+ needs <code>--immutable</code>, not <code>--frozen-lockfile</code>. <code>packageManager</code>/corepack and <code>.nvmrc</code>/<code>engines</code> are ignored. Install runs in the package dir, not the workspace root. The build timeout doesn't kill grandchildren.</li>
+  <li><strong>Lighthouse:</strong> static files are served by Python's <code>ThreadingHTTPServer</code> (no compression or HTTP/2), so lab numbers aren't production-like. <code>inp_ms</code> is always empty in navigation mode. CrUX field data is fetched only when the Lighthouse CLI is <em>absent</em>.</li>
+  <li><strong>Link checks:</strong> HEAD 403/404 from WAFs and CDNs is marked broken. GET is retried only on 405/501. The external sample is the first 50 alphabetically.</li>
+  <li><strong>Crash:</strong> <code>react_source.discover_app</code> raises <code>Unresolved React mount entry</code> for any static <code>index.html</code> with <code>&lt;script src&gt;</code>, and for Vue/Svelte Vite apps <span class="tag t-ok">verified</span>.</li>
+  <li><strong>Comment detection:</strong> Svelte <code>{#if}</code> and a string <code>'src/**/*.js'</code> open a "comment" that wipes up to 4000 chars of signals (<code>skill_runner.py:189</code>) <span class="tag t-ok">verified</span>.</li>
+</ul>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="agents">
+<h2>7. Category agents (per agent)</h2>
+<div class="callout info"><strong>Important framing.</strong> The 14 modules called "agents" in <code>pipeline.explore_codebase</code> are <em>deterministic regex runners</em> over profile JSON. There is no model. <code>skills/*/SKILL.md</code> under <code>repo_analysis/skills/</code> are human docs, not runtime prompts (<code>skill_runner.py:8</code>). The real prompts are in <code>agents/llm/skills/</code> and <code>agents/gap/skills/</code> (section 8). Seven agent files (<code>content_arrangement</code>, <code>eeat_trust_signals</code>, <code>internal_links</code>, <code>media_alt_text</code>, <code>metadata_social_cards</code>, <code>page_structure</code>, <code>url_information_architecture</code>) are dead: nothing imports them.</div>
+<h3>Cross-cutting problems</h3>
+<ol>
+  <li><strong>Repo-wide booleans instead of per-page facts.</strong> A gap fires only if a signal matches nowhere in the repo. One canonical on 1 page out of 400 means "no gap". An editor needs <code>{route → value | absent}</code>.</li>
+  <li><strong>Records give the location but not the value.</strong> Most signals have no <code>value_group</code> (canonical, noindex, hreflang, viewport, font-display).</li>
+  <li><strong>The same regex runs 3-4 times:</strong> <code>"@type"</code> in structured-data, brand, local and AI readiness. <code>document.title=</code> in two profiles. Feeds, OG and responsive images are each duplicated.</li>
+  <li><strong>Path-based page signals aren't joined to routes.</strong> "about-page" matched <code>components/team/Avatar.tsx</code>, and "contact page" matched <code>stores/cart.ts</code> <span class="tag t-ok">verified</span>.</li>
+  <li><strong><code>precision</code> labels are uncalibrated</strong>, and caps (25 per file, 150 per signal) silently drop editable values.</li>
+  <li><strong>Site model ignores agent output.</strong> It reads <code>redirects</code>, but the agent emits <code>redirect_rules</code>. <code>rendering_strategy</code> isn't in the consumed list (<code>site_model.py:443-448</code>), so redirect rules and rendering modes never reach the site model.</li>
+</ol>
+
+<details open><summary>sitemap_robots</summary>
+<p><strong>Extracts:</strong> static robots.txt groups, <code>&lt;loc&gt;</code> from static sitemaps (cap 500), generator leads, a noindex signal.</p>
+<p><strong>Misses:</strong> generated robots/sitemap (Next <code>app/robots.ts</code>, <code>sitemap.ts</code>, Nuxt/Gatsby plugins, Hugo/Jekyll templates; a Hugo template parses as <code>parse_error</code>), <code>.xml.gz</code>, sitemap-index children, <code>lastmod</code>, hreflang and image entries.</p>
+<p><strong>Wrong:</strong> <code>noindex</code> regex includes <code>\bnofollow\b</code> and <code>index:false</code>, so <code>rel="nofollow"</code> and <code>express.static({index:false})</code> are reported as noindex <span class="tag t-ok">verified</span>. No route mapping.</p>
+<p><strong>Fix:</strong> split meta-robots, X-Robots-Tag and metadata-robots, each with a captured value per route. Cross-check Disallow ∩ routes ∩ sitemap ∩ noindex.</p></details>
+
+<details><summary>canonicals_redirects</summary>
+<p><strong>Bug:</strong> <code>canonical_values</code> runs <code>href=</code> over ±3 context lines (<code>canonicals_redirects.py:48-50</code>) and returned <code>/favicon.ico</code> and a tweet-intent URL as canonicals <span class="tag t-ok">verified</span>.</p>
+<p><strong>Misses:</strong> <code>netlify.toml</code> redirects (matched but never parsed), Nuxt <code>routeRules</code> (claimed in SKILL.md), Astro object redirects, Gatsby <code>createRedirect</code>, Hugo <code>aliases</code>, Jekyll <code>redirect_from</code>, nginx <code>conf.d/*</code>. SPA catch-alls (<code>path="*"</code>, <code>'**'</code>, Nuxt <code>error.vue</code>) aren't recognised as 404 handling.</p>
+<p><strong>Wrong:</strong> Vercel <code>rewrites</code> are listed as redirects (PR #8 classifies <code>/(.*)→/index.html</code> as <code>redirect-config</code>). A missing <code>permanent</code> should default to 308, but <code>None</code> is returned. <code>RewriteRule</code> without <code>[R]</code> is not a redirect. <code>.Permalink</code> isn't a canonical.</p>
+<p><strong>Fix:</strong> a per-host parser registry emitting <code>{from,to,status,kind:redirect|rewrite}</code>, chain and loop resolution, and soft-404 risk from catch-alls.</p></details>
+
+<details><summary>hreflang_i18n</summary>
+<p><strong>Bug:</strong> <code>lang={params.locale}</code> gives value <code>"params"</code> <span class="tag t-ok">verified</span>. The regex is case-sensitive, so Next <code>&lt;Html lang&gt;</code> in <code>_document</code> is missed and produces a false <code>no-html-lang</code> gap.</p>
+<p><strong>Misses:</strong> Nuxt <code>htmlAttrs</code>, Gatsby <code>setHtmlAttributes</code>, SvelteKit <code>[[lang]]</code>, Remix <code>($lang)</code>, Hugo <code>content/&lt;lang&gt;</code> and <code>index.fr.md</code>, Nuxt prefix strategy, auto-hreflang from <code>useLocaleHead</code>/next-intl/<code>@astrojs/sitemap</code>.</p>
+<p><strong>Fix:</strong> read <code>{locales, default, strategy}</code> from framework config, mark expressions as <code>value_origin: expression</code>, ignore case.</p></details>
+
+<details><summary>structured_data</summary>
+<p><strong>Misses</strong> the dominant JS pattern <code>dangerouslySetInnerHTML={{__html: JSON.stringify(obj)}}</code> <span class="tag t-ok">verified</span>, plus next-seo components, Nuxt <code>useSchemaOrg</code> and Liquid filters. A self-closing script tag followed by a later <code>&lt;/script&gt;</code> swallows everything between. <code>@type</code> arrays are missed. Nested types are counted as top-level.</p>
+<p><strong>Fix:</strong> resolve the object passed to <code>JSON.stringify</code> via tree-sitter, emit <code>{top_level_type, properties, file, route}</code>, validate required props for about 6 key types, and make this the single <code>@type</code> source for brand, local and FAQ.</p></details>
+
+<details><summary>rendering_strategy</summary>
+<p>Modes don't cascade from config or root layout (SvelteKit root <code>prerender</code>, Next <code>output:'export'</code>, Nuxt <code>ssr:false</code>). Nuxt <code>ssr:false</code> is not classified CSR. Path regexes are anchored at the repo root, so monorepos are missed. Auto-static Next pages have no mode. Angular <code>&lt;app-root&gt;</code> and <code>&lt;div id="app" …&gt;</code> shells are missed.</p>
+<p><strong>Fix:</strong> per-framework resolver with config → layout → page precedence, emitting <code>route → {mode, source_chain}</code>.</p></details>
+
+<details><summary>client_diagnostics (react_diagnostics.py) and state_management</summary>
+<p><strong>Keep 4 SEO-relevant signals:</strong> hash-router, JS-only navigation, runtime-head, effect-fetch. Add <code>&lt;a&gt;</code> without href, <code>href="#"</code> and <code>javascript:</code>. Fold them into rendering/links per route. Drop the hydration and security signals.</p>
+<p><strong>state_management:</strong> almost no SEO value. <code>content_prefetched_on_server</code> is wrong for Next App Router and Nuxt <code>useFetch</code> (which runs server-side). Its own <code>execution_hint</code> contradicts its classification. <strong>Delete it</strong> and record per-route data source in rendering_strategy instead.</p></details>
+
+<details><summary>performance_assets / page_latency</summary>
+<p><code>legacy_format_assets</code> lists every png/jpg in the repo, uncapped and unreferenced (false positive when next/image or astro:assets converts them). <code>preconnect</code> also matches <code>preload</code>. Third-party bare words match prose. SKILL.md promises missing-dimensions and font-preconnect pairing that the profile doesn't do.</p>
+<p><strong>Missing:</strong> per-image dimensions, format and lazy-on-LCP, <code>font-display</code> per face, render-blocking head CSS, per-page CWV.</p>
+<p><strong>page_latency:</strong> a serial HTTP baseline with no CWV, run only in the legacy graph. Rename it or merge it into served probes.</p></details>
+
+<details><summary>https_security_headers</summary>
+<p>Counts <code>&lt;meta http-equiv&gt;</code> HSTS/XFO, which browsers ignore. <code>insecure-url</code> flags <code>"@context":"http://schema.org"</code> <span class="tag t-ok">verified</span>. Gaps fire on Vercel/Netlify/Cloudflare, which add HSTS automatically. On PR #8 the live <code>www</code> sends HSTS, but the JSON reports <code>no-hsts</code>.</p>
+<p>For SEO only HTTPS redirect, HSTS and mixed content matter. Move CSP, XFO and Permissions-Policy to an optional profile.</p></details>
+
+<details><summary>brand_entity_signals / local_business_presence</summary>
+<p><strong>Brand:</strong> <code>social_profiles</code> includes <code>github.com/…/blob/main/README.md</code> and <code>twitter.com/intent/tweet</code>, which are then reported as "missing from sameAs" <span class="tag t-ok">verified</span>. <code>same-as</code> needs <code>block:true</code>, or arrays longer than 3 lines get truncated.</p>
+<p><strong>Local:</strong> <code>stores?</code> matches Redux/Pinia store dirs. The <code>"telephone":</code> alternative captures the key, not the value. JSON-LD email is never captured. For non-local sites this is noise; gate it on <code>local-schema</code>/<code>PostalAddress</code>.</p></details>
+
+<details><summary>shareability_link_assets / ai_search_readiness / mobile_parity / code_exploration</summary>
+<p><strong>Shareability:</strong> the <code>og-image-generator</code> path regex sits in a content signal, so the Next <code>opengraph-image.png</code> convention never matches. The <code>twitter:{card}</code> regex only matches when <code>card</code> is the first key. No OG image validity checks (absolute URL, existence, 1200×630, size).</p>
+<p><strong>AI readiness:</strong> <code>semantic-landmark</code> and <code>list-table</code> record every <code>&lt;main&gt;/&lt;ul&gt;</code> (tests even assert truncation at 25). Replace them with per-page counts. <code>ai-crawler-rule</code> counts bot-detection UA lists and doesn't distinguish allow from disallow; derive it from parsed robots groups.</p>
+<p><strong>Mobile:</strong> <code>no-viewport</code> is a false positive on Next/Nuxt/SvelteKit/Gatsby, which inject a default viewport. <code>media-queries</code> emits up to 150 CSS records; use a count. There is no favicon signal anywhere.</p>
+<p><strong>code_exploration:</strong> tsconfig/babel/postcss/tailwind add nothing for SEO. It misses Hugo <code>config/_default/</code>, <code>react-router.config.ts</code> and <code>wrangler.toml</code>. Hosting files (vercel.json, netlify.toml, <code>_headers</code>) should be a parsed <code>deployment_config</code>.</p></details>
+
+<details><summary>Legacy LLM extractors (urls, page_structure, internal_links, media, metadata, content, eeat)</summary>
+<p>These are the only real tool-using agents, but they're scoped per <em>category over the whole repo</em>, which is the wrong axis. Context grows with repo size. Asking a cheap model to write a 30 KB+ program in a restricted Python dialect (no try/except, lambda or imports) is a code-generation task. The design history shows truncated plans, missing <code>ExtractionPlan</code> and exhausted discovery budgets. <code>pipeline.py:103</code> says the site model already covers their data. <strong>Retire them</strong>, or keep them only as an offline tool for authoring adapters.</p></details>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="skills">
+<h2>8. Skills &amp; prompts</h2>
+<h3>Exploration gap skills (<code>agents/gap/skills/*</code>), the strongest prompts</h3>
+<p>Answers are constrained to IDs and enums, there's an untrusted-data clause, family-filtered few-shot examples, and a short "Done when". Weak spots:</p>
+<ul>
+  <li><strong>No structured output.</strong> JSON is pulled out by a brace scan (<code>gap_workers.py:57-63</code>). Use <code>response_format</code> with a JSON schema; that removes a whole failure class for cheap models.</li>
+  <li><strong>attribute-value:</strong> rule 4 ("data wins only when the template line shows the key") can't be applied from one-line snippets. The model never sees the call-site chain. Don't ask for <code>edit_kind</code>; code knows it.</li>
+  <li><strong>explain-computed:</strong> ±6 lines and no access to imported helpers, so the model guesses. The Next example labels a local array <code>literal</code>, which contradicts the json/computed semantics.</li>
+  <li><strong>topic-intent:</strong> "realistic searches" invites invented queries with no grounding data. The skill says 2-6 words but the validator allows 1-8. Voting uses exact JSON equality, so "agreement" mostly measures the <code>intent</code> enum. Output lands in <code>keywords</code> as if it were fact.</li>
+  <li><strong>eeat-classify:</strong> asks for <code>expertise_evidence</code>, but the harvester never produces that candidate type. Harvest regexes are English-only.</li>
+  <li><strong>route-adapter:</strong> sees paths only, no file heads, so it can't tell a page from a partial.</li>
+</ul>
+<h3>Legacy extractor skills (<code>agents/llm/skills/*</code>, <code>contract-common.md</code>)</h3>
+<ul>
+  <li>Compact (180-290 words) with schema, rules and one example. But they have <strong>no negative examples</strong> (expression values, layout duplication), which is where cheap models drift.</li>
+  <li><strong>internal_links:</strong> no <code>external</code> kind, so absolute same-origin links become <code>absolute-unclassified</code>. No JS-only or <code>href="#"</code> field. <code>rel</code> isn't parsed.</li>
+  <li><strong>media:</strong> no <code>alt_status: missing|empty|literal|expression</code>, format, decoding or LCP flag.</li>
+  <li><strong>metadata:</strong> a loose union record shape. Ignores generator tags (jekyll-seo-tag, Hugo internal templates, Docusaurus themeConfig, Nuxt <code>app.head</code>) and <code>metadataBase</code>.</li>
+</ul>
+<h3>Repo-analysis SKILL.md vs profile drift</h3>
+<div class="table-wrap"><table>
+<tr><th>SKILL.md claims</th><th>Profile reality</th></tr>
+<tr><td>canonicals: <code>routeRules</code>, netlify.toml redirects</td><td>No routeRules regex; netlify.toml matched, never parsed</td></tr>
+<tr><td>performance: missing dimensions, lazy below fold, font-without-preconnect</td><td>None implemented</td></tr>
+<tr><td>mobile: <code>display:none</code> in mobile media queries</td><td>Not in profile</td></tr>
+<tr><td>keywords: runtime signals</td><td>0 signals (weights only)</td></tr>
+<tr><td>client-diagnostics: nav without real <code>&lt;a href&gt;</code></td><td>Only onClick-navigate patterns</td></tr>
+<tr><td>state-management: where content components read the store</td><td>Not implemented</td></tr>
+</table></div>
+<p>Add a test that every backticked token in a SKILL.md appears in a profile example or is marked as covered by Python. Profile <code>examples</code> test the regex, not accuracy. <code>parse_robots</code>, <code>redirect_rules</code>, <code>same_as_urls</code>, <code>phone_values</code> and <code>route_modes</code> have no tests, and every verified bug above would have been caught by a 10-line fixture.</p>
+<h3>On-page skills (<code>src/seo_agents/onpage/skills/*</code>)</h3>
+<ul>
+  <li><strong>Overlap by design.</strong> title-tag, headings (H1), answer-first, aeo-geo (definition, summary, FAQ, entity statements), eeat (author bio) and search-intent (user_questions) all independently produce "who is X / what X does". <code>user_questions</code> feed both the H2 outline and the FAQ, so FAQ = H2s is guaranteed.</li>
+  <li><strong>Contradictions:</strong> direct answer is 40-60 words (P2) but the validator allows 25-70. Paragraphs are ≤3 sentences, the skill says ≤70 words, the validator allows 90. P8 says "repeat the entity name, not pronouns" while the density validator says "use pronouns", and proper names are exempt, so the name appears 34 times in 943 words.</li>
+  <li><strong>Promised inputs never sent:</strong> answer-first expects <code>current_blocks[].edit</code>, media expects format/natural/size/loading, internal-links expects <code>site_urls[].intent</code> and <code>anchor_edit</code>, structured-data expects <code>breadcrumbs</code>. None are sent.</li>
+  <li><strong>Deterministic-check SKILL.md files drift from code</strong> (fact-check, technical, qa, social-meta, keyword-integration all describe unimplemented checks).</li>
+  <li><strong>Bad defaults for personal/portfolio pages:</strong> mandatory author box, "Last updated", and verbose nav anchors ("Lakshay's reading bookshelf").</li>
+  <li><strong>Token cost:</strong> <code>_principles.md</code> (~900 tokens, about 70% irrelevant to media/links/schema) is re-sent uncached on every call, about 19% of input.</li>
+</ul>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="pr-explore">
+<h2>9. PR #8: exploration output accuracy</h2>
+<p>Client: React + Vite + Tailwind portfolio on Vercel, with a catch-all rewrite <code>/(.*) → /index.html</code>. Live checks with curl on 2 Nov 2026.</p>
+<div class="table-wrap"><table>
+<tr><th>#</th><th>Fact</th><th>Verdict</th><th>Truth</th></tr>
+<tr><td>1-3</td><td>Title, description, lang, viewport → <code>index.html:14/7/2/6</code></td><td class="v-hit">HIT</td><td>Correct</td></tr>
+<tr><td>4</td><td>No canonical / OG / Twitter / JSON-LD</td><td class="v-hit">HIT</td><td>Correct</td></tr>
+<tr><td>5</td><td>No H1</td><td class="v-hit">HIT</td><td>Also true site-wide: blog <code>#</code> renders as <code>&lt;h2&gt;</code> (App.jsx:420). Not reported.</td></tr>
+<tr><td>6-8</td><td>H2s, project H3s → <code>majorProjects.json /n/title</code>, composed experience H3</td><td class="v-hit">HIT</td><td>Correct</td></tr>
+<tr><td>9</td><td>4 project PNGs: 1920×1080, lazy, no width/height</td><td class="v-hit">HIT</td><td>Correct</td></tr>
+<tr><td>10</td><td><code>oversized_ratio 5.93</code></td><td class="v-part">PARTIAL</td><td>Width-only at 1× DPR, one viewport; about 3× at 2× DPR</td></tr>
+<tr><td>11</td><td>Nav links <code>/about /bookshelf /blog</code> edit → App.jsx:280/344/378</td><td class="v-miss">MISS 4/4</td><td><code>PageRail.jsx:2-5</code>. Matched label "About" to <code>&lt;Section id="about"&gt;</code></td></tr>
+<tr><td>12-13</td><td>Experience/project hrefs → <code>/0/company</code>, <code>/0/title</code></td><td class="v-miss">MISS</td><td><code>/0/url</code>, <code>/0/live</code>, or <code>/1/github</code> (fallback <code>live || github</code>)</td></tr>
+<tr><td>14</td><td>Contact rail links → App.jsx:109/121, PageRail.jsx:14, index.html:1</td><td class="v-miss">MISS 4/4</td><td><code>ContactRail.jsx:7-11</code>. <code>brand_entity_signals</code> had the right lines, contradicting the page model.</td></tr>
+<tr><td>16</td><td><code>vercel.json</code> as "redirect-config"</td><td class="v-part">PARTIAL</td><td>It's a rewrite, not a redirect</td></tr>
+<tr><td>17</td><td>Apex→www 307, http→https 308</td><td class="v-hit">HIT</td><td>Confirmed live</td></tr>
+<tr><td>18</td><td><code>robots_txt: {status:307, body:null}</code>, gap no-robots</td><td class="v-miss">MISS</td><td><code>www/robots.txt</code> and <code>/sitemap.xml</code> return <strong>200 text/html</strong> (SPA shell)</td></tr>
+<tr><td>19</td><td><code>soft_404: false</code></td><td class="v-miss">WRONG</td><td><code>/nope</code> → 200 + client "Page not found". It is a soft 404.</td></tr>
+<tr><td>20</td><td>No HSTS</td><td class="v-miss">WRONG</td><td><code>strict-transport-security: max-age=63072000</code> on www</td></tr>
+<tr><td>21</td><td>Trailing slash 307</td><td class="v-miss">WRONG</td><td><code>/about/</code> → 200 on www, so duplicate URLs exist</td></tr>
+<tr><td>22</td><td>Routes: only <code>/</code></td><td class="v-miss">MAJOR MISS</td><td><code>/about</code>, <code>/bookshelf</code>, <code>/blog</code>, <code>/blog/deploying-your-site-with-vercel</code>, plus a 404 view</td></tr>
+<tr><td>23</td><td><code>code-splitting</code> found</td><td class="v-miss">FALSE +</td><td>JSDoc <code>import('tailwindcss')</code> in tailwind.config.js</td></tr>
+<tr><td>24</td><td><code>contact-or-location-page</code></td><td class="v-miss">FALSE +</td><td>Matched data JSON files</td></tr>
+<tr><td>25</td><td><code>heavy_client_dependencies: []</code></td><td class="v-miss">MISS</td><td>WebGL LiquidMetal shader on every page (ContactRail.jsx:45)</td></tr>
+<tr><td>26</td><td>ledger performance: "measured"</td><td class="v-miss">WRONG</td><td>Lighthouse failed, <code>runs:0</code>, <code>lcp_ms:null</code></td></tr>
+<tr><td>27</td><td><code>add_target: index.html:1, "&lt;Helmet&gt; in page component"</code></td><td class="v-miss">WRONG</td><td>No react-helmet dependency. Line 1 is the doctype. Insertion point is before <code>&lt;/head&gt;</code> (line 15).</td></tr>
+<tr><td>28</td><td><code>in_main:false</code> for nav and contact</td><td class="v-miss">WRONG</td><td>Both render inside <code>&lt;main&gt;</code> (App.jsx:440-451), an unreported issue in itself</td></tr>
+<tr><td>29</td><td>LinkedIn listed as broken + blocked + redirected</td><td class="v-part">CONTRADICTORY</td><td>LinkedIn 999 bot response; should be blocked only</td></tr>
+</table></div>
+<p><strong>Tally:</strong> about 12 hits, 4 partial, 13 misses or wrong. The head fields are good. Link edit locations (about 5 of 19 correct) and served behaviour are the weakest areas.</p>
+<p><strong>Coverage gaps:</strong> 7 Amazon book covers on <code>/bookshelf</code>, the <code>&lt;video&gt;</code> and poster, the 260 KB 500×500 favicon <code>logo.png</code>, 7 bookshelf links and the blog post link are all missing from the page model. <code>large_assets</code> in repo_context lists the 7.7-21.4 MB MP4s, but they aren't linked to any page.</p>
+<h3>PR description claims</h3>
+<ul>
+  <li>"apex → www 307": <span class="tag t-ok">true</span>, but no edit target is given (Vercel Domains settings or <code>vercel.json redirects</code>).</li>
+  <li>"5.9× oversized PNGs 0.36-1.9 MB": sizes are true, the ratio is overstated (see #10).</li>
+  <li>"no H1": <span class="tag t-ok">true</span>.</li>
+  <li>"~5 words before JS": <span class="tag t-crit">unsupported</span>. <code>raw_html_words</code> is null. The 5 is the <code>&lt;title&gt;</code> word count. The real body has 0 words. Right conclusion, wrong number.</li>
+  <li>"changes can be made from JSON alone": false for links.</li>
+  <li>"seven schema-2.0 reports under seo_reports/onpage/ (legacy)": stale. That dir now holds proposals, and <code>.seo_agents/readme.md</code> repeats the same stale text.</li>
+  <li>"Testsigma start date July 2026 needs verification": spurious. It's already past.</li>
+</ul>
+<div class="callout"><strong>Biggest SEO issue on this site, and the JSON can't express it:</strong> all 5 routes share one title, description and empty body because <code>index.html</code> is static and nothing manages the head. The second biggest is that the catch-all rewrite makes robots.txt, sitemap.xml and every unknown URL return 200 HTML. Neither appears in the output.</div>
+<h3>Hygiene</h3>
+<ul>
+  <li>About 680 KB of generated JSON is committed to the client's production branch. It goes stale on the next content commit, <code>generated_at</code> guarantees noisy diffs, and it leaks <code>/tmp</code> paths, skill hashes and <code>model_usage</code>. Ship a summary as a PR comment, full JSON as a CI artifact or orphan branch, and commit at most ~50 KB.</li>
+  <li><code>.seo_agents/readme.md</code> tells the client to run a command that exists only in the tool repo. Drop it.</li>
+  <li>Branch and title don't mention the proposals, which are most of the diff. Mixed identity: commits by <code>seo-agents-bot</code>, PR opened by <code>lakshay-testsigma</code>.</li>
+  <li>README says S3 + CloudFront + Terraform, but the site is served by Vercel and there's no <code>terraform/</code> dir. That drift isn't flagged.</li>
+</ul>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="pr-onpage">
+<h2>10. PR #8: on-page proposals and the on-page stage</h2>
+<h3>Architecture</h3>
+<p><code>load → 15 checks → site → write</code>, strictly linear (<code>graph.py:116-131</code>). Pages run in parallel inside each node. Ten checks call the model (all on Sonnet via <code>SEO_ONPAGE_TIER=mid</code>, temperature 0.3, effort low) with up to 3 repair attempts. Five are deterministic. LangGraph adds only ordering: no branching, HITL, checkpointing or resume. The run cost 12 calls, 57k input tokens, 15k output tokens, <strong>$0.39, 0% cache hits</strong>.</p>
+<h3>Harness bugs</h3>
+<ul>
+  <li><strong>Priority bug:</strong> <code>HIGH</code> (<code>checks.py:30</code>) contains <code>'title'</code>/<code>'meta_description'</code>, but the fields are <code>head.title</code>/<code>head.description</code>. Title and description ship as <em>medium</em>.</li>
+  <li><strong>Duplicate change IDs:</strong> <code>sha1(page|check|field)</code>, and link rewrites map to the first link with the same href (<code>checks.py:477</code>). <code>chg_0f793e4fef</code> and <code>chg_5a88cb51c5</code> appear twice.</li>
+  <li><strong>Self-graded checklist:</strong> "after" = <code>_done(check)</code>, and canonical/social are hard-coded <code>True</code>. The reported 16/16 is meaningless, and <code>tests/test_onpage.py:190</code> asserts the tautology.</li>
+  <li><strong>Framework is computed and dropped</strong> (<code>graph.py:67-69</code>). No check or skill knows it's a Vite SPA.</li>
+  <li><strong>Polluted grounding corpus:</strong> <code>flatten_strings(page)</code> includes JSX snippets, byte counts and HTTP codes, so "2 years" or "3 projects" pass grounding, and spelled-out numbers always pass.</li>
+  <li>The skill <code>tier:</code> frontmatter is read but never used.</li>
+</ul>
+<h3>Output: 86 changes → about 25 real ones</h3>
+<div class="grid g2">
+<div class="card"><h4 style="margin-top:0">Correct and valuable</h4><ul style="margin:0">
+<li><code>head.title</code>/<code>head.description</code> pointers (<code>index.html:14/7</code>)</li>
+<li>Heading pointers (App.jsx:147/183/262/280) and project titles → JSON pointers</li>
+<li><code>technical.prerender</code>: the single most important finding, buried as one "report" among 86</li>
+<li>Image facts: 1920×1080 served at 324×209, about 531 KB PNG, no dimensions</li></ul></div>
+<div class="card"><h4 style="margin-top:0">Would actively hurt if applied</h4><ul style="margin:0">
+<li><strong>Canonical</strong> <code>https://www.lakshaygoyal.in/</code> in <code>index.html</code>: every route canonicalises to home</li>
+<li>Title, description, OG, Twitter and JSON-LD (incl. FAQPage) in the shared shell: site-wide duplicates, FAQ markup on pages without a FAQ</li>
+<li>H1, direct answer and "Last updated" in the shared App header: they appear on all routes</li>
+<li>"web" → "browser" rewording forced by the density validator</li></ul></div>
+</div>
+<ul>
+  <li><strong>Wrong pointers passed through untouched:</strong> nav anchors → section titles, contact links → unrelated components, H1 add → <code>index.html:1</code>, all 8 eeat + 3 aeo + JSON-LD + 11 social + canonical → <code>index.html:1</code>. <code>add_ref</code> reuses the <em>head</em> add_target for body inserts (<code>checks.py:67</code>).</li>
+  <li><strong>False positives:</strong> all 5 <code>accessible_name</code> changes (<code>ContactRail.jsx:78</code> already sets <code>aria-label</code>). Anchor rewrites for "Unlovable/Exness mobile app code" links that never render (<code>live:""</code>), which also collide with other changes' IDs.</li>
+  <li><strong>Data-driven content can't be edited this way:</strong> section rewrites replace a <code>.map()</code> template fed by <code>majorProjects.json</code> with static prose. Per-instance alts are proposed where one <code>alt</code> field in JSON plus one template edit is the right change. FOZO's H3 becomes a question while Testsigma's doesn't, but both come from the same template line.</li>
+  <li><strong>Duplicates:</strong> <code>social_block</code> repeats 11 social changes, <code>headings.outline</code> repeats 10 heading changes (which are repeated again in sections), images' alt and caption conflict with section figures, and <code>eeat.dates</code> "[VERIFY]" contradicts <code>freshness.last_updated</code>. Six near-identical "Lakshay Goyal is a Software Engineer in Bangalore…" blocks. FAQ = H2s.</li>
+  <li><strong>Content quality:</strong> 209 → 943 words, mostly by restating the same facts. The client's informal voice is replaced by corporate copy. "Exness" (a real broker brand) ships in meta, llms.txt and FAQ even though the model itself flagged <code>[VERIFY: personal builds?]</code>. <code>Person.image</code> is the logo. <code>og:image</code> is a 1920×1080 screenshot rather than 1200×630.</li>
+  <li><strong>expected.html</strong> is valid, semantic markup, but it's a synthetic <code>&lt;main&gt;</code> that ignores the component tree and doesn't match the change list. It works as a review aid but can't be applied.</li>
+</ul>
+<h3>Will it improve SEO on any framework?</h3>
+<p>Partially. On per-route SSR/SSG frameworks most head proposals would be right. What's missing is <em>where and how</em> a change applies:</p>
+<div class="table-wrap"><table>
+<tr><th>Stack</th><th>Per-route head mechanism the stage should emit</th></tr>
+<tr><td>Vite / CRA SPA</td><td>Prerender (vite-ssg, Vike, react-snap) as a blocking precondition. Without it, only runtime <code>react-helmet-async</code>/<code>document.title</code>, which works for Googlebot but not social or most AI crawlers.</td></tr>
+<tr><td>Next App Router</td><td><code>export const metadata</code> / <code>generateMetadata</code>, <code>title.template</code> in layout, <code>alternates.canonical</code>, <code>opengraph-image.tsx</code>, JSON-LD script in the page</td></tr>
+<tr><td>Next Pages Router</td><td><code>next/head</code></td></tr>
+<tr><td>Astro</td><td>Layout <code>&lt;head&gt;</code> props, <code>Astro.url</code> canonical</td></tr>
+<tr><td>Nuxt / SvelteKit / Remix / Gatsby</td><td><code>useSeoMeta</code> / <code>&lt;svelte:head&gt;</code> / <code>meta</code> export / <code>Head</code> API</td></tr>
+<tr><td>Hugo / Jekyll / 11ty</td><td>Front matter + layout partial</td></tr>
+</table></div>
+<h3>Recommended change schema (one atomic op)</h3>
+<pre><code>{
+  "id": "sha1(page|target.key|op)",
+  "dedup_key": "src/store/data/majorProjects.json#/0/alt",
+  "op": "set_text | set_attr | set_json | insert_node | remove",
+  "target": {
+    "file": "src/store/data/majorProjects.json", "pointer": "/0/alt", "kind": "json",
+    "scope": "instance | template(n=4) | layout(routes=*) | shell",
+    "confidence": 0.92, "verified": true
+  },
+  "current": "…exact source value…",
+  "value": "…",
+  "framework_hint": "vite-spa: per-route head requires chg_prerender",
+  "impact": "high", "effort": "S", "confidence": 0.85,
+  "depends_on": ["chg_prerender"], "conflicts_with": [], "supersedes": [],
+  "evidence": { "facts": ["experiences.json#/0/location"] },
+  "status": "proposed | blocked | needs_input"
+}</code></pre>
+<p>Put <code>review</code>, <code>guidance</code> and <code>report</code> items in <code>advice[]</code> and <code>[VERIFY]</code> items in <code>client_inputs.json</code>. Emit one change per template pointer, not one per rendered instance. Drop composites. The default reviewer view should show ≤15 deduplicated, high-confidence changes per page.</p>
+<h3>Collapse 10 LLM calls → 3-4</h3>
+<ol>
+  <li><strong>Intent + keyword map</strong>: small model.</li>
+  <li><strong>Page plan</strong> (title, meta, H1, outline, direct answer, section rewrites) with an explicit <strong>fact → slot assignment</strong> so each fact appears once. FAQ only for questions that aren't already H2s, and optional for navigational or personal pages. Mid model.</li>
+  <li><strong>Alts + anchors</strong>: small model.</li>
+  <li>Optional <strong>E-E-A-T / AEO gaps</strong> as <code>advice</code>, not copy.</li>
+</ol>
+<p>Make these deterministic: accessible names (read the existing <code>aria-label</code> first), image technical issues, social tags, canonical, robots, viewport, redirects, sitemap/robots/llms.txt, FAQ ↔ JSON-LD mirroring, dedup, and the JSON-LD <code>@id</code> graph skeleton.</p>
+<p>Validators to add: an entity-repetition cap (full name ≤1× per section), a ban on synonym substitution of the client's own terms, grounding on n-grams/entities against <em>visible text + data JSON only</em>, and a reference validator (no body insert into <code>&lt;head&gt;</code>, no per-instance op on a shared template line).</p>
+</section>
+
+<!-- ============ 11 ============ -->
+<section id="json">
+<h2>11. One JSON vs many: proposed layout</h2>
+<p>You were right to doubt the single file. <code>repo_context.json</code> (406 KB, ~101k tokens) breaks down as follows:</p>
+<div class="table-wrap"><table>
+<tr><th>Part</th><th>Share</th><th>Problem</th></tr>
+<tr><td><code>agents.keywords</code></td><td>108 KB (40%)</td><td><code>occurrences</code> arrays with 240-char snippets are 34% of the file</td></tr>
+<tr><td>README.md treated as content</td><td>~24%</td><td>Never served. Pollutes keywords ("deploying your site", "hey i'm").</td></tr>
+<tr><td><code>agents.page_inventory</code></td><td>76 KB</td><td>Headings with <code>text:""</code> (unresolved JSX). Conflicts with the page shard.</td></tr>
+<tr><td>Per-record overhead</td><td>~30%</td><td><code>code</code> 12%, <code>record_id</code> 6%, <code>code_sha256</code> 6%, <code>file_ref</code> repeats <code>location.file</code></td></tr>
+<tr><td>Empty signals</td><td>5%</td><td>107 <code>count:0</code> objects, 338 empty/null values</td></tr>
+<tr><td>Leaks</td><td>-</td><td><code>/tmp/my-portfolio</code> absolute paths, skill hashes</td></tr>
+</table></div>
+<p>The same facts also appear in up to three places with different vocabularies: framework as <code>react-spa</code> vs <code>["React","Vite","Static HTML"]</code>, and gaps in <code>repo_context.gaps</code>, <code>agents.*.gaps</code> and <code>site.json.deterministic_signals</code>.</p>
+<h3>Proposed layout</h3>
+<pre><code>seo_reports/exploration/
+  manifest.json          # ≤2k tok: schema versions, snapshot sha, hosting, canonical_host,
+                         #          file list + sha + size, coverage ledger, lens used
+  summary.json           # ≤4k tok: ranked issues[] → fact refs + fix target. PLANNER INPUT.
+  site.json              # served facts measured on canonical host: redirects, robots, sitemap,
+                         # headers, soft404, trailing slash, rewrites, deployment_config
+  entity.json            # Person/Org: name, jobTitle, sameAs[], email, logo, og-image candidate
+  routes.json            # [{route_id, url, template, discovered_by[], render: csr|ssr|ssg, head_scope}]
+  pages/&lt;route_id&gt;.json  # head, headings, content outline, link_ids[], image_ids[]: facts only
+  images.json            # {img_id, src, asset_file, bytes, natural, rendered{d,m}, dpr_overserve,
+                         #  alt, alt_status, alt_edit, src_edit, used_on[]}
+  links.json             # {link_id, href, kind, anchor, status, href_edit, anchor_edit, used_on[]}
+  metadata.json          # per route: title/desc/canonical/robots/og/twitter + add_target per stack
+  structured_data.json   # present blocks + absent types + insertion target
+  performance.json       # lab runs per route or {status:"failed", error}; large_assets
+  keywords.json          # top 20 per route, served text only, no occurrence lists
+  evidence/&lt;fact_id&gt;.json  # snippets, sha, alternatives. NEVER loaded by default.
+  schemas/*.schema.json  # JSON Schema per file, versioned $id</code></pre>
+<pre><code>EDIT  = {"kind":"literal|json|prop|computed|add|platform", "file":"src/components/PageRail.jsx",
+         "line":3, "col":22, "end_col":30, "pointer":null, "attr":"href",
+         "scope":"literal|data|template(n)|layout|shell", "shared_by":["r_home","r_about"],
+         "verify":"grounded|heuristic|failed", "evidence":"ev_9f2c"}
+FACT  = {"value":…, "method":"rendered@www|raw@www|source", "conf":0.95, "edit":EDIT}
+ISSUE = {"id":"iss_soft404", "severity":"high", "scope":"site|route:r_about",
+         "facts":["site.soft_404"], "fix":{"kind":"platform","where":"vercel.json"},
+         "status":"measured|lead"}</code></pre>
+<p><strong>Rules:</strong> compact JSON. Omit null, empty and zero-count entries, and record absence once in <code>coverage.absent[]</code>. No code or sha in fact files. Content-hashed IDs (<code>r_</code>, <code>img_</code>, <code>lnk_</code>, <code>iss_</code>, <code>ev_</code>). A link shared by 5 routes is stored once with <code>used_on[]</code>. Non-served files (README, docs) are tagged <code>doc</code> and excluded from content and keywords.</p>
+<p><strong>How a cheap worker consumes it:</strong> the planner reads <code>manifest</code> + <code>summary</code> (~6k tokens) and assigns issues. Each worker loads one page or category shard (1-3k tokens). It applies an <code>EDIT</code> only when <code>verify=="grounded"</code>, and otherwise opens <code>evidence/&lt;ev&gt;.json</code> or escalates. The working set per fix is under 8k tokens, compared with about 108k today.</p>
+<div class="callout info"><strong>Trade-off, honestly:</strong> one file is atomic and simple to fetch. But every consumer pays the full token cost, cheap models are poor at JSONPath-style partial reads, and duplicate views accumulate (exactly what happened here). Many files need a manifest with per-file sha and a referential-integrity validator. Above about 20k tokens of facts, sharding wins. If a single file is mandatory, use <code>{summary, shards:{id:…}}</code> and have the harness hand slices to workers. Either way, demote <code>repo_context.json</code> to <code>evidence/</code> or a CI artifact.</div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section id="target">
+<h2>12. Target architecture: code orchestrator + cheap workers + verifier</h2>
+<div class="diagram" role="img" aria-label="Target pipeline: secure acquire, separate build container, URL discovery loop with crawl and gap feedback, per-template fan-out measurement and attribution, typed gap workers, deterministic verifier with edit replay, sharded output, then on-page planner and workers.">
+<svg viewBox="0 0 1000 430" xmlns="http://www.w3.org/2000/svg">
+<rect class="box" x="10" y="30" width="170" height="80" rx="8"/><text class="lbl" x="95" y="60" text-anchor="middle">1. Acquire</text><text class="small" x="95" y="78" text-anchor="middle">fresh clone @sha</text><text class="small" x="95" y="94" text-anchor="middle">one IR (tree-sitter)</text>
+<rect class="box-a" x="210" y="30" width="190" height="80" rx="8"/><text class="lbl" x="305" y="60" text-anchor="middle">2. Build (no secrets)</text><text class="small" x="305" y="78" text-anchor="middle">+ data-src instrumentation</text><text class="small" x="305" y="94" text-anchor="middle">or deployed site_url</text>
+<rect class="box-a" x="430" y="30" width="200" height="80" rx="8"/><text class="lbl" x="530" y="60" text-anchor="middle">3. URL discovery loop</text><text class="small" x="530" y="78" text-anchor="middle">adapters ∪ crawl ∪ sitemap</text><text class="small" x="530" y="94" text-anchor="middle">∪ gap instances (feedback)</text>
+<rect class="box" x="660" y="30" width="170" height="80" rx="8"/><text class="lbl" x="745" y="60" text-anchor="middle">4. Canonical host</text><text class="small" x="745" y="78" text-anchor="middle">resolve redirects,</text><text class="small" x="745" y="94" text-anchor="middle">then probe served facts</text>
+<path class="arrow" d="M180 70 H208"/><path class="arrow" d="M400 70 H428"/><path class="arrow" d="M630 70 H658"/>
+<rect class="box-i" x="10" y="170" width="250" height="90" rx="8"/><text class="lbl" x="135" y="198" text-anchor="middle">5. Fan-out per template</text><text class="small" x="135" y="216" text-anchor="middle">raw + rendered (d/m) + LH</text><text class="small" x="135" y="232" text-anchor="middle">deep on 1 instance, project to siblings</text><text class="small" x="135" y="248" text-anchor="middle">deterministic attribution first</text>
+<rect class="box-i" x="290" y="170" width="250" height="90" rx="8"/><text class="lbl" x="415" y="198" text-anchor="middle">6. Typed gap workers</text><text class="small" x="415" y="216" text-anchor="middle">cheap model · JSON schema · T=0</text><text class="small" x="415" y="232" text-anchor="middle">choose among candidate IDs</text><text class="small" x="415" y="248" text-anchor="middle">escalate → mid on 2 failures</text>
+<rect class="box-ok" x="570" y="170" width="260" height="90" rx="8"/><text class="lbl" x="700" y="198" text-anchor="middle">7. Verifier</text><text class="small" x="700" y="216" text-anchor="middle">JSON Schema · grounding · lens agreement</text><text class="small" x="700" y="232" text-anchor="middle">sampled edit replay per template</text><text class="small" x="700" y="248" text-anchor="middle">LLM verifier only on low-confidence</text>
+<path class="arrow" d="M745 110 C745 140 135 140 135 168"/><path class="arrow" d="M260 215 H288"/><path class="arrow" d="M540 215 H568"/>
+<path class="arrow" d="M415 170 C415 150 530 140 530 112" style="stroke-dasharray:4 3"/><text class="small" x="470" y="150">instances → manifest</text>
+<rect class="box" x="140" y="320" width="250" height="80" rx="8"/><text class="lbl" x="265" y="350" text-anchor="middle">8. Sharded JSON</text><text class="small" x="265" y="368" text-anchor="middle">manifest · summary · shards</text><text class="small" x="265" y="384" text-anchor="middle">evidence/ (lazy)</text>
+<rect class="box-a" x="430" y="320" width="400" height="80" rx="8"/><text class="lbl" x="630" y="350" text-anchor="middle">9. On-page: scope gate → planner → workers → consolidation</text><text class="small" x="630" y="368" text-anchor="middle">atomic ops tied to EDIT · framework recipes · dedup_key</text><text class="small" x="630" y="384" text-anchor="middle">changes[] · advice[] · client_inputs[]</text>
+<path class="arrow" d="M700 260 C700 290 265 290 265 318"/><path class="arrow" d="M390 360 H428"/>
+</svg>
+</div>
+<ul>
+  <li><strong>Keep the orchestrator as code (LangGraph map-reduce).</strong> An LLM supervisor would add cost and nondeterminism for no accuracy gain. Sub-agents are typed, stateless workers.</li>
+  <li><strong>Rendered DOM is ground truth.</strong> Source-only becomes an explicit degraded mode with a banner in <code>manifest.json</code>.</li>
+  <li><strong>Fan out per template, not per URL.</strong> Attribute one instance deeply and project to siblings by element path. LLM calls then scale with template count, not page count.</li>
+  <li><strong>Add a loop edge</strong> from gap results (instances, learned adapters) back to URL discovery.</li>
+  <li><strong>Make it checkpointed:</strong> SQLite checkpointer, serialisable state, servers outside state. Today a Lighthouse crash after 30 minutes loses everything except <code>repo_context.json</code>.</li>
+</ul>
+</section>
+
+<!-- ============ 13 ============ -->
+<section id="engineering">
+<h2>13. Prompt, context &amp; harness engineering</h2>
+<div class="grid g2">
+<div class="card"><h3 style="margin-top:0">Prompt engineering</h3><ul>
+<li>Structured outputs everywhere (<code>response_format</code> JSON schema or a tool-call schema), not brace scanning.</li>
+<li>Closed-set answers: the model picks candidate IDs and code derives kind, file and line.</li>
+<li>One positive and one negative few-shot per skill, family-filtered by framework.</li>
+<li>Remove contradictions between skill text and validators. Generate the numeric limits in prompts from the validator constants.</li>
+<li>Per-skill principle subsets instead of all of <code>_principles.md</code>.</li>
+<li>Assign facts to slots before writing copy (prevents the 6× repetition).</li>
+<li>Honest "unknown" options on every enum, with a penalty-free path.</li></ul></div>
+<div class="card"><h3 style="margin-top:0">Context engineering</h3><ul>
+<li>Unit of context = one page's <strong>composition bundle</strong> (<code>source_lens.composition_for</code>), not the repo.</li>
+<li>Packets carry the call-site chain, DOM path and neighbouring served text, which the gap workers lack today.</li>
+<li>On-page packets carry framework, head scope, template multiplicity, pointer confidence and existing aria attributes.</li>
+<li>Planner reads ≤6k tokens of summary. Workers read one shard. Evidence is lazy.</li>
+<li>Prompt caching: <code>cache_control</code> on the static system block (OpenRouter → Anthropic).</li>
+<li>History compaction for any tool-using worker, with hard tool-call caps.</li></ul></div>
+<div class="card"><h3 style="margin-top:0">Harness engineering</h3><ul>
+<li>JSON Schema validation on every output file. Referential integrity across shards.</li>
+<li>Grounding rejects placeholders. A sampled edit-replay check proves pointers are correct.</li>
+<li>Transport retries (backoff) separate from validation retries (repair prompt). Fail fast on auth.</li>
+<li>Deterministic: T=0 except prose. Cache keyed by packet + code version.</li>
+<li>Observability: enable and forward LangSmith, per-node timings and cost in <code>manifest.json</code>.</li>
+<li>Checkpointing and resume. Per-node budgets that degrade gracefully.</li></ul></div>
+<div class="card"><h3 style="margin-top:0">Accuracy guardrails</h3><ul>
+<li>Every fact carries <code>method</code> (rendered / raw / source) and <code>verify</code> status.</li>
+<li>Coverage ledger per <em>field</em>, not per page, and must reflect failures (performance on PR #8).</li>
+<li>Cross-output contradiction check (brand agent vs page model edit lines).</li>
+<li>Self-consistency votes only on enum fields, with agreement measured.</li>
+<li>Escalate to mid with reasoning on two validation failures, never on the first.</li></ul></div>
+</div>
+</section>
+
+<!-- ============ 14 ============ -->
+<section id="tiering">
+<h2>14. Model tiering &amp; cost</h2>
+<div class="table-wrap"><table>
+<tr><th>Task</th><th>Tier</th><th>Why</th></tr>
+<tr><td>Routes, metadata, headings, links, images, unique-match attribution, link status, Lighthouse, duplicates, hreflang, robots/sitemap, redirects, soft-404, social tags, canonical, image technical, JSON-LD skeleton</td><td><span class="tag t-ok">no model</span></td><td>Deterministic. Keep it that way, and expand it.</td></tr>
+<tr><td><code>attribute_value</code> (≤10 candidates), <code>enumerate_instances</code>, E-E-A-T classify, intent label, image alts, link anchors</td><td><span class="tag t-med">cheapest</span> Haiku / Flash, T=0, schema</td><td>Closed-set choice or short constrained text over a small packet</td></tr>
+<tr><td><code>explain_computed</code> with a 2-3 call tool budget inside the composition bundle; topic/target queries</td><td><span class="tag t-med">Haiku-class</span> small tool worker</td><td>Short multi-hop reading. Flash with reasoning off is weak here.</td></tr>
+<tr><td>On-page page plan (title, meta, H1, outline, answer, sections)</td><td><span class="tag t-high">mid</span> Sonnet, prompt-cached</td><td>Long, coupled output where quality matters</td></tr>
+<tr><td>Escalation after 2 validation failures; unknown-stack route adapter; final verifier on low-confidence items</td><td><span class="tag t-high">mid</span> with reasoning on</td><td>Rare, high-leverage. Fix the global <code>REASONING_EFFORT=none</code>.</td></tr>
+<tr><td>Writing per-category Python extractors (legacy)</td><td><span class="tag t-crit">retire</span></td><td>Expensive, brittle, redundant with the element index</td></tr>
+<tr><td>Authoring adapters and skills, eval labelling</td><td>large, offline</td><td>One-time, human-reviewed</td></tr>
+</table></div>
+<p><strong>Expected effect on the on-page stage:</strong> 12 → about 4 calls/page, a small model on 2 of them, plus prompt caching on the system block. That should cut the ~$0.39/page by about 60-75% (estimate, not measured). Add an explicit <code>haiku</code> tier between <code>small</code> and <code>mid</code> in <code>tools/llm.py:43-51</code>, and key the escalation ladder by task type.</p>
+</section>
+
+<!-- ============ 15 ============ -->
+<section id="framework">
+<h2>15. Framework-agnostic strategy</h2>
+<ol>
+  <li><strong>Crawl the built site, whatever the framework.</strong> Rendered URLs, DOM, head and links are framework-neutral. Route guessing becomes a seed, not the source of truth.</li>
+  <li><strong>Attribute through instrumentation.</strong> Inject <code>data-src="file:line:col"</code> at build time: Babel <code>transform-react-jsx-source</code> or <code>@react-dev-inspector/babel-plugin</code>, Vue <code>__file</code>, <code>svelte-inspector</code>, Astro dev toolbar metadata. Fall back to string-match attribution only when there is no map.</li>
+  <li><strong>A single adapter interface</strong> with one fixture repo each:
+<pre><code>class Adapter:
+    detect(snapshot) -&gt; score            # dependency OR framework config required
+    routes(snapshot) -&gt; [Route(url, template, params, i18n)]
+    layouts(template) -&gt; [file]           # for head_scope / shared_by
+    metadata(file) -&gt; [MetaDecl(span)]    # generateMetadata, useSeoMeta, front matter, &lt;svelte:head&gt;…
+    head_recipe(op) -&gt; Recipe             # where a title/canonical/JSON-LD change goes
+    build_plan() -&gt; BuildPlan(install, build, serve, env, port_flag)</code></pre></li>
+  <li><strong>Run every adapter above threshold, per package root</strong> (monorepos).</li>
+  <li><strong>Data flow in the tree-sitter pass:</strong> same-file constants, prop flow from call site to component, namespaced i18n, and <code>generateStaticParams</code>/<code>getStaticPaths</code> reading imported arrays or content dirs.</li>
+  <li><strong>Value spans</strong> (start/end line and col) for every attribute, text node and data scalar. Content-anchored IDs.</li>
+  <li><strong>Per-framework runtime recipes:</strong> <code>next start -p</code>, <code>PORT=</code> for Remix/Nuxt, <code>vite preview --port</code>, yarn berry <code>--immutable</code>, respect <code>packageManager</code> and <code>.nvmrc</code>, install at the workspace root, and readiness = 2xx on a known route.</li>
+  <li><strong>Hosting is a first-class fact:</strong> Vercel, Netlify, Cloudflare, S3 or nginx, detected from config and response headers. Many fixes (redirect status, soft-404, headers) live there, not in code.</li>
+</ol>
+</section>
+
+<!-- ============ 16 ============ -->
+<section id="missing">
+<h2>16. Missing SEO data the execution stage will need</h2>
+<div class="grid g2">
+<div class="card"><h4 style="margin-top:0">Indexability &amp; URLs</h4><ul style="margin:0">
+<li>Per-route join: meta robots, X-Robots-Tag, in-sitemap, robots-disallowed, canonical, self-canonical</li>
+<li>Soft-404 (SPA catch-all), trailing slash and case policy as values</li>
+<li>Redirect chains and loops from static rules; rewrite vs redirect</li>
+<li>Pagination <code>rel</code>, faceted/query URLs, <code>&lt;base href&gt;</code></li>
+<li>Sitemap <code>lastmod</code>, hreflang-in-sitemap, image sitemap</li></ul></div>
+<div class="card"><h4 style="margin-top:0">Head &amp; entities</h4><ul style="margin:0">
+<li>Head scope per route (shared shell vs own head) and the insertion recipe</li>
+<li>OG image validity: absolute URL, exists, 1200×630, size</li>
+<li>Favicon and manifest (Google shows favicons in results)</li>
+<li>Entity bundle: name, role, <code>sameAs</code>, email, logo, portrait</li>
+<li>Structured data with required-property validation; breadcrumbs ↔ BreadcrumbList</li></ul></div>
+<div class="card"><h4 style="margin-top:0">Content &amp; links</h4><ul style="margin:0">
+<li>Per-page word count, H1 count, thin pages, near-duplicate titles and descriptions</li>
+<li>Static link graph from source + routes: orphans, click depth, broken internal links without runtime</li>
+<li>Anchor-text distribution; JS-only links (<code>onClick</code>, <code>href="#"</code>)</li>
+<li>Landmark nesting issues (nav inside <code>&lt;main&gt;</code> on PR #8)</li></ul></div>
+<div class="card"><h4 style="margin-top:0">Performance &amp; media</h4><ul style="margin:0">
+<li>Per-image: intrinsic vs rendered at 1× and 2× DPR, format, lazy-on-LCP, <code>decoding</code></li>
+<li>Videos and posters (PR #8: 7.7-21.4 MB MP4s unlinked to pages)</li>
+<li>Font preload and <code>font-display</code>; render-blocking head CSS/JS</li>
+<li>CrUX field data whenever <code>site_url</code> is public; heavy client deps (WebGL shaders)</li>
+<li>Build/verify commands and the allowed-files list for the executor</li></ul></div>
+</div>
+</section>
+
+<!-- ============ 17 ============ -->
+<section id="evals">
+<h2>17. Evals &amp; tests</h2>
+<ul>
+  <li><strong>Current state:</strong> <code>score_fixtures.py</code> runs 13 toy fixtures (the vite-react-spa one is 152 lines) source-only against self-authored <code>expected.json</code> with self-set targets. It isn't hermetic: if <code>OPENROUTER_API_KEY</code> is set, gap workers run and write to <code>~/.cache</code>. There's no rendered-lens eval, no gap-worker accuracy eval, and no cost regression. The on-page stage has one happy-path test with a scripted fake model.</li>
+  <li><strong>Build a real eval set:</strong> about 20 public sites pinned to a SHA, with live URLs, across Next (app and pages, i18n), Nuxt, SvelteKit, Remix, Astro, Gatsby, Angular, Hugo, Jekyll, 11ty, Docusaurus, WordPress theme, Shopify theme, plain HTML, an MDX blog, a headless-CMS starter, and <strong>this portfolio</strong> (a pathname-switch SPA). Gold labels come from the rendered DOM plus hand-checked edit locations.</li>
+  <li><strong>Metrics per commit:</strong> URL recall/precision, head-field accuracy, link/image/heading P/R, <strong>edit-location accuracy</strong> (the real bottleneck), served-fact accuracy, tokens, $, wall time.</li>
+  <li><strong>Regression tests for every verified bug:</strong> config.json→hugo, urls.py→django, <code>(.)</code> routes, Svelte <code>{#if}</code> comment, static-site crash, canonical-from-context, <code>lang={expr}</code>, nofollow-as-noindex, social intent links, the <code>redirect_rules</code> key, the on-page priority key, duplicate IDs.</li>
+  <li><strong>On-page golden tests on PR #8:</strong> no head op on a shared shell without <code>depends_on: prerender</code>; no duplicate <code>id</code>/<code>dedup_key</code>; title/description are high; no <code>accessible_name</code> change when <code>aria-label</code> exists; no anchor rewrite for links that don't render; FAQ ∩ H2 = ∅.</li>
+  <li><strong>Value-span golden test:</strong> applying the change at the reported span reproduces the expected served value.</li>
+</ul>
+</section>
+
+<!-- ============ 18 ============ -->
+<section id="roadmap">
+<h2>18. Roadmap</h2>
+<div class="table-wrap"><table>
+<tr><th>Phase</th><th>Scope</th><th>Outcome</th></tr>
+<tr><td><strong>0. Safety</strong> (days)</td><td>Env scrubbing, separate build container, fresh clone @sha, unique per-run container, <code>--env-file</code>, sitemap origin check.</td><td>Safe to run on third-party repos</td></tr>
+<tr><td><strong>1. Quick accuracy wins</strong> (1 week)</td><td>Fix verified bugs (§6-7). Canonical-host-first probes. Seed URLs from rendered links + pathname literals. Reject placeholder edits. Code-derived <code>edit_kind</code>. Exclude README/docs. On-page priority key, dedup IDs, scope gate.</td><td>PR #8 would find 5 routes and correct link edits, and the on-page stage stops proposing harmful head changes</td></tr>
+<tr><td><strong>2. Output contract</strong> (1-2 weeks)</td><td>Sharded layout + JSON Schemas + referential validator. <code>scope</code>/<code>shared_by</code>/<code>verify</code> on every EDIT. Summary ≤4k tokens. Stop committing full JSON; PR comment + artifact.</td><td>Per-fix context under 8k tokens; cheap-model executable</td></tr>
+<tr><td><strong>3. One IR</strong> (2-3 weeks)</td><td>Delete legacy extractors, dead wrappers, inventory/react_source/page_inventory. Profiles compute from <code>element_index</code>. Value spans, data flow, namespaced i18n. Adapter interface.</td><td>One source of truth; no contradictions</td></tr>
+<tr><td><strong>4. Rendered + instrumentation</strong> (2-3 weeks)</td><td><code>data-src</code> build plugins, per-template fan-out, edit-replay verifier, CrUX, checkpointing.</td><td>Edit-location accuracy target ≥95% on rendered mode</td></tr>
+<tr><td><strong>5. On-page v2</strong> (1-2 weeks)</td><td>Atomic op schema, framework head recipes, 3-4 calls/page with tiering and caching, consolidation pass, <code>changes/advice/client_inputs</code> split.</td><td>≤15 high-confidence applicable changes/page at about ⅓ of today's cost (estimate)</td></tr>
+<tr><td><strong>6. Evals</strong> (continuous)</td><td>20-site pinned eval set, CI metrics dashboard, golden on-page tests.</td><td>Accuracy measured, not assumed</td></tr>
+</table></div>
+</section>
+
+<!-- ============ 19 ============ -->
+<section id="method">
+<h2>19. Method &amp; caveats</h2>
+<ul>
+  <li>Five read-only audit passes ran in parallel on the repo at commit <code>f958bdf</code> plus the uncommitted <code>src/seo_agents/onpage/</code>. PR #8 (branch <code>seo-agents/onpage-reports</code>, commits <code>71b3d3f</code>, <code>cacb945</code>) was checked out locally and compared with the client source and the live site (curl, 2 Nov 2026).</li>
+  <li>Items tagged <span class="tag t-ok">verified</span> were reproduced with small probe scripts against the real functions or a minimal fixture repo. Line numbers come from the audited revision and will drift.</li>
+  <li><strong>Not executed:</strong> the full pipeline, Docker, Lighthouse and builds. Runtime CLI flag claims (for example <code>next start --host</code>, the pnpm <code>--</code> forwarding) are from tool documentation and marked as such. Cost-reduction numbers are estimates.</li>
+  <li>No files in the repo or PR were modified, apart from writing this report.</li>
+</ul>
+</section>
+</main>
+</div>
+<script>
+(function(){
+  var b=document.getElementById('themeBtn'),r=document.documentElement,k='seo-audit-theme';
+  try{var s=localStorage.getItem(k);if(s)r.setAttribute('data-theme',s);}catch(e){}
+  b.addEventListener('click',function(){
+    var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+    var n=cur==='dark'?'light':'dark';r.setAttribute('data-theme',n);
+    try{localStorage.setItem(k,n);}catch(e){}
+  });
+})();
+</script>
+</body>
+</html>

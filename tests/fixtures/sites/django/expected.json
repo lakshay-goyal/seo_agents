@@ -1,0 +1,73 @@
+{
+  "framework": "django",
+  "pages": [
+    {
+      "url": "/",
+      "fields": {
+        "h1": [
+          "Fresh Mediterranean food"
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/menu",
+            "Menu"
+          ]
+        ],
+        "images": [
+          [
+            "/static/terrace.jpg",
+            "Our sunny terrace"
+          ]
+        ]
+      },
+      "attribution": {
+        "h1": {
+          "file": "templates/home.html",
+          "line": 5
+        }
+      }
+    },
+    {
+      "url": "/menu",
+      "fields": {
+        "h1": [
+          "Menu"
+        ],
+        "headings": [
+          [
+            1,
+            "Menu"
+          ],
+          [
+            2,
+            "Starters"
+          ]
+        ],
+        "links": [
+          [
+            "/",
+            "Home"
+          ],
+          [
+            "/menu",
+            "Menu"
+          ]
+        ]
+      },
+      "attribution": {
+        "h1": {
+          "file": "templates/menu.html",
+          "line": 4
+        }
+      }
+    },
+    {
+      "url": "/dishes/<slug:slug>",
+      "fields": {}
+    }
+  ]
+}

@@ -1,0 +1,188 @@
+{
+  "$schema": "./schema.json",
+  "name": "canonicals-redirects",
+  "signals": [
+    {
+      "id": "canonical",
+      "label": "Canonical declaration",
+      "regex": "rel\\s*[=:]\\s*['\"{]?\\s*['\"]?canonical['\"]|\\bcanonical\\s*[:=]|\\bcanonical_url\\b|\\brel_canonical\\b|\\bwp_get_canonical_url\\b",
+      "ignore_case": true,
+      "languages": [
+        "@templates",
+        "@server",
+        "server-config",
+        "other"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "<link rel=\"canonical\" href=\"/\">",
+          "alternates: { canonical: '/x' }",
+          "{{ canonical_url }}"
+        ],
+        "no_match": [
+          "canonicalize(x)",
+          "{{ .Permalink }}"
+        ]
+      }
+    },
+    {
+      "id": "redirect-config",
+      "label": "Redirect/rewrite config block",
+      "regex": "\\b(?:async\\s+)?(?:redirects|rewrites)\\s*(?:\\(\\s*\\)|:)|\\\"(?:redirects|rewrites)\\\"\\s*:|\\[\\[redirects\\]\\]",
+      "block": true,
+      "languages": [
+        "@scripts",
+        "@data"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "async redirects() {",
+          "\"redirects\": [",
+          "[[redirects]]"
+        ],
+        "no_match": [
+          "const redirectsCount = 1"
+        ]
+      }
+    },
+    {
+      "id": "redirect-file",
+      "label": "Redirect rules file",
+      "regex": "(?:^|/)(?:_redirects|\\.htaccess|nginx[\\w.-]*\\.conf|vercel\\.json|netlify\\.toml|staticwebapp\\.config\\.json|firebase\\.json)$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "public/_redirects",
+          ".htaccess",
+          "nginx.conf"
+        ],
+        "no_match": [
+          "redirects.md"
+        ]
+      }
+    },
+    {
+      "id": "server-redirect",
+      "label": "Redirect in code",
+      "regex": "\\b(?:permanentRedirect|redirect|res\\.redirect|RedirectResponse|redirect_to|Redirect::to|HttpResponsePermanentRedirect|wp_redirect|wp_safe_redirect)\\s*\\(|header\\s*\\(\\s*['\\\"]Location:|^\\s*(?:Redirect(?:Match|Permanent)?|RewriteRule)\\s|\\breturn\\s+30[178]\\b",
+      "block": true,
+      "languages": [
+        "@templates",
+        "@server",
+        "server-config",
+        "other"
+      ],
+      "precision": "medium",
+      "examples": {
+        "match": [
+          "res.redirect(301, '/x')",
+          "RewriteRule ^old$ /new [R=301]",
+          "wp_redirect(home_url())"
+        ],
+        "no_match": [
+          "redirectUri = x"
+        ]
+      }
+    },
+    {
+      "id": "middleware",
+      "label": "Request middleware (can redirect/rewrite every URL)",
+      "regex": "(?:^|/)(?:middleware|hooks\\.server)\\.(?:ts|js)$|(?:^|/)server/middleware/",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "middleware.ts",
+          "src/hooks.server.ts"
+        ],
+        "no_match": [
+          "src/lib/middlewareUtils.ts"
+        ]
+      }
+    },
+    {
+      "id": "trailing-slash",
+      "label": "Trailing-slash policy",
+      "regex": "trailingSlash\\s*[:=]|APPEND_SLASH|strict_slashes|trailing_slash",
+      "ignore_case": true,
+      "languages": [
+        "@scripts",
+        "@data",
+        "python",
+        "ruby",
+        "php"
+      ],
+      "precision": "high",
+      "examples": {
+        "match": [
+          "trailingSlash: true",
+          "APPEND_SLASH = False"
+        ],
+        "no_match": [
+          "slash"
+        ]
+      }
+    },
+    {
+      "id": "not-found",
+      "label": "Custom 404 page/handler",
+      "regex": "(?:^|/)(?:404|not-found|\\+error|_error)\\.(?:html|tsx|jsx|ts|js|vue|svelte|astro|md|php|erb|json|liquid|hbs|njk|twig)$|(?:^|/)app/(?:.*/)?error\\.(?:tsx|jsx|ts|js)$|(?:^|/)error-404\\.hbs$",
+      "files_only": true,
+      "precision": "high",
+      "examples": {
+        "match": [
+          "templates/404.json",
+          "app/not-found.tsx",
+          "404.php",
+          "src/routes/+error.svelte"
+        ],
+        "no_match": [
+          "src/lib/errors.ts",
+          "src/utils/error.ts"
+        ]
+      }
+    },
+    {
+      "id": "spa-catch-all",
+      "label": "Client-side catch-all route (soft-404 risk unless the host answers 404)",
+      "regex": "\\bpath\\s*[:=]\\s*\\{?\\s*['\"]\\*{1,2}['\"]|['\"]/:pathMatch\\(\\.\\*\\)\\*?['\"]",
+      "precision": "medium",
+      "languages": [
+        "@templates"
+      ],
+      "exclude_comments": true,
+      "examples": {
+        "match": [
+          "<Route path=\"*\" element={<NotFound />} />",
+          "{ path: '**', component: NotFound }",
+          "{ path: '/:pathMatch(.*)*' }"
+        ],
+        "no_match": [
+          "<Route path=\"/about\" />",
+          "path: '/blog/*'"
+        ]
+      }
+    }
+  ],
+  "gaps": [
+    {
+      "id": "no-canonical",
+      "label": "No canonical declaration found",
+      "when_none_of": [
+        "canonical"
+      ]
+    },
+    {
+      "id": "no-404",
+      "label": "No custom 404 page/handler found",
+      "when_none_of": [
+        "not-found"
+      ]
+    }
+  ],
+  "framework_agnostic": true,
+  "execution_hint": "Declare an absolute self-referencing canonical in the shared head (layout/metadata API) built from the site URL + route; put permanent redirects in the hosting or framework redirect config; keep one trailing-slash policy."
+}

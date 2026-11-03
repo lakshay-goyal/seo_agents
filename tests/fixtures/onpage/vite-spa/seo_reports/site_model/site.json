@@ -1,0 +1,54 @@
+{
+ "schema": "seo-site-model/1.0",
+ "framework": {
+  "schema": "framework-fingerprint/1.0",
+  "primary": "react-spa",
+  "family": "react",
+  "version": "18.3.1",
+  "router": "declared",
+  "renderer": "csr"
+ },
+ "serve": {
+  "mode": "site_url",
+  "base_url": "https://lakshaygoyal.in"
+ },
+ "canonical_host": "https://www.lakshaygoyal.in",
+ "served": {
+  "home_headers": {
+   "server": "Vercel",
+   "x-vercel-id": "bom1::abc",
+   "strict-transport-security": "max-age=63072000"
+  },
+  "robots_txt": {
+   "status": 200,
+   "content_type": "text/html; charset=utf-8",
+   "kind": "spa-shell-fallback"
+  },
+  "sitemap_xml": {
+   "status": 200,
+   "content_type": "text/html; charset=utf-8",
+   "kind": "spa-shell-fallback"
+  },
+  "soft_404": {
+   "status": 200,
+   "soft_404": true
+  },
+  "trailing_slash": {
+   "with_slash": 200,
+   "without_slash": 200
+  }
+ },
+ "deterministic_signals": {
+  "sitemap_robots": {
+   "gaps": [
+    "no-sitemap",
+    "no-robots"
+   ]
+  },
+  "structured_data": {
+   "gaps": [
+    "no-structured-data"
+   ]
+  }
+ }
+}

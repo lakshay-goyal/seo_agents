@@ -4,11 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from seo_agents.exploration.checks.tools.inventory import inventory, routes
-from seo_agents.exploration.checks.tools import crawl
-from seo_agents.exploration.checks.json_analysis import analyze_directory, analyze_reports
-from seo_agents.exploration.checks.tools.helpers import REPORT_FILES
-from seo_agents.exploration.checks.graph import run_onpage_graph
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.static_mode.static_inventory import inventory, routes
+from seo_agents.repo_analysis.tools.repository.repository_constants import REPORT_FILES
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.legacy_extraction_workflow import run_legacy_extraction
 
 
 class InventoryTests(unittest.TestCase):
@@ -85,9 +83,6 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
         self.assertIsNone(items[2]['effective_loading'])
         self.assertIn('alt', items[2]['unresolved_attributes'])
         self.assertEqual(items[3]['preload'], 'metadata')
-        analysis = analyze_reports({'media': inventory(self.repo, 'media')})
-        self.assertFalse(any(f['code'] == 'alt_not_observed' for f in analysis['findings']))
-        self.assertTrue(any(f['code'] == 'large_source_asset' for f in analysis['findings']))
 
     def test_eeat_requires_visible_evidence_not_variable_names(self):
         self.write('app/fake/page.tsx', 'const author = "contact us"; export default function Fake() { return <p>Hello</p> }')
@@ -98,7 +93,7 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
         self.assertTrue(any(s['signal'] == 'authorship' and s['evidence'] for s in home['signals']))
 
     def test_graph_tools_and_offline_analysis(self):
-        state = run_onpage_graph(str(self.repo), mode='static')
+        state = run_legacy_extraction(str(self.repo), mode='static')
         reports = state['artifacts']
         self.assertEqual(set(reports), set(REPORT_FILES))
         folder = self.repo / 'saved'
@@ -109,15 +104,7 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
             self.assertNotIn('repo', report)
             self.assertNotIn('ai', report)
             (folder / filename).write_text(json.dumps(report))
-        expected = analyze_reports(reports)
-        self.assertEqual(analyze_directory(folder), expected)
-        self.assertEqual(analyze_reports(dict(reversed(list(reports.items())))), expected)
-        self.assertEqual(crawl.scrape_content_blocks.invoke({'repo_path': str(self.repo)})['schema_version'], '2.0')
-
-    def test_heading_return_to_higher_level_is_valid(self):
-        self.write('app/order/page.tsx', '<main><h1>A</h1><h2>B</h2><h3>C</h3><h2>D</h2></main>')
-        report = analyze_reports({'page_structure': inventory(self.repo, 'page_structure')})
-        self.assertFalse(any(f['url'] == '/order' and f['code'] == 'heading_level_skipped' for f in report['findings']))
+        self.assertEqual(json.loads((folder / REPORT_FILES['media']).read_text()), reports['media'])
 
     def test_imported_assets_literal_constants_and_literal_expression_text(self):
         self.write('app/assets/page.tsx', '''import photo from '../../public/hero.png';
@@ -138,7 +125,7 @@ export default function Page() { return <main><h1>{title}</h1><img src={photo} a
         self.assertEqual(links[0]['accessible_name'], 'About our team')
 
     def test_invalid_category_payload_rejected_before_pr(self):
-        from seo_agents.sandbox.pr import check_reports
+        from seo_agents.sandbox.git.pull_request import check_reports
         reports = {key: inventory(self.repo, key) for key in REPORT_FILES}
         reports['content']['pages'][0]['items'] = []
         with self.assertRaisesRegex(ValueError, 'Unexpected page fields'):
