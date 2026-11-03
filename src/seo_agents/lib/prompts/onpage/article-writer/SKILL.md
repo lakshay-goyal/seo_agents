@@ -62,7 +62,7 @@ order: 23
    `image_brief.filename` is descriptive lowercase-hyphenated words (it becomes the image URL).
 7. Facts and freshness: today is `run_date`. Every number, statistic, price, date or study must come from a `sources`
    passage and be cited as [S#] in the same paragraph, list item or table row/caption - only sources dated within the
-   last 2 years may back a number. Claims about the brand only from `client_facts`. If a number would help but no
+   last 2 years may back a number, and only sources with a `date` may be cited at all. Claims about the brand only from `client_facts`. If a number would help but no
    source has it, leave it out. Small counts of your own structure ("3 steps") are fine.
    Paraphrase every source in your own words: never reuse a run of 12+ words from a passage (copies are rejected). Put titles of books, tools or
    studies in <em>...</em>.

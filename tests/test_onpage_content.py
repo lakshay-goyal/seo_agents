@@ -314,7 +314,7 @@ class ArticleRuleTests(unittest.TestCase):
         self.assertEqual(rules.check_facts('First published in 2019 [S2].', 'p', **{**kw, 'sources': [
             {**sources[1], 'passage': 'The book was first published in 2019.'}]}), [{'number': '2019', 'source': 'S2'}])
         for text, why in (('87% of deployments finish fast.', 'not backed'), ('45% of teams deploy manually [S2].', 'fresher'),
-                          ('30% of teams use previews [S3].', 'unknown'), ('Cited [S9].', 'not in sources'),
+                          ('30% of teams use previews [S3].', 'no publication date'), ('Teams like previews [S3].', 'no publication date'), ('Cited [S9].', 'not in sources'),
                           ('By 2030 everyone deploys.', 'future year'), ('Over 300 teams agree [S1].', 'not backed')):
             with self.assertRaises(ValueError, msg=text) as caught:
                 rules.check_facts(text, 'p', **kw)

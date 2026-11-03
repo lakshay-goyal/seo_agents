@@ -223,6 +223,9 @@ def check_facts(text, name, *, corpus, sources, run_date):
     unknown = [c for c in cited if c not in by_id]
     if unknown:
         raise ValueError(f'{name} cites {unknown[:3]}, which are not in sources[]')
+    undated = sorted({c for c in cited if not by_id[c].get('date')})
+    if undated:  # freshness: a claim may only rest on a source whose date is known
+        raise ValueError(f'{name} cites {undated[:3]}, which have no publication date; cite a dated source or drop the claim')
     plain = CITATION.sub(' ', text or '')
     known = v.corpus_numbers(corpus) | {run_date[:4]}
     claims = []
