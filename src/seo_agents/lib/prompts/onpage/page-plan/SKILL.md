@@ -2,7 +2,7 @@
 name: page-plan
 description: One coherent plan for the page - title, meta description, H1, heading rewrites, answer-first opening, optional section rewrites and FAQ - with each fact assigned to exactly one slot.
 kind: llm
-principles: P1, P2, P3, P4, P6, P7, P8, P9, P10
+principles: P1, P2, P3, P4, P6, P7, P8, P9, P10, P11
 order: 3
 ---
 ## Inputs (packet)
@@ -16,6 +16,8 @@ order: 3
 - `max_faq`: maximum FAQ items for this page (0 means no FAQ)
 - `keywords` (only when researched): primary, secondary, short_tail, questions, conversational, questions_answered_now,
   content_gaps (topics competitors cover), alignment_gaps, journey_stage, cluster {role, pillar_url, links}
+- `competitors` (only when ranking pages were fetched): pages_analyzed, word_count, h2_median, formats (share using
+  tables/lists/images/faq), common_subtopics, question_headings, titles, title_patterns, people_also_ask
 
 ## Output (JSON only)
 {"title": "<{{TITLE_CHARS}} chars, primary query first, brand last>",
@@ -49,6 +51,10 @@ order: 3
    if `facts` cannot answer it, list it in `unanswerable` instead. Cover `content_gaps` only where the facts support it.
    For each `conversational` prompt write one self-contained passage that names the brand/entity explicitly.
 9. `cta`: one next step that fits the journey stage, linking the cluster pillar or a related page (null if none fits).
+10. With `competitors` (P11): use the formats most ranking pages use (a `table` for comparisons, `ol` for steps, `ul`
+   for sets), cover `common_subtopics` only where `facts` support them, and write a title with a click-through hook
+   learned from `titles`/`title_patterns` (a number, brackets, a question or a benefit) that is your own and matches
+   the page. Never copy a competitor heading or sentence.
 
 ## Done when
 - Every limit above holds and every number/name is in `facts`.

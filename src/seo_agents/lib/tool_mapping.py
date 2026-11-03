@@ -62,6 +62,18 @@ TOOL_CLASSES = {
     'site_level_builder': 'seo_agents.onpage.output.site_level_builder:SiteLevelBuilder',
     'onpage_output_writer': 'seo_agents.onpage.output.onpage_output_writer:OnpageOutputWriter',
     'pr_publisher': 'seo_agents.onpage.output.pr_publisher:OnpagePrPublisher',
+    # ---- on-page content studio (seo_agents/onpage/content)
+    'competitor_fetcher': 'seo_agents.onpage.content.competitor_fetcher:CompetitorFetcher',
+    'serp_source': 'seo_agents.onpage.content.competitor_fetcher:SerpSource',
+    'html_content_extractor': 'seo_agents.onpage.content.html_extractor:HtmlContentExtractor',
+    'competitor_pattern_analyzer': 'seo_agents.onpage.content.competitor_analyzer:CompetitorPatternAnalyzer',
+    'competitor_research': 'seo_agents.onpage.content.competitor_research:CompetitorResearch',
+    'article_planner': 'seo_agents.onpage.content.article_planner:ArticlePlanner',
+    'article_writer': 'seo_agents.onpage.content.article_writer:ArticleWriter',
+    'article_rules': 'seo_agents.onpage.content.article_rules:ArticleRules',
+    'article_fact_checker': 'seo_agents.onpage.content.article_fact_check:ArticleFactChecker',
+    'article_renderer': 'seo_agents.onpage.content.article_renderer:ArticleRenderer',
+    'article_studio': 'seo_agents.onpage.content.content_studio:ArticleStudio',
     # ---- keyword research stage (seo_agents/keyword_research)
     'keyword_page_selector': f'{_KR}.page_selection:PageSelector',
     'keyword_research_toolkit': f'{_KR}.providers.research_toolkit:ProviderResearchToolkit',
@@ -122,6 +134,8 @@ AGENT_TOOLS = {
 
     # ---- on-page workflow (onpage/onpage_analysis.py), in execution order
     'onpage.load': ('exploration_reports', 'page_context'),
+    'onpage.competitors': ('competitor_research', 'competitor_fetcher', 'serp_source', 'html_content_extractor',
+                           'competitor_pattern_analyzer'),
     'onpage.intent': ('content_writer', 'content_validators'),
     'onpage.keyword_plan': ('content_validators',),
     'onpage.page_plan': ('content_writer', 'content_validators', 'change_operations'),
@@ -144,6 +158,8 @@ AGENT_TOOLS = {
     'onpage.crawlability': ('change_operations',),
     'onpage.qa': ('change_operations', 'page_preview_renderer'),
     'onpage.site': ('site_level_builder',),
+    'onpage.articles': ('article_studio', 'article_planner', 'competitor_research', 'article_writer', 'content_writer',
+                        'article_rules', 'article_fact_checker', 'article_renderer'),
     'onpage.write': ('onpage_output_writer',),
 
     # ---- keyword research workflow (keyword_research/keyword_research.py), in execution order

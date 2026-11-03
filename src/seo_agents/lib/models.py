@@ -100,6 +100,10 @@ AGENT_MODELS = {
     'onpage.media-links': AgentModelSettings(tier='small', temperature=0),
     'onpage.eeat-aeo-advice': AgentModelSettings(tier='small', temperature=0),
 
+    # On-page content studio (onpage/content): new blog articles researched against ranking competitors.
+    'onpage.article-planner': AgentModelSettings(tier='mid', temperature=0.3),
+    'onpage.article-writer': AgentModelSettings(tier='mid', temperature=0.5),
+
     # Keyword research generator (keyword_research/generation): business profile once per site, ideation per page.
     'keyword_research.business-profile': AgentModelSettings(tier='small', ladder=('small', 'haiku', 'mid'), temperature=0),
     'keyword_research.keyword-ideation': AgentModelSettings(tier='mid', temperature=0.4),
@@ -109,6 +113,7 @@ AGENT_MODELS = {
 GAP_WORKER_MAX_TOKENS_BY_TIER = {'small': 1500}  # every other tier: GAP_WORKER_MAX_TOKENS
 GAP_WORKER_MAX_TOKENS = 6000
 ONPAGE_WRITER_MAX_TOKENS = 16000                  # SEO_ONPAGE_MAX_TOKENS overrides (reasoning + output)
+ARTICLE_WRITER_MAX_TOKENS = 24000                 # SEO_ARTICLE_MAX_TOKENS overrides (a full article is long)
 ONPAGE_MID_REASONING_EFFORT = 'low'               # SEO_ONPAGE_REASONING_EFFORT overrides; mid endpoints reject 'none'
 KEYWORD_WRITER_MAX_TOKENS = 12000                 # SEO_KEYWORD_MAX_TOKENS overrides (reasoning + output)
 KEYWORD_MID_REASONING_EFFORT = 'low'              # SEO_KEYWORD_REASONING_EFFORT overrides; mid endpoints reject 'none'

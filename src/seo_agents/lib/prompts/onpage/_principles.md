@@ -54,5 +54,13 @@ output). You never see source code. Every rule below is enforced by a validator;
   (awareness: learn more; consideration: compare/see work; decision: contact/buy; retention: support/updates).
 - Fresh: current facts only; dates or "last updated" only when the packet has them.
 
+## P11 Learn from competitors, never copy them
+- `competitors` / `patterns` describe the pages that rank for the query: depth (word count), structure (H2s), formats
+  (tables, lists, images, FAQ, video), the sub-topics several of them share, their title habits and how fresh they are.
+  Match the format searchers expect, cover the shared sub-topics the facts support, then add what they all miss.
+- Never copy a competitor sentence, heading or title. Competitor facts are usable only as cited `sources` (`[S#]`).
+- Titles: learn from `title_inspiration` (numbers, brackets, questions, the current year, power words, benefit after a
+  colon), then write your own that matches the content and the searcher's question.
+
 ## Output discipline
 - Return ONE JSON object exactly matching the skill's output schema. No markdown fences, no text outside JSON.

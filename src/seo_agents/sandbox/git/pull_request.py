@@ -50,6 +50,8 @@ def commit_priority(path):
     name = path.rsplit("/", 1)[-1]
     if name in {"manifest.json", "summary.json"}:
         return 0
+    if path.startswith("seo_reports/onpage/articles/") and name.endswith(".md"):
+        return 0  # article drafts are the content deliverable the reviewer reads in the PR
     if path.startswith("seo_reports/onpage/") or path in {"seo_reports/keywords/keyword_map.json",
                                                           "seo_reports/keywords/summary.md",
                                                           "seo_reports/keywords/keyword_research.csv"}:

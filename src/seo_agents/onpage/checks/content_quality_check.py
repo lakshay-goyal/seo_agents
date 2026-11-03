@@ -153,8 +153,24 @@ def check_content_quality(ctx, prior=None, writer=None):
         note('content.boilerplate', f'{len(repeated)} sentence(s) repeat more than {BOILERPLATE_REPEATS} times on the page; '
              'repeated boilerplate dilutes the page\'s unique content.', 'low', {'repeated': dict(list(repeated.items())[:5])})
 
+    # ---- depth and formats vs the competitor pages that rank for the page's primary keyword
+    bench = ctx.get('competitor_insights') or {}
+    median = (bench.get('word_count') or {}).get('median')
+    if median and not shell_empty and words < median * 0.5:
+        note('content.depth', f'{words} words of main content; the {bench.get("pages_analyzed")} ranking competitor pages have a '
+             f'median of {median}. Cover the sub-topics they share ({", ".join(t["heading"] for t in (bench.get("common_subtopics") or [])[:3]) or "see evidence"}) '
+             'with real substance.', 'medium', {'words': words, 'competitor_median': median,
+                                                'common_subtopics': (bench.get('common_subtopics') or [])[:8]})
+    formats = bench.get('formats') or {}
+    missing = [name for name, key in (('comparison table', 'table'), ('FAQ', 'faq'), ('images', 'images'))
+               if formats.get(key, 0) >= 0.5]
+    if missing:
+        note('content.formats', 'Most ranking competitor pages use: ' + ', '.join(missing) + '. Searchers expect these '
+             'formats for this query; add them where the page has the facts.', 'low', {'formats': formats})
+
     data = {'words': words, 'threshold': threshold, 'page_type': kind, 'flesch': score, 'long_paragraphs': len(long_paragraphs),
-            'duplicate_peers': peers[:10], 'shell_empty': shell_empty}
+            'duplicate_peers': peers[:10], 'shell_empty': shell_empty,
+            'competitor_median_words': median}
     return result(data=data, advice=advice)
 
 

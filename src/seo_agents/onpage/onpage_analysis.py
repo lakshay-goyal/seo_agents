@@ -3,6 +3,9 @@
     START
       -> load              ExplorationReportsLoader + PageContextBuilder (reads only seo_reports/ JSON, incl. the optional
                            keywords/keyword_map.json from keyword research -> ctx['keyword_plan'])
+      -> competitors       CompetitorResearch: fetch the pages that rank for each page's keywords (robots-aware, cached),
+                           extract their structure, find shared patterns -> ctx['competitor_insights'] (page_plan,
+                           content_quality read it). The only on-page step that reads the web (never the client source).
       -> intent            SearchIntentCheck          (model, small)
       -> keyword_plan      KeywordPlanCheck
       -> page_plan         PagePlanCheck              (model, mid)
@@ -25,7 +28,9 @@
       -> crawlability      CrawlabilityCheck
       -> qa                QaConsolidationCheck       (scope gate, dedup, the before/after checklist)
       -> site              SiteLevelBuilder
-      -> write             OnpageOutputWriter -> seo_reports/onpage/
+      -> articles          ArticleStudio: plan new blog articles from user questions / content gaps / PAA / competitor
+                           sub-topics, research each against its live SERP, write + validate + fact-check (model, mid)
+      -> write             OnpageOutputWriter -> seo_reports/onpage/ (incl. competitors/ and articles/)
     END
 
 The check order is checks/checklist.py (CHECKS). A failed check is recorded with its validator errors; later checks
@@ -46,6 +51,8 @@ from seo_agents.utils.state_reducers import merge_page_results
 from seo_agents.utils.step_logger import done, log, start
 from seo_agents.onpage.checks.check_helpers import result
 from seo_agents.onpage.checks.checklist import CHECKS, DEPENDS
+from seo_agents.onpage.content.competitor_research import CompetitorResearch, page_insights
+from seo_agents.onpage.content.content_studio import ArticleStudio, market_of
 from seo_agents.onpage.output.onpage_output_writer import OnpageOutputWriter
 from seo_agents.onpage.output.site_level_builder import SiteLevelBuilder
 from seo_agents.onpage.page_context.page_context_builder import PageContextBuilder
@@ -63,6 +70,8 @@ class OnpageState(TypedDict, total=False):
     contexts: dict
     results: Annotated[dict, merge_page_results]
     site: dict
+    competitors: dict
+    articles: dict
     written: dict
 
 
@@ -101,7 +110,8 @@ class LoadReportsNode:
                 'framework': (reports.index.get('repo') or {}).get('framework'), 'origin': origin,
                 'keyword_map': {k: reports.keyword_map.get(k) for k in ('path', 'schema', 'generated_at', 'market')}
                 if reports.keyword_map else None,
-                'keyword_plans_used': sum(1 for c in contexts.values() if c.get('keyword_plan'))}
+                'keyword_plans_used': sum(1 for c in contexts.values() if c.get('keyword_plan')),
+                'business': (reports.keyword_map or {}).get('business')}
         return {'contexts': contexts, 'run_date': run_date, 'reports_meta': meta,
                 'out_dir': state.get('out_dir') or str(reports.root / 'onpage')}
 
@@ -143,6 +153,62 @@ class CheckNode:
         return {'results': {pid: {name: res} for pid, res in outcomes.items()}}
 
 
+class CompetitorResearchNode:
+    """Node: per page, fetch + analyze the competitor pages that rank for its keywords -> ctx['competitor_insights']."""
+
+    name = 'competitors'
+
+    def __init__(self, research):
+        self.research = research
+
+    def __call__(self, state):
+        begun = start('onpage: competitor content research')
+        contexts = dict(state['contexts'])
+        market = market_of(state.get('reports_meta'))
+        self.research.run_date = state.get('run_date')
+        workers = max(1, int(os.getenv('SEO_ONPAGE_CONCURRENCY', '4')))
+
+        def one(pid):
+            try:
+                return pid, self.research.for_page(contexts[pid], market), None
+            except Exception as error:  # noqa: BLE001 - research is optional input for the checks
+                return pid, None, f'{type(error).__name__}: {str(error)[:200]}'
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            outcomes = list(pool.map(one, list(contexts)))
+        by_page = {}
+        for pid, found, error in outcomes:
+            contexts[pid] = {**contexts[pid], 'competitor_insights': page_insights(found)}
+            by_page[pid] = {'url': contexts[pid]['url'], 'error': error, **({k: v for k, v in found.items() if k != 'texts'}
+                                                                            if found else {'pages': []})}
+        log(f"onpage: competitor research for {sum(1 for _, f, _ in outcomes if f)} pages, "
+            f"{len(self.research.fetched_pages())} competitor pages fetched")
+        done('onpage: competitor content research', begun)
+        return {'contexts': contexts, 'competitors': {'pages': by_page, 'fetched': self.research.fetched_pages()}}
+
+
+class ArticlesNode:
+    """Node: new blog articles (content studio) written from user demand + competitor research."""
+
+    name = 'articles'
+
+    def __init__(self, studio, writer):
+        self.studio, self.writer = studio, writer
+
+    def __call__(self, state):
+        begun = start('onpage: content studio (new articles)')
+        meta = state.get('reports_meta') or {}
+        insights = {pid: ctx.get('competitor_insights') for pid, ctx in state['contexts'].items()}
+        try:
+            articles = self.studio.run(self.writer, contexts=state['contexts'], results=state.get('results') or {},
+                                       insights=insights, meta=meta, run_date=state.get('run_date'), origin=meta.get('origin'))
+        except Exception as error:  # noqa: BLE001 - articles never stop the page proposals from being written
+            articles = {'status': 'failed', 'errors': [f'{type(error).__name__}: {str(error)[:300]}'], 'articles': []}
+        log('onpage: content studio ' + str(articles.get('status')) + (': ' + articles['reason'] if articles.get('reason') else ''))
+        done('onpage: content studio (new articles)', begun)
+        return {'articles': articles}
+
+
 class SiteLevelNode:
     """Node: site-level changes across all pages."""
 
@@ -167,15 +233,24 @@ class WriteOutputsNode:
 
 # ---------------------------------------------------------------- workflow
 class OnpageAnalysisWorkflow:
-    """load -> every check in CHECKS order -> site -> write. `writer` is the ContentWriter used by model checks."""
+    """load -> competitors -> every check in CHECKS order -> site -> articles -> write.
 
-    def __init__(self, writer=None, checks=CHECKS):
+    writer    ContentWriter used by model checks and the content studio
+    research  CompetitorResearch (fetcher + SERP source, injectable for tests)
+    studio    ArticleStudio (SEO_ONPAGE_ARTICLES articles, 0 = off)
+    """
+
+    def __init__(self, writer=None, checks=CHECKS, research=None, studio=None):
         self.writer = writer or ContentWriter()
         self.checks = tuple(checks)
+        self.research = research or CompetitorResearch()
+        self.studio = studio or ArticleStudio(self.research)
 
     def build_graph(self):
         graph = StateGraph(OnpageState)
-        steps = [LoadReportsNode()] + [CheckNode(check, self.writer) for check in self.checks] + [SiteLevelNode(), WriteOutputsNode()]
+        steps = ([LoadReportsNode(), CompetitorResearchNode(self.research)]
+                 + [CheckNode(check, self.writer) for check in self.checks]
+                 + [SiteLevelNode(), ArticlesNode(self.studio, self.writer), WriteOutputsNode()])
         previous = START
         for node in steps:
             graph.add_node(node.name, node)
@@ -196,7 +271,8 @@ def build_graph(writer=None):
     return OnpageAnalysisWorkflow(writer).build_graph()
 
 
-def run_onpage(reports_dir, *, out_dir=None, site_url=None, run_date=None, only_pages=None, writer=None):
-    """Function form of `OnpageAnalysisWorkflow(writer).run(reports_dir, ...)`."""
-    return OnpageAnalysisWorkflow(writer).run(reports_dir, out_dir=out_dir, site_url=site_url, run_date=run_date,
+def run_onpage(reports_dir, *, out_dir=None, site_url=None, run_date=None, only_pages=None, writer=None, research=None,
+               studio=None):
+    """Function form of `OnpageAnalysisWorkflow(writer, research=..., studio=...).run(reports_dir, ...)`."""
+    return OnpageAnalysisWorkflow(writer, research=research, studio=studio).run(reports_dir, out_dir=out_dir, site_url=site_url, run_date=run_date,
                                               only_pages=only_pages)

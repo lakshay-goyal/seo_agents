@@ -14,6 +14,8 @@ from seo_agents.onpage.changes import change_operations as ops
 from seo_agents.onpage.checks.fact_check_freshness_check import check_fact_check
 from seo_agents.onpage.checks.page_plan_check import check_questions
 from seo_agents.onpage.onpage_analysis import run_onpage
+from seo_agents.onpage.content.content_studio import ArticleStudio
+from test_onpage import OFFLINE_RESEARCH
 from seo_agents.onpage.page_context.page_context_builder import PageContextBuilder
 from seo_agents.onpage.reports.exploration_reports import ExplorationReportsLoader
 from seo_agents.onpage.validation import content_validators as v
@@ -222,7 +224,8 @@ class KeywordMapGoldenTest(unittest.TestCase):
         cls.calls = []
         writer = ContentWriter(model_factory=lambda tier, label=None: FakeModel(cls.calls, tier), attempts=3)
         with redirect_stdout(io.StringIO()):
-            run_onpage(root, run_date='2026-11-02', writer=writer, only_pages=[HOME, ABOUT])
+            run_onpage(root, run_date='2026-11-02', writer=writer, only_pages=[HOME, ABOUT], research=OFFLINE_RESEARCH,
+                       studio=ArticleStudio(OFFLINE_RESEARCH, count=0))
         out = root / 'onpage'
         cls.pages = {pid: json.loads((out / 'pages' / (pid + '.json')).read_text()) for pid in (HOME, ABOUT)}
         cls.index = json.loads((out / 'index.json').read_text())

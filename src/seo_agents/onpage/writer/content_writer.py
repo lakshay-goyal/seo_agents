@@ -9,6 +9,7 @@ Environment:
   SEO_ONPAGE_ATTEMPTS  validation attempts per task (default 3; escalation to `mid` only after two failures)
   SEO_ONPAGE_REASONING_EFFORT  reasoning effort for mid-tier writer calls (default `low`)
   SEO_ONPAGE_MAX_TOKENS        reasoning + output cap per call (default 16000)
+  SEO_ARTICLE_MAX_TOKENS       the same cap for the article writer (default 24000: a full article is long)
 """
 
 from __future__ import annotations
@@ -19,12 +20,14 @@ import json
 import os
 import re
 
-from seo_agents.lib.models import ONPAGE_MID_REASONING_EFFORT, ONPAGE_WRITER_MAX_TOKENS, skill_model_meta
+from seo_agents.lib.models import (ARTICLE_WRITER_MAX_TOKENS, ONPAGE_MID_REASONING_EFFORT, ONPAGE_WRITER_MAX_TOKENS,
+                                   skill_model_meta)
 from seo_agents.lib.prompts import ONPAGE_PROMPTS_DIR
 from seo_agents.lib.prompts.system_prompts import onpage_writer_retry_feedback
 from seo_agents.utils.json_parsing import content_text, parse_json_object
 from seo_agents.utils.prompt_files import split_frontmatter
 from seo_agents.utils.step_logger import log
+from seo_agents.onpage.content.article_rules import render_article_limits
 from seo_agents.onpage.validation.content_policy import render_limits
 
 SKILLS_DIR = ONPAGE_PROMPTS_DIR
@@ -60,7 +63,8 @@ def load_skill(name):
     parts = [sections['intro']] + [sections[p] for p in wanted if p in sections]
     if meta.get('kind') == 'llm':
         parts.append(sections.get('output', ''))
-    return '\n\n'.join(p for p in parts if p) + '\n\n# Skill: ' + name + '\n' + render_limits(body.strip()), meta
+    body = render_article_limits(render_limits(body.strip()))  # article skills use {{A.NAME}} (content/article_rules)
+    return '\n\n'.join(p for p in parts if p) + '\n\n# Skill: ' + name + '\n' + body, meta
 
 
 def skill_catalog():
@@ -94,7 +98,11 @@ def default_factory(tier, label=None, temperature=0):
     from seo_agents.llm.chat_model_factory import get_chat_model
     # Mid-tier endpoints reject reasoning "none"; small tier answers short structured questions without reasoning.
     effort = (os.getenv('SEO_ONPAGE_REASONING_EFFORT') or ONPAGE_MID_REASONING_EFFORT) if tier == 'mid' else None
-    return get_chat_model(tier, max_tokens=int(os.getenv('SEO_ONPAGE_MAX_TOKENS', str(ONPAGE_WRITER_MAX_TOKENS))), label=label,
+    if str(label or '').startswith('onpage:article-writer'):
+        max_tokens = int(os.getenv('SEO_ARTICLE_MAX_TOKENS', str(ARTICLE_WRITER_MAX_TOKENS)))
+    else:
+        max_tokens = int(os.getenv('SEO_ONPAGE_MAX_TOKENS', str(ONPAGE_WRITER_MAX_TOKENS)))
+    return get_chat_model(tier, max_tokens=max_tokens, label=label,
                           temperature=temperature, reasoning_effort=effort)
 
 

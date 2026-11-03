@@ -66,8 +66,9 @@ src/seo_agents/
 │   ├── contracts.py           shared dataclasses + Protocols (ResearchToolkit, KeywordGenerator, KeywordJudge)
 │   ├── providers/ generation/ judge/ mapping/ output/
 ├── onpage/                    stage 3: on-page proposals from the exploration JSON (+ keyword_map.json)
-│   ├── onpage_analysis.py     OnpageAnalysisWorkflow: load -> 12 checks (one at a time) -> site -> write
+│   ├── onpage_analysis.py     OnpageAnalysisWorkflow: load -> competitors -> 21 checks -> site -> articles -> write
 │   ├── checks/                one class per checklist item + checklist.py (execution order)
+│   ├── content/               content studio: competitor research + new blog articles (see below)
 │   ├── writer/                ContentWriter (skill prompt -> model -> validator -> repair loop)
 │   ├── reports/ page_context/ changes/ validation/ output/
 └── sandbox/                   Docker sandbox, container entrypoint, clone + PR
@@ -137,6 +138,40 @@ Validators: grounding against served text + data JSON only (numbers incl. spelle
 repetition cap, no synonym swaps of the client's own terms, FAQ ∩ H2 = ∅, no repeated facts.
 Settings: `SEO_ONPAGE_TIER`, `SEO_ONPAGE_ATTEMPTS`, `SEO_ONPAGE_ADVICE`,
 `SEO_ONPAGE_REASONING_EFFORT`, `SEO_ONPAGE_CONCURRENCY`, `SEO_ONPAGE_MAX_PAGES`.
+
+### Competitor research and new articles (`onpage/content/`)
+
+The only on-page step that reads the web (never the client source):
+
+1. **competitors** (before the checks): for every page, fetch the pages that rank for its keywords (keyword
+   research `competitor_urls` + live SERP top results via DataForSEO when configured). robots.txt is respected,
+   HTML only, cached 7 days. Extract title, H1, H2/H3 outline, word count, lists/tables/images/video/FAQ, alt
+   coverage, dates, JSON-LD. Find the shared patterns (depth, formats, common sub-topics, title and URL habits,
+   freshness). `page_plan` gets them as `competitors` (structure only, never competitor text); `content_quality`
+   flags depth and missing formats vs the median ranking page.
+2. **articles** (after `site`): `ArticleStudio` plans `SEO_ONPAGE_ARTICLES` (default 3) new blog articles from user
+   demand (researched questions, content gaps, People Also Ask, competitor sub-topics, business seed topics), then for
+   each: live SERP for its primary keyword -> competitor fetch + patterns + title inspiration + dated fact passages ->
+   `article-writer` (mid) -> deterministic validator with repair loop -> fact check -> Markdown + JSON-LD.
+
+Enforced on every article (`content/article_rules.py`, `content/article_writer.py`):
+
+| Area | Rule |
+| --- | --- |
+| Intent | primary keyword + questions come from the topic pool; every question gets its own H2/H3 (or FAQ) with a direct 40-70 word answer; answer-first intro |
+| Depth | body ≥ 80% of the competitor median word count (900-2500 floor), 4-12 H2s, no 10-word phrase copied from a competitor |
+| Title / H1 | title 30-60 chars with the primary keyword and a CTR hook (number, current year, brackets, question, colon benefit, power word) learned from ranking titles; no other year; differs from competitor titles |
+| URL | `/<blog folder>/<slug>`: 2-6 lowercase hyphenated words, no repeated word, no folder word repeat, no year, no ids, names the topic, unique |
+| Visuals | at least one table, one list, one Mermaid diagram and one image (client asset or `image_brief` to create) |
+| Image SEO | unique descriptive alt (5-125 chars, 3+ words, no "image of" / file names / stuffing), descriptive image file names |
+| Bullets | plain items (no typed markers), 2-10 per list, 1-40 words, consistent end punctuation, no duplicates; rendered as `- ` / `1. ` |
+| Facts / freshness | every number is a small count, the run year, client content, or cited `[S#]` to a source dated within 2 years whose passage contains it; `Last updated` = run date; `fact_check` verdict + review-by date |
+| Internal links | ≥ 3 inline links to real site pages incl. the pillar; `link_from` = existing pages that should link to the article; 3-6 tags + category |
+
+Outputs: `onpage/competitors/index.json`, `onpage/articles/index.json`, `articles/<slug>.md` (ready-to-publish draft),
+`articles/<slug>.json` (article data, `fact_check`, `json_ld`, research). Settings: `SEO_ONPAGE_ARTICLES` (0 = off),
+`SEO_CONTENT_COMPETITORS` (pages per topic, default 5), `SEO_CONTENT_FETCH` (0 = no network),
+`SEO_CONTENT_CACHE_DIR`, `SEO_CONTENT_CACHE_TTL_DAYS`, `SEO_ARTICLE_MAX_TOKENS`.
 
 ## Keyword research stage (`seo_agents.keyword_research`)
 

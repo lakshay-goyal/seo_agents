@@ -135,6 +135,8 @@ def check_page_plan(ctx, prior, writer):
     }
     if keywords:
         packet['keywords'] = keywords
+    if ctx.get('competitor_insights'):
+        packet['competitors'] = ctx['competitor_insights']  # structure/patterns of ranking pages (no competitor text)
 
     def validate(a):
         v.require(a, 'title', 'description', 'h1', 'outline', 'direct_answer', 'sections', 'faq', 'fact_slots')

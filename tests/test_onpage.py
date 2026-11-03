@@ -15,6 +15,11 @@ from seo_agents.onpage.validation import content_validators as v
 from seo_agents.onpage.checks.checklist import CHECKS
 from seo_agents.onpage.onpage_analysis import run_onpage
 from seo_agents.onpage.writer.content_writer import ContentWriter, load_skill, skill_catalog
+from seo_agents.onpage.content.competitor_fetcher import CompetitorFetcher, SerpSource
+from seo_agents.onpage.content.competitor_research import CompetitorResearch
+from seo_agents.onpage.content.content_studio import ArticleStudio
+
+OFFLINE_RESEARCH = CompetitorResearch(fetcher=CompetitorFetcher(enabled=False, cache=False), serp=SerpSource(enabled=False))
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'onpage' / 'vite-spa' / 'seo_reports'
 HOME, ABOUT = 'p_42099b4af0', 'p_69bbc6be2c'
@@ -106,7 +111,8 @@ def run_fixture(only=(HOME, ABOUT)):
     root = Path(tmp) / 'seo_reports'
     shutil.copytree(FIXTURE, root)
     with redirect_stdout(io.StringIO()):
-        state = run_onpage(root, run_date='2026-11-02', writer=writer, only_pages=list(only))
+        state = run_onpage(root, run_date='2026-11-02', writer=writer, only_pages=list(only), research=OFFLINE_RESEARCH,
+                           studio=ArticleStudio(OFFLINE_RESEARCH, count=0))  # content studio: tests/test_onpage_content.py
     out = root / 'onpage'
     pages = {pid: json.loads((out / 'pages' / (pid + '.json')).read_text()) for pid in only}
     return {'calls': calls, 'state': state, 'out': out, 'pages': pages, 'tmp': tmp,

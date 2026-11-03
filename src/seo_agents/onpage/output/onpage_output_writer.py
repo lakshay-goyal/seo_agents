@@ -1,4 +1,5 @@
-"""Write seo_reports/onpage/: index.json, site.json, client_inputs.json, pages/<id>.json (+ .expected.html), README."""
+"""Write seo_reports/onpage/: index.json, site.json, client_inputs.json, pages/<id>.json (+ .expected.html),
+competitors/index.json, articles/ (index, <slug>.json, <slug>.md), README."""
 
 from __future__ import annotations
 
@@ -30,6 +31,16 @@ Generated from the exploration JSON only; no client source was read or changed. 
   `keyword_coverage` = before/after per keyword (researched in seo_reports/keywords/ when present, else model hypotheses);
   `quality` = fact-check / helpfulness / freshness verdict (pass | needs_work | fail).
 - `pages/<id>.expected.html` - review aid generated from the change list; NOT directly applicable.
+- `competitors/index.json` - competitor content research: for every page, the ranking pages fetched (title, H1,
+  outline, word count, formats, dates; no copied body text), their shared patterns (depth, formats, common
+  sub-topics, title and URL habits, freshness) and the SERP / People Also Ask used.
+- `articles/index.json` - the content studio plan: topic pool (user demand), one brief per article, status.
+- `articles/<slug>.md` - a ready-to-publish article draft (frontmatter: SEO title, meta description, URL, tags,
+  category, images + alt; body: H1, last-updated date, answer-first intro, key takeaways, sections with lists,
+  tables, Mermaid diagrams and images, FAQ, sources). `<!-- IMAGE TO CREATE -->` marks images to produce.
+- `articles/<slug>.json` - the same article as data + `fact_check` (every number with its cited, dated source;
+  verdict pass | needs_review), `json_ld` (BlogPosting, FAQPage, BreadcrumbList), `link_from` (existing pages that
+  should link to it), the competitor research it was written against and `title_hooks` (why the title gets clicks).
 """
 
 
@@ -119,7 +130,7 @@ def write_outputs(out_dir, state):
         'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'source': state.get('reports_meta'),
         'model': model_info(),
-        'workflow': 'LangGraph linear: load -> ' + ' -> '.join(order) + ' -> site -> write',
+        'workflow': 'LangGraph linear: load -> competitors -> ' + ' -> '.join(order) + ' -> site -> articles -> write',
         'checklist': [{'order': i + 1, 'check': check.name, 'skill': check.skill, 'uses_llm': check.uses_model,
                        'tier': (skills.get(check.skill) or {}).get('tier'),
                        'description': (skills.get(check.skill) or {}).get('description')} for i, check in enumerate(CHECKS)],
@@ -129,11 +140,53 @@ def write_outputs(out_dir, state):
         'site_file': 'site.json',
         'client_inputs_file': 'client_inputs.json',
     }
+    index['competitors_file'], index['articles'] = write_research(out, state, files)
     dump(out / 'index.json', index)
     files.append('index.json')
     (out / 'README.md').write_text(README)
     files.append('README.md')
     return {'out_dir': str(out), 'files': files}
+
+
+def write_research(out, state, files):
+    """competitors/index.json and articles/ (index, <slug>.json, <slug>.md). Returns (competitors file, article rows)."""
+    competitors = state.get('competitors') or {}
+    competitors_file = None
+    if competitors:
+        dump(out / 'competitors' / 'index.json', {'schema': SCHEMA, **competitors})
+        competitors_file = 'competitors/index.json'
+        files.append(competitors_file)
+    studio = state.get('articles') or {}
+    rows = []
+    for item in studio.get('articles') or []:
+        brief = item.get('brief') or {}
+        slug = brief.get('slug') or 'article'
+        row = {'slug': slug, 'url': brief.get('url'), 'primary_keyword': brief.get('primary_keyword'), 'status': item.get('status')}
+        if item.get('status') == 'done':
+            article = item['article']
+            record = {'schema': SCHEMA, 'status': 'done', 'brief': brief, 'article': article, 'fact_check': item['fact_check'],
+                      'json_ld': item['json_ld'], 'link_from': article.get('link_from'), 'meta': item.get('meta'),
+                      'research': item.get('research')}
+            (out / 'articles').mkdir(parents=True, exist_ok=True)
+            (out / 'articles' / (slug + '.md')).write_text(item['markdown'])
+            files.append('articles/' + slug + '.md')
+            row.update({'title': article['title'], 'h1': article['h1'], 'words': article.get('word_count'),
+                        'tags': article.get('tags'), 'fact_check': item['fact_check']['verdict'],
+                        'markdown': 'articles/' + slug + '.md'})
+        else:
+            record = {'schema': SCHEMA, 'status': item.get('status'), 'brief': brief, 'errors': item.get('errors'),
+                      'research': item.get('research')}
+            row['errors'] = (item.get('errors') or [])[-2:]
+        dump(out / 'articles' / (slug + '.json'), record)
+        files.append('articles/' + slug + '.json')
+        row['file'] = 'articles/' + slug + '.json'
+        rows.append(row)
+    if studio:
+        dump(out / 'articles' / 'index.json', {'schema': SCHEMA, 'status': studio.get('status'), 'reason': studio.get('reason'),
+                                               'stage': studio.get('stage'), 'errors': studio.get('errors'),
+                                               'plan': studio.get('plan'), 'pool': studio.get('pool'), 'articles': rows})
+        files.append('articles/index.json')
+    return competitors_file, {'status': studio.get('status'), 'reason': studio.get('reason'), 'rows': rows} if studio else None
 
 
 class OnpageOutputWriter:
