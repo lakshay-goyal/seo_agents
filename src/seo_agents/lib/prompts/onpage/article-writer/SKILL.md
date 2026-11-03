@@ -54,7 +54,8 @@ order: 23
    descriptive; both must differ from every competitor title.
 4. Visual and structured: at least one `table` (comparison or summary), one `ul`/`ol` inside a section, one `diagram`
    (Mermaid: flowchart/sequenceDiagram/timeline/... on the first line), and one image (`figure` with an `assets` src
-   when one fits the topic, else an `image_brief` for a new image). Use `ol` for ordered steps, `ul` for sets.
+   when one shows the subject - e.g. the covers of the books discussed or screenshots of the projects described;
+   prefer these real client images - else an `image_brief` for a new image). Use `ol` for ordered steps, `ul` for sets.
 5. Bullet formatting: list items are plain text only (no "-", "*", "1." typed in), one line each, 1-40 words, either
    all ending with a period or none, no duplicates; 2-10 items per list.
 6. Image SEO: every figure, image_brief and diagram has a unique, specific alt text ({{A.ALT_CHARS}} chars, 3+ words)
