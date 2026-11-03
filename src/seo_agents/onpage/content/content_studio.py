@@ -150,7 +150,8 @@ class ArticleStudio:
         return {'status': 'done', 'brief': brief, 'article': article, 'meta': meta,
                 'fact_check': fact_check(article, sources, run_date),
                 'markdown': to_markdown(article, sources, run_date=run_date, brand=brand),
-                'json_ld': json_ld(article, origin=origin, run_date=run_date, brand=brand),
+                'json_ld': json_ld(article, origin=origin, run_date=run_date, brand=brand,
+                                   site_type=business.get('site_type'), lang=lang),
                 'research': public}
 
 

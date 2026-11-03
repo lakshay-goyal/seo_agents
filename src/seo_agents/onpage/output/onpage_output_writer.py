@@ -124,7 +124,7 @@ def write_outputs(out_dir, state):
     dump(out / 'site.json', {'schema': SCHEMA, **site})
     files.append('site.json')
     all_inputs += [{**item, 'page': None, 'url': None} for item in site.get('client_inputs') or []]
-    dump(out / 'client_inputs.json', {'schema': SCHEMA, 'inputs': all_inputs})
+    dump(out / 'client_inputs.json', {'schema': SCHEMA, 'inputs': merge_site_inputs(all_inputs)})
     files.append('client_inputs.json')
     skills = {s['name']: s for s in skill_catalog()}
     index = {
@@ -193,6 +193,18 @@ def write_research(out, state, files):
 
 
 
+def merge_site_inputs(rows):
+    """Site-wide facts (scope 'site', same id on every page) are asked once, listing every page that needs them."""
+    out, by_id = [], {}
+    for row in rows:
+        if row.get('scope') != 'site':
+            out.append(row)
+        elif row['id'] in by_id:
+            by_id[row['id']]['urls'].append(row.get('url'))
+        else:
+            by_id[row['id']] = {**row, 'urls': [row.get('url')]}
+            out.append(by_id[row['id']])
+    return out
 
 class OnpageOutputWriter:
     """Tool: write seo_reports/onpage/ (index, pages/<id>.json, site.json, client_inputs.json)."""

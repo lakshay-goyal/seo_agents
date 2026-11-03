@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import copy
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -467,8 +468,11 @@ class Attributor:
         head['hreflang'] = [{'hreflang': h.get('hreflang'), 'href': h.get('href'),
                              'edit': next((s['edit'] for s in source['head'].get('hreflang', []) if norm(s.get('href')) == norm(h.get('href'))), None)}
                             for h in summary.get('hreflang', [])]
+        # `value` (parsed JSON-LD, size-capped) lets the on-page stage merge existing nodes it does not regenerate.
         head['json_ld'] = [{'types': item.get('types', []), 'valid': item.get('valid'), 'error': item.get('error'),
-                            'edit': next((s['edit'] for s in source['head'].get('json_ld', []) if set(s.get('types', [])) & set(item.get('types', []))), None)}
+                            'edit': next((s['edit'] for s in source['head'].get('json_ld', []) if set(s.get('types', [])) & set(item.get('types', []))), None),
+                            **({'value': item['value']} if item.get('value') is not None
+                               and len(json.dumps(item['value'], default=str)) <= 20000 else {})}
                            for item in summary.get('json_ld', [])]
         head['canonical_count'] = summary.get('canonical_count')
         # Raw head <meta>/<link> lists (meta refresh, googlebot, charset, icon, preload, next/prev, amphtml); omitted when empty.

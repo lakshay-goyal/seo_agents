@@ -19,6 +19,12 @@ CHROME = {'header', 'nav', 'footer', 'aside'}
 VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
 BLOCK_TAGS = {'p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'td', 'th', 'dd', 'dt', 'figcaption',
               'summary', 'caption', 'pre', 'label', 'button'}
+# Containers whose own text (not wrapped in a block tag) is still content: FAQ answers, cards and pricing tiles
+# often put text straight into a <div>. Inline children's text counts as the container's own text.
+CONTAINER_TAGS = {'div', 'section', 'article'}
+INLINE_TAGS = {'a', 'span', 'strong', 'em', 'b', 'i', 'u', 'code', 'small', 'sup', 'sub', 'mark', 'abbr', 'time', 'q',
+               'cite', 'br', 'wbr', 's', 'del', 'ins', 'kbd', 'var', 'bdi', 'bdo', 'data'}
+OWN_TEXT_MIN_WORDS = 3
 SKIP_TEXT = {'script', 'style', 'noscript', 'template', 'svg', 'head', 'title'}
 
 
@@ -72,7 +78,7 @@ class _Summary(HTMLParser):
         attrs = {k.lower(): (v if v is not None else '') for k, v in attrs}
         siblings = self.counts[-1]
         siblings[tag] = siblings.get(tag, 0) + 1
-        node = {'tag': tag, 'attrs': attrs, 'nth': siblings[tag], 'text': []}
+        node = {'tag': tag, 'attrs': attrs, 'nth': siblings[tag], 'text': [], 'own': []}
         if tag == 'base' and attrs.get('href'):
             self.base = urljoin(self.url, attrs['href'])
         if tag == 'html':
@@ -158,7 +164,12 @@ class _Summary(HTMLParser):
         if 'heading' in node:
             node['heading']['text'] = text
             self.out['headings'].append(node['heading'])
-        if node['tag'] in BLOCK_TAGS and text and not any(n['tag'] in BLOCK_TAGS for n in self.stack[:-1] if n is not node):
+        own = norm(''.join(node['own']))
+        container = node['tag'] in CONTAINER_TAGS and words(own) >= OWN_TEXT_MIN_WORDS
+        if container:
+            text = own
+        if (node['tag'] in BLOCK_TAGS or container) and text and \
+                not any(n['tag'] in BLOCK_TAGS for n in self.stack[:-1] if n is not node):
             self.out['blocks'].append({'tag': node['tag'], 'text': text[:2000], 'section': next(
                 (n['tag'] for n in reversed(self.stack) if n['tag'] in SEMANTIC and n is not node), 'body'),
                 'in_main': self.in_main(), 'path': self.path(), 'src_hint': source_hint(node['attrs'])})
@@ -176,6 +187,9 @@ class _Summary(HTMLParser):
             return
         for node in self.stack:
             node['text'].append(data)
+        owner = next((n for n in reversed(self.stack) if n['tag'] not in INLINE_TAGS or n['tag'] in BLOCK_TAGS), None)
+        if owner is not None and owner['tag'] not in BLOCK_TAGS:
+            owner['own'].append(data)
         if data.strip() and 'body' in tags | {'body'}:
             self.body_text.append(data)
             if not self.in_chrome():

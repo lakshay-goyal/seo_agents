@@ -67,7 +67,9 @@ def faq(items):
 
 
 def json_ld(data):
-    return '<script type="application/ld+json">\n' + json.dumps(data, indent=2, ensure_ascii=False) + '\n</script>\n'
+    # `</` (e.g. "</script>" inside a FAQ answer) would end the script element early: escape it, JSON stays equal.
+    body = json.dumps(data, indent=2, ensure_ascii=False).replace('</', '<\\/').replace('<!--', '<\\u0021--')
+    return '<script type="application/ld+json">\n' + body + '\n</script>\n'
 
 
 def head_tags(tags):

@@ -29,7 +29,7 @@ from JSON alone: plan from `index.json`, read `site.json` once, load one
     "title": FIELD, "description": FIELD, "canonical": FIELD, "robots": FIELD, "lang": FIELD, "viewport": FIELD,
     "og": {"title": FIELD, "image": FIELD}, "twitter": {"card": FIELD},
     "hreflang": [{"hreflang": "fr", "href": "…", "edit": EDIT}],
-    "json_ld": [{"types": ["Organization"], "valid": true, "edit": EDIT}],
+    "json_ld": [{"types": ["Organization"], "valid": true, "edit": EDIT, "value": {"@context": "https://schema.org", "@type": "Organization"}}],
     "add_target": EDIT            // where to ADD any missing head tag on this stack
   },
   "headings": [{"level": 1, "text": "Simple pricing", "el": "e_19a…", "method": "…", "edit": EDIT, "confidence": 0.97, "path": "main > h1"}],

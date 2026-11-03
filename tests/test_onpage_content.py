@@ -20,6 +20,7 @@ from seo_agents.onpage.content.content_studio import ArticleStudio, url_prefix
 from seo_agents.onpage.content.html_extractor import extract
 from seo_agents.onpage.onpage_analysis import run_onpage
 from seo_agents.onpage.writer.content_writer import ContentWriter, load_skill
+from seo_agents.onpage.structured_data import schema_rules
 
 from test_onpage import FIXTURE, HOME, answer_for, text_of
 
@@ -381,7 +382,17 @@ class ContentStudioRunTest(unittest.TestCase):
         self.assertGreaterEqual(len(article['internal_links']), 3)
         self.assertEqual(record['fact_check']['freshness']['last_updated'], RUN_DATE)
         self.assertTrue(any(c['number'] == '87%' for c in record['fact_check']['numeric_claims']))
-        self.assertEqual([g['@type'] for g in record['json_ld']['@graph']], ['BlogPosting', 'FAQPage', 'BreadcrumbList'])
+        ld = record['json_ld']
+        self.assertEqual([g['@type'] for g in ld['@graph']],
+                         ['WebPage', 'BlogPosting', 'WebSite', 'Person', 'ImageObject', 'FAQPage', 'HowTo', 'BreadcrumbList'])
+        self.assertEqual([r for r in schema_rules.validate(ld) if r['level'] == 'error'], [])
+        nodes = {g['@type']: g for g in ld['@graph']}
+        self.assertEqual(nodes['BlogPosting']['author'], {'@id': nodes['Person']['@id']})  # personal site: Person author
+        self.assertEqual(nodes['BlogPosting']['mainEntityOfPage'], {'@id': nodes['WebPage']['@id']})
+        for q in nodes['FAQPage']['mainEntity']:  # plain text: no [S#] citation markers or HTML in markup
+            self.assertNotRegex(q['acceptedAnswer']['text'], r'\[S\d+\]|<[a-z]')
+        md = (self.out / 'articles' / 'deploy-react-app-vercel.md').read_text()
+        self.assertIn('1. ' + nodes['HowTo']['step'][0]['text'], md)
         writer_calls = [k for k, _ in self.res['calls'] if k == 'article-writer|"deploy-react-app-vercel"']
         self.assertEqual(len(writer_calls), 2)  # the hook-less title was rejected and repaired
 
