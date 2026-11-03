@@ -104,7 +104,7 @@ class PageSelector:
         ids = [r['id'] for r in reports.page_rows() if r['id'] in reports.pages and selectable(reports.pages[r['id']])
                and (not only or r['id'] in only or r.get('url') in only)][:limit]
         builder = PageContextBuilder()
-        contexts = {pid: builder.build(reports, pid, origin=origin) for pid in ids}
+        contexts = {pid: builder.build(reports, pid, origin=origin, site_url=site_url) for pid in ids}
         briefs = {pid: brief_from_context(ctx) for pid, ctx in contexts.items()}
         origin = next((c.get('origin') for c in contexts.values() if c.get('origin')), origin)
         return reports, origin, briefs, site_packet(reports, contexts, briefs, origin)

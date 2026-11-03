@@ -6,6 +6,7 @@ Accepted roots: the `seo_reports/` folder (with `site_model/` inside) or a `site
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -116,8 +117,15 @@ def route_record(reports, page):
     """routes.json row for a page (head_scope, render mode, template), if the sharded output exists."""
     routes = (reports.exploration or {}).get('routes')
     rows = routes.get('routes') if isinstance(routes, dict) else routes
+    url = page.get('url') or page.get('route')
+    # exploration_writer route ids are 'r_' + sha1(url)[:10]; site-model page ids are 'p_...' and never equal them.
+    rid = 'r_' + hashlib.sha1(str(url).encode()).hexdigest()[:10] if isinstance(url, str) else None
+    wanted = _url_key(url)
     for row in rows or []:
-        if isinstance(row, dict) and (row.get('url') == page.get('url') or row.get('route_id') == page.get('id')):
+        if isinstance(row, dict) and ((rid and row.get('route_id') == rid) or row.get('url') == url):
+            return row
+    for row in rows or []:
+        if isinstance(row, dict) and wanted and _url_key(row.get('url')) == wanted:
             return row
     return {}
 

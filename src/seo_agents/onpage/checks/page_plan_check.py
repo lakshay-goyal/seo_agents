@@ -15,6 +15,7 @@ from seo_agents.onpage.page_context.page_context_builder import facts
 from seo_agents.onpage.validation.content_policy import LIMITS
 from seo_agents.onpage.checks.check_helpers import (RESEARCHED, add_target, brand, first_main_edit, intent_of, keywords_of,
                                                     numbers_allowed, page_type, result, site_type, site_url_set)
+from seo_agents.onpage.checks.heading_structure_check import primary_h1
 from seo_agents.onpage.checks.base_check import OnpageCheck
 
 # ====================================================================== 3. page plan (mid, one call)
@@ -269,18 +270,23 @@ def check_cta(cta, urls, ctx):
 def plan_changes(ctx, prior, a, by_hid, by_sid):
     head = ctx['head']
     changes = []
-    title_target = ops.target_of(head.get('title')) or add_target(ctx, 'head.title')
-    changes.append(ops.make_change(ctx, 'page_plan', 'head.title', ctx['title'], a['title'], target=title_target,
-                                   op='set_text' if ctx['title'] else 'insert_node', confidence=0.85,
-                                   html=f'<title>{render.inline(a["title"])}</title>', rationale='Unique, intent-matching title'))
-    desc_target = ops.target_of(head.get('description'), attr='content') or add_target(ctx, 'head.description')
-    changes.append(ops.make_change(ctx, 'page_plan', 'head.description', ctx['description'], a['description'], target=desc_target,
-                                   op='set_attr' if ctx['description'] else 'insert_node', confidence=0.85,
-                                   html=f'<meta name="description" content="{render.inline(a["description"])}">',
-                                   rationale='Answers the query in one line and gives a reason to click'))
-    current_h1 = next((h for h in ctx['heading_records'] if h['level'] == 1 and h['text']), None)
+    same = lambda a_, b_: ' '.join(str(a_ or '').split()) == ' '.join(str(b_ or '').split())  # noqa: E731
+    if not same(ctx['title'], a['title']):
+        title_target = ops.target_of(head.get('title')) or add_target(ctx, 'head.title')
+        changes.append(ops.make_change(ctx, 'page_plan', 'head.title', ctx['title'], a['title'], target=title_target,
+                                       op='set_text' if ctx['title'] else 'insert_node', confidence=0.85,
+                                       html=f'<title>{render.inline(a["title"])}</title>', rationale='Unique, intent-matching title'))
+    if not same(ctx['description'], a['description']):
+        desc_target = ops.target_of(head.get('description'), attr='content') or add_target(ctx, 'head.description')
+        changes.append(ops.make_change(ctx, 'page_plan', 'head.description', ctx['description'], a['description'], target=desc_target,
+                                       op='set_attr' if ctx['description'] else 'insert_node', confidence=0.85,
+                                       html=f'<meta name="description" content="{render.inline(a["description"])}">',
+                                       rationale='Answers the query in one line and gives a reason to click'))
+    current_h1 = primary_h1(ctx)  # the same H1 heading_structure keeps (extra H1s are demoted there)
+    if current_h1 is not None and not (isinstance(current_h1.get('text'), str) and current_h1['text'].strip()):
+        current_h1 = None
     if current_h1:
-        h1_target, h1_op = ops.target_of(current_h1['edit'], confidence=current_h1['confidence']), 'set_text'
+        h1_target, h1_op = ops.target_of(current_h1.get('edit'), confidence=current_h1.get('confidence')), 'set_text'
     else:
         anchor = first_main_edit(ctx, heading=True) or first_main_edit(ctx)
         h1_target, h1_op = ops.target_of(anchor, placement='before'), 'insert_node'

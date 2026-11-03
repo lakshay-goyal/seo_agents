@@ -14,6 +14,15 @@
       -> structured_data   StructuredDataCheck
       -> social_meta       SocialMetaCheck
       -> fact_check        FactCheckFreshnessCheck
+      -> head_hygiene      HeadHygieneCheck
+      -> heading_structure HeadingStructureCheck
+      -> content_quality   ContentQualityCheck
+      -> link_hygiene      LinkHygieneCheck
+      -> indexability      IndexabilityCheck
+      -> hreflang_i18n     HreflangI18nCheck
+      -> security          SecurityCheck
+      -> performance       PerformanceCheck
+      -> crawlability      CrawlabilityCheck
       -> qa                QaConsolidationCheck       (scope gate, dedup, the before/after checklist)
       -> site              SiteLevelBuilder
       -> write             OnpageOutputWriter -> seo_reports/onpage/
@@ -80,7 +89,11 @@ class LoadReportsNode:
         ids = [r['id'] for r in reports.page_rows() if r['id'] in reports.pages and selectable(reports.pages[r['id']])
                and (not only or r['id'] in only or r.get('url') in only)][:limit]
         builder = PageContextBuilder()
-        contexts = {pid: builder.build(reports, pid, origin=origin, run_date=run_date) for pid in ids}
+        contexts = {pid: builder.build(reports, pid, origin=origin, run_date=run_date, site_url=state.get('site_url')) for pid in ids}
+        # exactly one selected page emits site-wide advice: the home page when selected, else the first selected page
+        owner = next((pid for pid in ids if contexts[pid].get('is_home')), ids[0] if ids else None)
+        for pid, ctx in contexts.items():
+            ctx['site_items_owner'] = pid == owner
         log(f'onpage: {len(contexts)} pages selected (origin={origin})')
         done('onpage: load exploration JSON', begun)
         meta = {'site_model_dir': str(reports.site_model_dir), 'schema': reports.index.get('schema'),

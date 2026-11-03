@@ -1,4 +1,4 @@
-"""Check 12 (deterministic): scope gate, reference validation, dedup, the <=15-change view and the checklist.
+"""Check 21 (deterministic): scope gate, reference validation, dedup, the <=15-change view and the checklist.
 
 Every change is annotated with `serves` (the target keywords / questions / prompts it serves) and the page gets a
 before/after `keyword_coverage` table plus the fact-check quality verdict.
@@ -13,6 +13,8 @@ from seo_agents.onpage.reports.exploration_reports import value
 from seo_agents.onpage.validation.content_policy import LIMITS
 from seo_agents.onpage.checks.check_helpers import keywords_of, names_of, result
 from seo_agents.onpage.checks.media_links_check import alt_status
+from seo_agents.onpage.checks.heading_structure_check import outline, skipped_levels, structural
+from seo_agents.onpage.checks.link_hygiene_check import internal_nofollow
 from seo_agents.onpage.checks.technical_check import platform_change
 from seo_agents.onpage.checks.base_check import OnpageCheck
 
@@ -98,8 +100,29 @@ def keyword_coverage(prior, final, kw):
             'questions': questions, 'conversational': prompts, 'stuffing_flags_current': current.get('stuffing_flags') or []}
 
 
+def h1_outcome(final, h1_count):
+    """No H1 -> a headings.h1 change adds one; several -> every extra H1 needs its own headings.h1_extra change.
+    headings.h1_extra is a tag change emitted as needs_input, so it yields 'needs_input', never True (fixed)."""
+    if h1_count == 0:
+        return outcome([c for c in final if c['field'] == 'headings.h1'], 'headings.h1')
+    extras = [c for c in final if c['field'] == 'headings.h1_extra']
+    if len({(c.get('target') or {}).get('key') or c['id'] for c in extras}) < h1_count - 1:
+        return False
+    return outcome(extras, 'headings.h1_extra')
+
+
+def rel_outcome(final, offending):
+    """Fixed only when distinct links.rel change targets cover every offending (internal nofollow) link."""
+    rel = [c for c in final if c['field'] == 'links.rel']
+    if len({(c.get('target') or {}).get('key') or c['id'] for c in rel}) < offending:
+        return False
+    return outcome(rel, 'links.rel')
+
+
 def checklist(ctx, prior, final):
-    h1s = [h for h in ctx['headings'] if h['level'] == 1]
+    h1_records = [h for h in outline(ctx) if h['level'] == 1]
+    h1s = h1_records if ctx.get('heading_records') else [h for h in ctx['headings'] if h['level'] == 1]
+    rendered_links = [l for l in ctx.get('links') or [] if isinstance(l, dict) and l.get('renders') is not False and l.get('href')]
     kw = (prior.get('keyword_plan') or {}).get('data') or {}
     placements = kw.get('placements_current') or {}
     canonical = value(ctx['head'].get('canonical'))
@@ -117,6 +140,8 @@ def checklist(ctx, prior, final):
         'structured_data': bool(ctx['json_ld']),
         'served_html': ctx['head_scope'] != 'shared-shell',
         'questions_answered': all(c.get('answered') for c in (kw.get('questions_current') or {}).values()),
+        'heading_structure': not skipped_levels(structural(outline(ctx))),
+        'internal_link_rel': not any(internal_nofollow(l, ctx) for l in rendered_links),
     }
     after_fields = {
         'title_tag': ('head.title',), 'meta_description': ('head.description',), 'single_h1': ('headings.h1',),
@@ -124,11 +149,19 @@ def checklist(ctx, prior, final):
         'image_alt_text': ('images.alt',), 'canonical': ('technical.canonical',), 'social_meta': ('head.social', 'head.og'),
         'structured_data': ('head.json_ld',), 'served_html': ('platform.prerender',),
         'questions_answered': ('content.section', 'content.faq', 'headings.h2', 'headings.h3'),
+        'heading_structure': (),  # skipped levels are advice-only (heading_structure): after = 'advice' 
+        'internal_link_rel': ('links.rel',),
     }
     site_changes = [c for c in final if c['op'] == 'platform_config']
     out = {}
     for key, before in items.items():
         after = True if before else outcome(final, *after_fields[key])
+        if key == 'single_h1' and not before:
+            after = h1_outcome(final, len(h1s))
+        if key == 'heading_structure' and not before:
+            after = 'advice'
+        if key == 'internal_link_rel' and not before:
+            after = rel_outcome(final, sum(1 for l in rendered_links if internal_nofollow(l, ctx)))
         if key == 'served_html' and not before:
             after = 'needs_platform_change' if site_changes else False
         out[key] = {'before': before, 'after': after}

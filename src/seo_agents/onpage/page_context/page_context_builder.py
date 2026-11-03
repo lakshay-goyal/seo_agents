@@ -28,8 +28,10 @@ def brand_candidates(reports):
         title = m.page_title(page)
         if title:
             parts = [p.strip() for p in TITLE_SPLIT.split(title) if p.strip()]
-            if parts:
+            if len(parts) > 1:
                 names.append(parts[0] if page.get('url') == '/' else parts[-1])
+            elif parts and len(parts[0].split()) <= 3:
+                names.append(parts[0])  # a short separator-less title may be the brand; a full sentence never is
     entity = (reports.exploration or {}).get('entity') or {}
     if isinstance(entity, dict) and isinstance(entity.get('name'), str):
         names.insert(0, entity['name'])
@@ -76,7 +78,8 @@ def heading_records(page):
             or edit.get('kind') == 'computed'
         rows.append({'level': h.get('level'), 'text': m.clean(h.get('text')), 'edit': h.get('edit'), 'method': h.get('method'),
                      'confidence': h.get('confidence'), 'in_main': h.get('section') not in ('header', 'nav', 'footer', 'aside'),
-                     'data_driven': data_driven})
+                     'data_driven': data_driven, 'visible': h.get('visible') if isinstance(h.get('visible'), bool) else None,
+                     'section': h.get('section')})
     return rows
 
 
@@ -109,17 +112,169 @@ def site_type_guess(reports, brand):
     return 'other'
 
 
-def canonical_origin(reports, site, origin):
-    """Canonical host: exploration canonical_host > the final URL after redirects > the CLI/served origin."""
+LOCAL_HOST = re.compile(r'(?i)^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[?::1\]?|.+\.local|.+\.localhost)$')
+
+
+def is_local_origin(origin):
+    """localhost / 127.x / 0.0.0.0 / ::1 / *.local: served probes describe a dev server, not production."""
+    if not isinstance(origin, str) or not origin:
+        return False
+    try:
+        host = urlsplit(origin if '://' in origin else 'http://' + origin).hostname or ''
+    except ValueError:
+        return False
+    return bool(LOCAL_HOST.match(host))
+
+
+# Platform preview/staging hosts: served probes and URLs there describe a deployment preview, not production.
+PREVIEW_HOST = re.compile(r'(?i)\.(?:vercel\.app|netlify\.app|pages\.dev|web\.app|firebaseapp\.com|onrender\.com|herokuapp\.com|'
+                          r'github\.io|gitlab\.io|surge\.sh|fly\.dev|railway\.app|azurestaticapps\.net|amplifyapp\.com|ngrok(?:-free)?\.app|'
+                          r'ngrok\.io|trycloudflare\.com|loca\.lt)$')
+
+
+def is_preview_origin(origin):
+    """*.vercel.app, *.netlify.app, *.pages.dev, ... (deployment previews / platform subdomains)."""
+    if not isinstance(origin, str) or not origin:
+        return False
+    try:
+        host = urlsplit(origin if '://' in origin else 'https://' + origin).hostname or ''
+    except ValueError:
+        return False
+    return bool(PREVIEW_HOST.search(host))
+
+
+def is_nonproduction_origin(origin):
+    return is_local_origin(origin) or is_preview_origin(origin)
+
+
+def _origin_of(host):
+    """'example.com' -> 'https://example.com'; local dev hosts without a scheme ('localhost:5173') get http://."""
+    if not isinstance(host, str) or not host.strip():
+        return None
+    host = host.strip()
+    if not host.startswith('http'):
+        bare = host.lstrip('/')
+        host = ('http://' if is_local_origin(bare) else 'https://') + bare
+    try:
+        parts = urlsplit(host)
+    except ValueError:
+        return None
+    return f'{parts.scheme}://{parts.netloc}' if parts.netloc else None
+
+
+def canonical_origin(reports, site, origin, site_url=None):
+    """Canonical origin. Precedence: a measured, non-local/non-preview exploration canonical_host (the final origin after any
+    apex -> www redirect) > explicit --site-url > other candidates (served/CLI origin) > local dev hosts."""
+    measured = []
     host = site.get('canonical_host')
     if isinstance(host, dict):
-        host = host.get('origin') or host.get('url') or host.get('host')
-    if isinstance(host, str) and host:
-        if not host.startswith('http'):
-            host = 'https://' + host
-        parts = urlsplit(host)
-        return f'{parts.scheme}://{parts.netloc}'
-    return origin
+        host = host.get('origin') or host.get('url') or host.get('value') or host.get('host')
+    measured.append(_origin_of(host))
+    served_host = (site.get('served') or {}).get('canonical_host') if isinstance(site.get('served'), dict) else None
+    if isinstance(served_host, dict):
+        measured.append(_origin_of(served_host.get('value') or served_host.get('host')))
+    measured = [c for c in measured if c]
+    found = next((c for c in measured if not is_nonproduction_origin(c)), None)
+    if found:
+        return found
+    explicit = _origin_of(site_url)
+    if explicit:
+        return explicit
+    candidates = measured + [origin.rstrip('/') if isinstance(origin, str) and origin else None]
+    candidates = [c for c in candidates if c]
+    return next((c for c in candidates if not is_nonproduction_origin(c)), candidates[0] if candidates else None)
+
+
+def _host_of(url):
+    try:
+        return (urlsplit(url).hostname or '').lower().removeprefix('www.')
+    except ValueError:
+        return ''
+
+
+def external_link_rows(links, origin):
+    """Off-site links: absolute (or protocol-relative) hrefs whose host differs from the canonical origin's host."""
+    own = _host_of(origin) if origin else ''
+    out = []
+    for l in links:
+        href = l.get('href')
+        if not isinstance(href, str):
+            continue
+        absolute = href.lower().startswith(('http://', 'https://', '//'))
+        if not absolute or (l.get('kind') not in (None, 'absolute') and l.get('kind') != 'external'):
+            continue
+        host = _host_of('https:' + href if href.startswith('//') else href.strip())
+        if not host or (own and host == own):
+            continue
+        out.append({'id': l['id'], 'href': href, 'anchor': l['accessible_name'], 'status': l.get('status')})
+    return out
+
+
+def _path_of(url):
+    if not isinstance(url, str) or not url:
+        return None
+    path = re.sub(r'^(?:https?:)?//[^/]+', '', url.strip()).split('#')[0]
+    path = path or '/'
+    return path if path == '/' else path.rstrip('/') or '/'
+
+
+def page_noindex(page):
+    robots = m.clean(m.value((page.get('head') or {}).get('robots'))) or ''
+    headers = ((page.get('http') or {}).get('headers') or {}) if isinstance(page.get('http'), dict) else {}
+    x_robots = headers.get('x-robots-tag') if isinstance(headers, dict) else None
+    tokens = set(re.split(r'[\s,;:]+', (robots + ' ' + (x_robots if isinstance(x_robots, str) else '')).lower()))
+    return bool(tokens & {'noindex', 'none'})
+
+
+def page_redirect_target(page):
+    http = page.get('http') if isinstance(page.get('http'), dict) else {}
+    own = _path_of(page.get('url'))
+    final = _path_of(http.get('final_url'))
+    if final:  # host-only redirects (apex -> www) keep the path: not a page redirect
+        return final if own and final.split('?')[0] != own.split('?')[0] else None
+    chain = [r for r in (http.get('redirect_chain') or []) if isinstance(r, dict)]
+    target = (chain[-1].get('location') or chain[-1].get('target')) if chain else None
+    if isinstance(target, str) and target:
+        path = _path_of(target) if target.startswith(('http', '/')) else target
+        return path if path and path != own else None
+    return None
+
+
+def site_pages(reports):
+    """{path: {http_status, noindex, redirects_to, template}} for every page record in the model."""
+    out = {}
+    for page in (reports.pages or {}).values():
+        if not isinstance(page, dict):
+            continue
+        url = page.get('url') or page.get('route')
+        if not isinstance(url, str):
+            continue
+        status = (page.get('http') or {}).get('http_status') if isinstance(page.get('http'), dict) else None
+        discovered = page.get('discovered_by') if isinstance(page.get('discovered_by'), list) else []
+        out[url] = {'http_status': status if isinstance(status, int) else None, 'noindex': page_noindex(page),
+                    'redirects_to': page_redirect_target(page), 'template': page.get('instance_status') == 'template',
+                    'kind': page.get('kind') or 'page', 'in_sitemap': 'sitemap:live' in discovered}
+    return out
+
+
+def link_graph(page):
+    links = page.get('links') if isinstance(page.get('links'), dict) else {}
+    in_count, depth, orphan = links.get('in_count'), links.get('click_depth'), links.get('orphan_candidate')
+    return {'in_count': in_count if isinstance(in_count, int) else None, 'click_depth': depth if isinstance(depth, int) else None,
+            'orphan_candidate': orphan if isinstance(orphan, bool) else None}
+
+
+def _meta_row(row):
+    """Raw <meta> row; `http_equiv` (exploration key) is also exposed as `http-equiv` (the attribute name)."""
+    if row.get('http_equiv') is not None and row.get('http-equiv') is None:
+        return {**row, 'http-equiv': row['http_equiv']}
+    if row.get('http-equiv') is not None and row.get('http_equiv') is None:
+        return {**row, 'http_equiv': row['http-equiv']}
+    return row
+
+
+def _dict_rows(rows):
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
 def _keyword_list(items, limit=12):
@@ -170,7 +325,7 @@ def keyword_research_meta(reports):
             if isinstance(kmap.get('business'), dict) else None}
 
 
-def build_context(reports, page_id, *, origin=None, run_date=None):
+def build_context(reports, page_id, *, origin=None, run_date=None, site_url=None):
     page = reports.pages[page_id]
     run_date = run_date or date.today().isoformat()
     url = page.get('url') or page.get('route') or '/'
@@ -182,13 +337,15 @@ def build_context(reports, page_id, *, origin=None, run_date=None):
         ((reports.index.get('repo') or {}).get('framework') or {})
     links = link_records(page)
     urls = m.site_urls(reports)
-    origin = canonical_origin(reports, site, origin)
+    origin = canonical_origin(reports, site, origin, site_url)
     brands = brand_candidates(reports)
     visible = m.visible_strings(page)
     site_strings = [u['title'] for u in urls if u.get('title')] + brands
     other_titles = [m.clean(row.get('title')) for row in reports.page_rows() if row['id'] != page_id and row.get('title')]
-    external = [{'id': l['id'], 'href': l.get('href'), 'anchor': l['accessible_name'], 'status': l.get('status')}
-                for l in links if isinstance(l.get('href'), str) and l['href'].startswith('http')]
+    other_descriptions = [d for pid, p in reports.pages.items() if pid != page_id and isinstance(p, dict)
+                          for d in [m.page_description(p)] if d]
+    external = external_link_rows(links, origin)
+    discovered = page.get('discovered_by') or route.get('discovered_by') or []
     context_pages = [p for p in reports.repo_context.get('pages') or [] if isinstance(p, dict) and p.get('route') == url]
     files = [e.get('path') for e in reports.repo_context.get('file_inventory') or [] if isinstance(e, dict) and e.get('path')]
     files += [f for f in (((reports.exploration or {}).get('manifest') or {}).get('files') or []) if isinstance(f, str)]
@@ -227,6 +384,16 @@ def build_context(reports, page_id, *, origin=None, run_date=None):
         'profiles': profile_urls(links),
         'site_urls': urls,
         'other_titles': other_titles,
+        'other_descriptions': other_descriptions,
+        'link_graph': link_graph(page),
+        'discovered_by': [d for d in discovered if isinstance(d, str)] if isinstance(discovered, list) else [],
+        # True for local dev hosts AND platform preview hosts (*.vercel.app, ...): not the production origin, so checks
+        # must not write it into canonicals/sitemaps nor judge production headers from it.
+        'origin_is_local': is_nonproduction_origin(origin),
+        'origin_is_preview': is_preview_origin(origin),
+        'site_pages': site_pages(reports),
+        'meta_tags': [_meta_row(r) for r in _dict_rows(head.get('meta_tags'))],
+        'head_links': _dict_rows(head.get('head_links')),
         'head': head,
         'add_target': head.get('add_target'),
         'json_ld': head.get('json_ld') or [],
@@ -241,7 +408,9 @@ def build_context(reports, page_id, *, origin=None, run_date=None):
         'mobile_parity': page.get('mobile_parity'),
         'performance': page.get('performance'),
         'site': {k: site.get(k) for k in ('served', 'soft_404', 'robots', 'sitemap', 'canonical_host', 'hosting', 'redirects',
-                                          'trailing_slash', 'url_manifest') if site.get(k) is not None},
+                                          'trailing_slash', 'url_manifest', 'hreflang', 'duplicates', 'orphan_candidates',
+                                          'click_depth', 'crawl_errors', 'redirected_links', 'blocked_links', 'i18n',
+                                          'link_health') if site.get(k) is not None},
         'site_served': site.get('served') or {},
         'site_gaps': {k: (v or {}).get('gaps') for k, v in (site.get('deterministic_signals') or {}).items() if isinstance(v, dict)},
         'broken_links': site.get('broken_links') or [],
@@ -286,5 +455,5 @@ def facts(ctx):
 class PageContextBuilder:
     """Tool: one page context (facts, copy, links, images, brand, site/page type) built from the exploration JSON only."""
 
-    def build(self, reports, page_id, *, origin=None, run_date=None):
-        return build_context(reports, page_id, origin=origin, run_date=run_date)
+    def build(self, reports, page_id, *, origin=None, run_date=None, site_url=None):
+        return build_context(reports, page_id, origin=origin, run_date=run_date, site_url=site_url)

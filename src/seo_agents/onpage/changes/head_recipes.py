@@ -147,7 +147,7 @@ def hosting(site, file_paths=()):
     """Hosting platform from exploration facts (explicit > response headers > config files)."""
     explicit = site.get('hosting')
     if isinstance(explicit, dict):
-        explicit = explicit.get('platform') or explicit.get('name')
+        explicit = explicit.get('platform') or explicit.get('name') or explicit.get('value')
     if isinstance(explicit, str) and explicit:
         return explicit.lower()
     headers = ((site.get('served') or {}).get('home_headers') or {})

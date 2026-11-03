@@ -17,7 +17,7 @@ from seo_agents.onpage.changes import head_recipes as recipes
 from seo_agents.onpage.validation.content_policy import HEAD_FIELDS, IMPACT_RANK, LIMITS, PAGE_SPECIFIC, priority_for
 
 PLACEHOLDER_LINE = 1
-PER_INSTANCE_FIELDS = ('images.alt', 'links.anchor', 'headings.h', 'content.section')
+PER_INSTANCE_FIELDS = ('images.alt', 'links.anchor', 'links.href', 'links.rel', 'headings.h', 'content.section')
 EFFORT = {'set_text': 'S', 'set_attr': 'S', 'set_json': 'S', 'insert_node': 'M', 'remove': 'S', 'platform_config': 'M'}
 
 

@@ -2,7 +2,7 @@
 name: qa-consolidation
 description: Scope gate, reference validation, dedup/conflicts, the <=15-change default view, and the before/after checklist computed from the final change list. Deterministic.
 kind: deterministic
-order: 12
+order: 21
 ---
 ## What the function does (`checks.check_qa`, `ops.gate`, `ops.consolidate`)
 1. Scope gate: a head change (title, description, canonical, robots, OG/Twitter, JSON-LD) whose target is a shared

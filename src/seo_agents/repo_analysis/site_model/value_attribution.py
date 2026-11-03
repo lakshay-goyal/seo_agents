@@ -471,6 +471,13 @@ class Attributor:
                             'edit': next((s['edit'] for s in source['head'].get('json_ld', []) if set(s.get('types', [])) & set(item.get('types', []))), None)}
                            for item in summary.get('json_ld', [])]
         head['canonical_count'] = summary.get('canonical_count')
+        # Raw head <meta>/<link> lists (meta refresh, googlebot, charset, icon, preload, next/prev, amphtml); omitted when empty.
+        meta_tags = raw_meta_tags(summary.get('meta'))
+        if meta_tags:
+            head['meta_tags'] = meta_tags
+        head_links = raw_head_links(summary.get('head_links'))
+        if head_links:
+            head['head_links'] = head_links
         # Headings: reuse source edits by text (DOM order), otherwise search.
         unused = list(source['headings'])
         headings = []
@@ -480,7 +487,8 @@ class Attributor:
             if match:
                 unused.remove(match)
                 headings.append({**match, 'text': observed['text'], 'method': method, 'confidence': 0.95, 'lens_agreement': True,
-                                 'path': observed.get('path'), 'visible': observed.get('visible')})
+                                 'path': observed.get('path'), 'visible': observed.get('visible'),
+                                 **({'section': observed['section']} if not match.get('section') and observed.get('section') else {})})
                 continue
             context = {'dom_path': observed.get('path'), 'section': observed.get('section'),
                        'neighbours': [h.get('text') for h in observed_headings[max(0, position - 1):position + 2] if h is not observed][:2]}
@@ -506,7 +514,8 @@ class Attributor:
             record = {'href': href, 'resolved': observed.get('resolved'), 'anchor': anchor, 'aria_label': observed.get('aria_label'),
                       'rel': observed.get('rel'), 'target': observed.get('target'), 'section': observed.get('section'),
                       'in_main': observed.get('in_main'), 'kind': link_kind(href, observed.get('resolved'), page, self.ctx.own_hosts),
-                      'visible': observed.get('visible'), 'img_alt': observed.get('img_alt') or None, 'method': method}
+                      'visible': observed.get('visible'), 'img_alt': observed.get('img_alt') or None, 'method': method,
+                      **({'title': observed['title']} if observed.get('title') else {})}
             if not href and observed.get('visible') is False:
                 links.append({**record, 'edit': None, 'anchor_edit': None, 'confidence': 0.0, 'attributable': False,
                               'note': 'link without href that is not visibly rendered; not an edit target'})
@@ -565,6 +574,7 @@ class Attributor:
                       'above_fold': observed.get('above_fold'), 'transfer_bytes': observed.get('transfer_bytes'),
                       'format': (name.rsplit('.', 1)[-1].lower() if '.' in name else None), 'section': observed.get('section'),
                       'edit': edit, 'alt_edit': alt_edit, 'method': method,
+                      **{k: observed[k] for k in ('visible', 'in_main', 'decoding') if observed.get(k) is not None},
                       **({'gap': 'no-source-match'} if edit is None else {}),
                       **({k: match[k] for k in ('asset_file', 'size_bytes', 'intrinsic') if k in match} if match else {})}
             if record['natural'] and record['natural'][0] and record['rendered'] and record['rendered'][0]:
@@ -592,6 +602,38 @@ class Attributor:
                              'blocks': blocks[:400], 'attributed_blocks': sum(1 for b in blocks if b['edit'])}
         values['limitations'] = [l for l in values.get('limitations', []) if not l.startswith('Source lens:')]
         return values
+
+
+HEAD_LIST_CAP = 60
+
+
+def raw_meta_tags(rows, cap=HEAD_LIST_CAP):
+    """Served <meta> rows -> [{name, property, http_equiv, charset, content}] (only present keys), capped."""
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        item = {key: row.get(src) for key, src in (('name', 'name'), ('property', 'property'), ('http_equiv', 'http-equiv'),
+                                                   ('charset', 'charset'), ('content', 'content')) if row.get(src) is not None}
+        if item:
+            out.append(item)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def raw_head_links(rows, cap=HEAD_LIST_CAP):
+    """Served <link> rows -> [{rel, href, as, hreflang, type, sizes}] (only present keys), capped."""
+    out = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        item = {key: row.get(key) for key in ('rel', 'href', 'as', 'hreflang', 'type', 'sizes') if row.get(key) is not None}
+        if item.get('rel') or item.get('href'):
+            out.append(item)
+        if len(out) >= cap:
+            break
+    return out
 
 
 def asset_key(src):

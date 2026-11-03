@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urljoin, urlsplit
 
 from seo_agents.onpage.changes import change_operations as ops
 from seo_agents.onpage.changes import page_preview_renderer as render
@@ -11,17 +12,41 @@ from seo_agents.onpage.checks.check_helpers import add_target, brand, page_type,
 from seo_agents.onpage.checks.base_check import OnpageCheck
 
 # ====================================================================== 10. social meta (deterministic)
+def absolute(ctx, src):
+    """Absolute URL for a share image (social crawlers do not resolve relative og:image paths)."""
+    src = squash(src)
+    if not src or re.match(r'(?i)^(?:https?:|data:)', src):
+        return src
+    origin = ctx.get('origin') if isinstance(ctx.get('origin'), str) else ''
+    if src.startswith('//'):
+        return (urlsplit(origin).scheme or 'https') + ':' + src
+    if not origin:
+        return src
+    base = (ctx.get('absolute_url') or origin + '/') if not src.startswith('/') else origin + '/'
+    return urljoin(base, src)
+
+
+def squash(text):
+    return re.sub(r'\s+', ' ', text).strip() if isinstance(text, str) else text
+
+
+def og_locale(lang):
+    """'en-US' -> 'en_US'; a bare language ('en') has no known region, so no og:locale is proposed."""
+    match = re.match(r'^([a-z]{2,3})[-_]([a-z]{2})$', str(lang or '').strip(), re.I)
+    return f'{match.group(1).lower()}_{match.group(2).upper()}' if match else None
+
+
 def share_image(ctx):
     """og:image must be absolute and ~1200x630 (1.91:1); otherwise it is a client input, not a guess."""
     og = ctx['head'].get('og') or {}
     current = value(og.get('image'))
     if current:
-        return current, None
+        return absolute(ctx, current), None
     for image in ctx['images']:
         natural = image.get('natural') or []
-        if image.get('src') and len(natural) == 2 and natural[0] >= 1200 and 1.85 <= natural[0] / max(natural[1], 1) <= 1.97:
-            src = image['src']
-            return (ctx['origin'] + src if ctx['origin'] and src.startswith('/') else src), None
+        if image.get('src') and len(natural) == 2 and all(isinstance(n, (int, float)) and n > 0 for n in natural) \
+                and natural[0] >= 1200 and 1.85 <= natural[0] / natural[1] <= 1.97:
+            return absolute(ctx, image['src']), None
     return '[VERIFY: 1200x630 share image]', '1200x630 share image (og:image); page screenshots are the wrong size/aspect'
 
 
@@ -39,7 +64,7 @@ def check_social_meta(ctx, prior, writer=None):
     image, needed = share_image(ctx)
     expected = [('og:title', og_title), ('og:description', description), ('og:type', 'article' if page_type(ctx, prior) == 'article' else 'website'),
                 ('og:url', ctx['absolute_url'] or ctx['url']), ('og:image', image), ('og:site_name', name),
-                ('twitter:card', 'summary_large_image')]
+                ('og:locale', og_locale(ctx.get('lang'))), ('twitter:card', 'summary_large_image')]
     expected = [(k, e) for k, e in expected if e]
     inputs = []
     changes = []
@@ -54,7 +79,7 @@ def check_social_meta(ctx, prior, writer=None):
             group, prop = key.split(':', 1)
             cur_field = (og if group == 'og' else tw).get(prop)
             cur = value(cur_field)
-            if cur == exp:
+            if squash(cur) == squash(exp):
                 continue
             changes.append(ops.make_change(ctx, 'social_meta', 'head.' + key.replace(':', '.'), cur, exp,
                                            target=ops.target_of(cur_field, attr='content') or add_target(ctx, 'head.' + key),
