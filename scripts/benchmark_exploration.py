@@ -35,11 +35,11 @@ def timed(fn, *args, **kwargs):
 
 
 def bench_fixture(name, repeats):
-    from seo_agents.exploration.repo_analysis.site_model import explore_site
-    from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
-    from seo_agents.exploration.repo_analysis.tools.framework import detect_frameworks
-    from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
-    from seo_agents.exploration.repo_analysis.url_manifest import build_manifest
+    from seo_agents.repo_analysis.site_model.site_model_builder import explore_site
+    from seo_agents.repo_analysis.tools.parsing.element_index import build_element_index
+    from seo_agents.repo_analysis.tools.repository.framework_detection import detect_frameworks
+    from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
+    from seo_agents.repo_analysis.site_model.url_manifest import build_manifest
     stages = {key: [] for key in ('snapshot', 'fingerprint', 'element_index', 'url_manifest', 'site_model')}
     result = {'fixture': name}
     with tempfile.TemporaryDirectory() as temp:

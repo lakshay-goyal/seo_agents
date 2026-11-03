@@ -9,16 +9,16 @@ import re
 import tempfile
 import unittest
 
-from seo_agents.exploration.repo_analysis.context_builder import build_repo_context
-from seo_agents.exploration.repo_analysis.pipeline import explore_codebase
-from seo_agents.exploration.repo_analysis.tools import skill_runner
-from seo_agents.exploration.repo_analysis.tools.page_inventory import analyze_page_inventory
-from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
-from seo_agents.exploration.repo_analysis.tools.routes import discover_routes
-from seo_agents.exploration.repo_analysis.tools.safe_xml import XMLParseError, safe_xml_fromstring
-from seo_agents.exploration.repo_analysis.tools.skill_runner import (
-    PROFILES_DIR, ProfileError, load_skills, run_skill, validate_profile)
-from seo_agents.exploration.repo_analysis.tools.source_index import SourceIndex
+from seo_agents.repo_analysis.repo_context.repo_context_builder import build_repo_context
+from seo_agents.repo_analysis.repo_analysis import explore_codebase
+from seo_agents.repo_analysis.tools.signal_profiles import signal_profile_runner as skill_runner
+from seo_agents.repo_analysis.tools.content.page_inventory import analyze_page_inventory
+from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
+from seo_agents.repo_analysis.tools.routing.route_discovery import discover_routes
+from seo_agents.repo_analysis.tools.parsing.safe_xml_parser import XMLParseError, safe_xml_fromstring
+from seo_agents.repo_analysis.tools.signal_profiles.signal_profile_runner import (
+    PROFILES_DIR, ProfileError, load_signal_profiles, run_signal_profile, validate_profile)
+from seo_agents.repo_analysis.tools.repository.source_index import SourceIndex
 
 
 def compile_signal(signal):
@@ -28,14 +28,14 @@ def compile_signal(signal):
 class ProfileSchemaTests(unittest.TestCase):
     def test_every_profile_file_validates_and_loads(self):
         names = {p.stem for p in PROFILES_DIR.glob('*.json')} - {'schema'}
-        self.assertEqual(names, set(load_skills()))
+        self.assertEqual(names, set(load_signal_profiles()))
         self.assertGreaterEqual(len(names), 18)
         schema = json.loads((PROFILES_DIR / 'schema.json').read_text())
         self.assertIn('signal', schema['$defs'])
 
     def test_every_signal_has_scope_precision_and_passing_examples(self):
         failures = []
-        for name, entry in load_skills().items():
+        for name, entry in load_signal_profiles().items():
             for signal in entry['profile']['signals']:
                 self.assertIn(signal['precision'], {'high', 'medium', 'low'})
                 self.assertTrue(signal.get('files_only') or signal.get('glob') or signal.get('languages'), name + '.' + signal['id'])
@@ -49,20 +49,20 @@ class ProfileSchemaTests(unittest.TestCase):
         self.assertEqual(failures, [])
 
     def test_execution_guidance_is_not_exploration_output(self):
-        for entry in load_skills().values():
+        for entry in load_signal_profiles().values():
             self.assertNotIn('edit_guidance', entry['profile'])
 
     def test_validator_rejects_unscoped_or_unknown_gap_signals(self):
-        profile = copy.deepcopy(load_skills()['mobile-parity']['profile'])
+        profile = copy.deepcopy(load_signal_profiles()['mobile-parity']['profile'])
         profile['signals'][0].pop('languages', None)
         profile['signals'][0].pop('glob', None)
         with self.assertRaises(ProfileError):
             validate_profile(profile)
-        profile = copy.deepcopy(load_skills()['mobile-parity']['profile'])
+        profile = copy.deepcopy(load_signal_profiles()['mobile-parity']['profile'])
         profile['gaps'][0]['when_none_of'] = ['does-not-exist']
         with self.assertRaises(ProfileError):
             validate_profile(profile)
-        profile = copy.deepcopy(load_skills()['mobile-parity']['profile'])
+        profile = copy.deepcopy(load_signal_profiles()['mobile-parity']['profile'])
         profile['signals'][0]['precision'] = 'certain'
         with self.assertRaises(ProfileError):
             validate_profile(profile)
@@ -98,17 +98,17 @@ class SignalBehaviourTests(RepoTestCase):
                                    ('local-business-presence', 'phone'),
                                    ('sitemap-robots', 'noindex'),
                                    ('ai-search-readiness', 'faq-section')):
-            self.assertEqual(run_skill(index, skill_name)['signals'][signal]['count'], 0, skill_name + '.' + signal)
+            self.assertEqual(run_signal_profile(index, skill_name)['signals'][signal]['count'], 0, skill_name + '.' + signal)
 
     def test_comments_and_package_manifests_do_not_count_as_social_profiles(self):
         self.write('package.json', '{"homepage": "https://github.com/acme/site"}')
         self.write('src/Footer.tsx', '// see https://twitter.com/old\nexport const F = () => <a href="https://twitter.com/acme">X</a>\n')
-        records = run_skill(self.index(), 'brand-entity-signals')['signals']['social-profile']['records']
+        records = run_signal_profile(self.index(), 'brand-entity-signals')['signals']['social-profile']['records']
         self.assertEqual([r['matched_text'] for r in records], ['https://twitter.com/acme'])
 
     def test_truncation_is_reported_when_caps_hit(self):
         self.write('index.html', '<h2>What is green tea?</h2>\n' * 40)
-        signal = run_skill(self.index(), 'ai-search-readiness')['signals']['question-heading']
+        signal = run_signal_profile(self.index(), 'ai-search-readiness')['signals']['question-heading']
         self.assertEqual(signal['count'], skill_runner.MAX_RECORDS_PER_FILE)
         self.assertEqual(signal['total_matches'], 40)
         self.assertTrue(signal['truncated'])
@@ -121,12 +121,12 @@ class SignalBehaviourTests(RepoTestCase):
                    "<p><?php _e('Hello', 'td'); ?></p><?php the_post_thumbnail('large'); ?>")
         self.write('layouts/_default/baseof.html', '<head>{{ partial "head.html" . }}</head><main>{{ .Content }}</main>')
         index = self.index()
-        metadata = run_skill(index, 'metadata')['signals']['template-block']['files']
+        metadata = run_signal_profile(index, 'metadata')['signals']['template-block']['files']
         self.assertTrue({'layout/theme.liquid', 'wp/header.php', 'layouts/_default/baseof.html'} <= set(metadata))
-        self.assertEqual(len(run_skill(index, 'hreflang-i18n')['signals']['html-lang']['files']), 2)
-        self.assertIn('wp/header.php', run_skill(index, 'performance-assets')['signals']['image-optimizer']['files'])
-        self.assertIn('layout/theme.liquid', run_skill(index, 'structured-data')['signals']['json-ld-helper']['files'])
-        content = run_skill(index, 'content')['signals']['platform-content']['files']
+        self.assertEqual(len(run_signal_profile(index, 'hreflang-i18n')['signals']['html-lang']['files']), 2)
+        self.assertIn('wp/header.php', run_signal_profile(index, 'performance-assets')['signals']['image-optimizer']['files'])
+        self.assertIn('layout/theme.liquid', run_signal_profile(index, 'structured-data')['signals']['json-ld-helper']['files'])
+        content = run_signal_profile(index, 'content')['signals']['platform-content']['files']
         self.assertIn('layouts/_default/baseof.html', content)
 
     def test_xml_entities_are_rejected(self):

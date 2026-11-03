@@ -2,10 +2,10 @@
 
 Started by the host in two separate phases so the GitHub token never coexists with repository code:
 
-    python3 in_container.py analyze <github_url> [site_url]   # clone + exploration; prints SEO_BUNDLE=<path>
-    python3 in_container.py publish <github_url> <bundle>     # commit + PR;          prints SEO_PR_URL=<url>
+    python3 container_entrypoint.py analyze <github_url> [site_url]   # clone + exploration; prints SEO_BUNDLE=<path>
+    python3 container_entrypoint.py publish <github_url> <bundle>     # commit + PR;          prints SEO_PR_URL=<url>
 
-`python3 in_container.py <github_url> [site_url]` still runs both phases in one process (local use).
+`python3 container_entrypoint.py <github_url> [site_url]` still runs both phases in one process (local use).
 """
 
 import json
@@ -104,7 +104,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     phase = argv.pop(0) if argv and argv[0] in {"analyze", "publish"} else "all"
     if not argv:
-        raise SystemExit("usage: in_container.py [analyze|publish] <github_url> [site_url|bundle]")
+        raise SystemExit("usage: container_entrypoint.py [analyze|publish] <github_url> [site_url|bundle]")
     github_url = argv[0]
     if not is_valid_github_url(github_url):
         raise SystemExit("Refusing malformed GitHub URL: " + repr(github_url))

@@ -265,7 +265,7 @@ def fixture_names():
 
 def load_explore():
     sys.path.insert(0, str(ROOT / 'src'))
-    from seo_agents.exploration.repo_analysis.site_model import explore_site
+    from seo_agents.repo_analysis.site_model.site_model_builder import explore_site
     return explore_site
 
 

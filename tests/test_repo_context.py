@@ -7,13 +7,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
-from seo_agents.exploration.repo_analysis.context_builder import build_repo_context
-from seo_agents.exploration.repo_analysis.pipeline import explore_codebase
-from seo_agents.exploration.repo_analysis.tools.source_index import SourceIndex
-from seo_agents.exploration.repo_analysis.tools.routes import normalize_route
-from seo_agents.exploration.repo_analysis.tools.skill_runner import load_skills
-from seo_agents.exploration.repo_analysis import repo_analysis
+from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
+from seo_agents.repo_analysis.repo_context.repo_context_builder import build_repo_context
+from seo_agents.repo_analysis.repo_analysis import explore_codebase
+from seo_agents.repo_analysis.tools.repository.source_index import SourceIndex
+from seo_agents.repo_analysis.tools.routing.route_discovery import normalize_route
+from seo_agents.repo_analysis.tools.signal_profiles.signal_profile_runner import load_signal_profiles
+from seo_agents.repo_analysis.repo_analysis import repo_analysis
 
 
 class RepoContextTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class RepoContextTests(unittest.TestCase):
             return build_repo_context(index, explore_codebase(index), repo_path=self.repo, include_content=include_content)
 
     def test_every_skill_profile_loads(self):
-        skills = load_skills()
+        skills = load_signal_profiles()
         for name in ('routes', 'metadata', 'content', 'keywords', 'rendering-strategy', 'performance-assets',
                      'sitemap-robots', 'structured-data', 'ai-search-readiness'):
             self.assertIn(name, skills)

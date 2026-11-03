@@ -10,9 +10,9 @@ from threading import Event
 import unittest
 from unittest.mock import Mock, patch
 
-from seo_agents.log import progress
-from seo_agents.sandbox.host import run_pipeline_in_sandbox
-from seo_agents.sandbox.tools.docker import DockerResult, DockerSandbox
+from seo_agents.utils.step_logger import progress
+from seo_agents.sandbox.host_pipeline import run_pipeline_in_sandbox
+from seo_agents.sandbox.runners.docker_sandbox import DockerResult, DockerSandbox
 
 
 class LiveProgressTests(unittest.TestCase):
@@ -50,7 +50,7 @@ class LiveProgressTests(unittest.TestCase):
                 return process
 
             terminal = Terminal()
-            with patch('seo_agents.sandbox.tools.docker.subprocess.Popen', side_effect=launch), redirect_stdout(terminal):
+            with patch('seo_agents.sandbox.runners.docker_sandbox.subprocess.Popen', side_effect=launch), redirect_stdout(terminal):
                 result = DockerSandbox('test-sandbox').run('python3 -u driver.py',
                     env={'TEST_OPTION': 'enabled'}, stream=True)
             self.assertTrue(result.success, result.stdout)
@@ -63,7 +63,7 @@ class LiveProgressTests(unittest.TestCase):
     def test_streaming_preserves_failure_status_and_error_output(self):
         real_popen = subprocess.Popen
         source = 'import sys; print("extractor failed", file=sys.stderr, flush=True); sys.exit(7)'
-        with patch('seo_agents.sandbox.tools.docker.subprocess.Popen',
+        with patch('seo_agents.sandbox.runners.docker_sandbox.subprocess.Popen',
                    side_effect=lambda command, **kwargs: real_popen([sys.executable, '-u', '-c', source], **kwargs)), redirect_stdout(io.StringIO()) as terminal:
             result = DockerSandbox('test-sandbox').run('driver', stream=True)
         self.assertFalse(result.success)
@@ -84,8 +84,8 @@ class LiveProgressTests(unittest.TestCase):
                     return DockerResult('live child output\n' + marker + '\n', '', exit_code)
 
                 sandbox.run.side_effect = run
-                with patch('seo_agents.sandbox.host.ensure_container_runtime'), patch(
-                        'seo_agents.sandbox.host.sync_sources'), redirect_stdout(io.StringIO()) as terminal:
+                with patch('seo_agents.sandbox.host_pipeline.ensure_container_runtime'), patch(
+                        'seo_agents.sandbox.host_pipeline.sync_sources'), redirect_stdout(io.StringIO()) as terminal:
                     if exit_code:
                         with self.assertRaisesRegex(RuntimeError, 'exit 1') as caught:
                             run_pipeline_in_sandbox(sandbox, 'https://github.com/example/site')
@@ -107,7 +107,7 @@ class LiveProgressTests(unittest.TestCase):
                     if 'waiting (' in message:
                         waiting.set()
 
-                with patch('seo_agents.log.log', side_effect=collect):
+                with patch('seo_agents.utils.step_logger.log', side_effect=collect):
                     try:
                         with progress('model call', interval=0.005):
                             self.assertTrue(waiting.wait(1))

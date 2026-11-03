@@ -8,7 +8,7 @@ never needs to know which framework a repository uses.
 
 - `skills/<agent>/SKILL.md` — human documentation only (not read at runtime).
 - `profiles/<agent>.json` — the runtime configuration applied by
-  `tools/skill_runner.py`, validated on load against `profiles/schema.json`.
+  `repo_analysis/tools/signal_profiles/signal_profile_runner.py`, validated on load against `profiles/schema.json`.
 
 Signal fields:
 

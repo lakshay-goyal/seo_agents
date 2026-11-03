@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from seo_agents.exploration.repo_analysis.tools import llm
+from seo_agents import llm
 
 
 class TierTests(unittest.TestCase):

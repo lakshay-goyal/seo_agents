@@ -10,11 +10,11 @@ import shutil
 import tempfile
 import unittest
 
-from seo_agents.onpage import ops
-from seo_agents.onpage import validators as v
-from seo_agents.onpage.checks import CHECKS
-from seo_agents.onpage.graph import run_onpage
-from seo_agents.onpage.writer import Writer, load_skill, skill_catalog
+from seo_agents.onpage.changes import change_operations as ops
+from seo_agents.onpage.validation import content_validators as v
+from seo_agents.onpage.checks.checklist import CHECKS
+from seo_agents.onpage.onpage_analysis import run_onpage
+from seo_agents.onpage.writer.content_writer import ContentWriter, load_skill, skill_catalog
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'onpage' / 'vite-spa' / 'seo_reports'
 HOME, ABOUT = 'p_42099b4af0', 'p_69bbc6be2c'
@@ -101,7 +101,7 @@ class FakeModel:
 
 def run_fixture(only=(HOME, ABOUT)):
     calls = []
-    writer = Writer(model_factory=lambda tier, label=None: FakeModel(calls, tier), attempts=3)
+    writer = ContentWriter(model_factory=lambda tier, label=None: FakeModel(calls, tier), attempts=3)
     tmp = tempfile.mkdtemp()
     root = Path(tmp) / 'seo_reports'
     shutil.copytree(FIXTURE, root)
@@ -122,10 +122,10 @@ def all_changes(page):
 class OnpageUnitTest(unittest.TestCase):
     def test_skills_match_checks_and_principles_are_subset(self):
         names = {s['name'] for s in skill_catalog()}
-        for _, skill, _, uses_llm in CHECKS:
-            self.assertIn(skill, names)
-            system, meta = load_skill(skill)
-            self.assertEqual(meta.get('kind'), 'llm' if uses_llm else 'deterministic')
+        for check in CHECKS:
+            self.assertIn(check.skill, names)
+            system, meta = load_skill(check.skill)
+            self.assertEqual(meta.get('kind'), 'llm' if check.uses_model else 'deterministic')
             self.assertNotIn('{{', system)
         plan, meta = load_skill('page-plan')
         self.assertIn('P6 Fact-check', plan)
@@ -133,7 +133,7 @@ class OnpageUnitTest(unittest.TestCase):
         self.assertIn('40-60 words', plan)  # limits rendered from policy.LIMITS (validator uses the same constant)
         self.assertEqual(meta['tier'], 'mid')
         self.assertEqual(load_skill('media-links')[1]['tier'], 'small')
-        self.assertEqual(sum(1 for c in CHECKS if c[3]), 4)  # 4 model calls per page (was 10)
+        self.assertEqual(sum(1 for c in CHECKS if c.uses_model), 4)  # 4 model calls per page (was 10)
 
     def test_validators(self):
         with self.assertRaises(ValueError):

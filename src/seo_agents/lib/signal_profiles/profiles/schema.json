@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "seo-agents/skill-profile/1.0",
   "title": "Deterministic skill profile",
-  "description": "Regex signals applied by tools/skill_runner.py. Enforced at load time by skill_runner.validate_profile and tested by tests/test_skill_profiles.py.",
+  "description": "Regex signals applied by repo_analysis/tools/signal_profiles/signal_profile_runner.py. Enforced at load time by skill_runner.validate_profile and tested by tests/test_skill_profiles.py.",
   "type": "object",
   "required": ["name", "signals", "gaps"],
   "additionalProperties": false,

@@ -5,13 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from seo_agents.exploration.repo_analysis.tools import adapters
-from seo_agents.exploration.repo_analysis.tools.framework import detect_frameworks
-from seo_agents.exploration.repo_analysis.tools.head_recipes import head_recipe, head_scope
-from seo_agents.exploration.repo_analysis.tools.react_source import discover_app
-from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
-from seo_agents.exploration.repo_analysis.tools.routes import normalize_route, parse_object_routes
-from seo_agents.exploration.repo_analysis.url_manifest import build_manifest, catch_all_rewrites, merge_suggested_instances
+from seo_agents.repo_analysis.tools.routing import framework_route_adapters as adapters
+from seo_agents.repo_analysis.tools.repository.framework_detection import detect_frameworks
+from seo_agents.repo_analysis.tools.routing.head_recipes import head_recipe, head_scope
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.static_mode.react_source_evaluator import discover_app
+from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
+from seo_agents.repo_analysis.tools.routing.route_discovery import normalize_route, parse_object_routes
+from seo_agents.repo_analysis.site_model.url_manifest import build_manifest, catch_all_rewrites, merge_suggested_instances
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'sites'
 REACT_PKG = json.dumps({'dependencies': {'react': '18.3.1', 'react-dom': '18.3.1'}, 'devDependencies': {'vite': '5.4.0'}})

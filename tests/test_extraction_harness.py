@@ -11,12 +11,12 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import PrivateAttr
 
-from seo_agents.exploration.repo_analysis.agents.llm.extractor import ExtractionPlan, run_exploration_agent, system_prompt
-from seo_agents.exploration.repo_analysis.agents.llm.verification import (ObservationValidationError, canonical, compact_index,
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent import ExtractionPlan, run_exploration_agent, system_prompt
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification import (ObservationValidationError, canonical, compact_index,
                                                                           execute_script, validate_observations, verify_and_extract)
-from seo_agents.exploration.repo_analysis.tools.agent_retrieval import repository_tools
-from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
-from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.repository_retrieval_tools import repository_tools
+from seo_agents.repo_analysis.tools.parsing.element_index import build_element_index
+from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
 
 try:
     from test_exploration_agents import ToolCallingModel, generated_script
@@ -111,7 +111,7 @@ class ExtractionHarnessTests(unittest.TestCase):
         second = copy.deepcopy(first)
         second['pages'][0]['blocks'].reverse()
         self.assertEqual(canonical(first), canonical(second))
-        with patch('seo_agents.exploration.repo_analysis.agents.llm.verification.execute_script', side_effect=[first, second]):
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.observation_verification.execute_script', side_effect=[first, second]):
             result = verify_and_extract('content', generated_script('content'), self.snapshot)
         self.assertIn('record_order', result['extraction'])
         lines = [(b['line'], b['source_id']) for b in result['pages'][0]['blocks']]
@@ -204,7 +204,7 @@ class ExtractionHarnessTests(unittest.TestCase):
             from langchain.agents import create_agent
             return create_agent(**kwargs)
         model = ToolCallingModel(source=generated_script('content'))
-        with patch('seo_agents.exploration.repo_analysis.agents.llm.extractor.create_agent', side_effect=factory):
+        with patch('seo_agents.repo_analysis.agents.legacy_llm_extractors.category_extractor_agent.create_agent', side_effect=factory):
             run_exploration_agent('content', snapshot=self.snapshot, model=model, max_discovery_rounds=5)
         self.assertEqual(captured['system_prompt'], prompt)
 

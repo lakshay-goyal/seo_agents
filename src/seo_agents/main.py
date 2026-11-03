@@ -1,8 +1,16 @@
+"""`seo-agents <github_url>`: clone the repository in a Docker sandbox, run the repo analysis and open a reports PR.
+
+    main() -> GitHubUrlValidator -> create_sandbox() (DockerSandbox) -> SandboxPipeline.run()
+              -> inside the container: ContainerEntrypoint.analyze (RepoAnalysisWorkflow) then .publish (reports PR)
+"""
+
 import argparse
 import os
 
-from seo_agents.log import done, log, start
-from seo_agents.sandbox import create_sandbox, is_valid_github_url, run_pipeline_in_sandbox
+from seo_agents.sandbox.github_url_validation import GitHubUrlValidator
+from seo_agents.sandbox.host_pipeline import SandboxPipeline
+from seo_agents.sandbox.runners.docker_sandbox import create_sandbox
+from seo_agents.utils.step_logger import done, log, start
 
 DEFAULT_REPO = "https://github.com/lakshay-goyal/my-portfolio"
 FORWARDED_ENV = (
@@ -60,7 +68,7 @@ def main(argv=None):
         github_url = DEFAULT_REPO
         log("notice: no repository given; using default " + DEFAULT_REPO)
 
-    if not is_valid_github_url(github_url):
+    if not GitHubUrlValidator().is_valid(github_url):
         log("error: not a valid GitHub URL: " + github_url)
         return 2
 
@@ -73,7 +81,7 @@ def main(argv=None):
                  "SEO_RUN_LLM_AGENTS": "1" if args.llm_agents else "0" if args.no_llm_agents else None}
     sandbox = create_sandbox()
     try:
-        pr_url = run_pipeline_in_sandbox(sandbox, github_url, env=forward_env(overrides), site_url=args.site_url)
+        pr_url = SandboxPipeline().run(sandbox, github_url, env=forward_env(overrides), site_url=args.site_url)
     finally:
         close = getattr(sandbox, "close", None)
         if close:

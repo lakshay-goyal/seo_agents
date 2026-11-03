@@ -7,9 +7,9 @@ import unittest
 from unittest.mock import patch
 
 from seo_agents import main as cli
-from seo_agents.sandbox.host import phase_envs
-from seo_agents.sandbox.pr import commit_plan, run_branch, scrub_paths, summary_markdown
-from seo_agents.sandbox.tools import docker
+from seo_agents.sandbox.host_pipeline import phase_envs
+from seo_agents.sandbox.git.pull_request import commit_plan, run_branch, scrub_paths, summary_markdown
+from seo_agents.sandbox.runners import docker_sandbox as docker
 
 
 class DockerSecretsTests(unittest.TestCase):

@@ -11,7 +11,7 @@ scorer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scorer)
 
 try:
-    from seo_agents.exploration.repo_analysis.site_model import explore_site
+    from seo_agents.repo_analysis.site_model.site_model_builder import explore_site
 except (ImportError, AttributeError):  # the site model is optional until it lands
     explore_site = None
 

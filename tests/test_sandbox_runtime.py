@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from seo_agents.sandbox.host import (PIP_DEPS, RENDER_MARKER, RUNTIME_MARKER, ensure_container_runtime,
+from seo_agents.sandbox.host_pipeline import (PIP_DEPS, RENDER_MARKER, RUNTIME_MARKER, ensure_container_runtime,
                                      ensure_render_runtime, project_dependencies, render_runtime_requested)
-from seo_agents.sandbox.tools.local import LocalResult
+from seo_agents.sandbox.runners.local_runner import LocalResult
 
 
 class SandboxRuntimeTests(unittest.TestCase):

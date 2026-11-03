@@ -10,9 +10,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from seo_agents.exploration.repo_analysis import site_model as sm
-from seo_agents.exploration.repo_analysis.output import load_exploration, write_exploration
-from seo_agents.exploration.repo_analysis.output.schema import SCHEMAS, validate
+from seo_agents.repo_analysis.site_model import site_model_builder as sm
+from seo_agents.repo_analysis.output import load_exploration, write_exploration
+from seo_agents.repo_analysis.output.schema_validation import SCHEMAS, validate
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'sites'
 ENV = {'SEO_GAP_WORKERS': '0', 'SEO_LIGHTHOUSE': '0', 'SEO_RENDER': '0', 'SEO_BUILD': '0', 'SEO_SITE_URL': '',

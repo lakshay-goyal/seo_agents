@@ -3,10 +3,10 @@ no `line: 1` placeholders, data-src hints."""
 
 import unittest
 
-from seo_agents.exploration.repo_analysis.attribution import Attributor, parse_src_hint
-from seo_agents.exploration.repo_analysis.site_model import empty_page
-from seo_agents.exploration.repo_analysis.source_lens import Context
-from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+from seo_agents.repo_analysis.site_model.value_attribution import Attributor, parse_src_hint
+from seo_agents.repo_analysis.site_model.site_model_builder import empty_page
+from seo_agents.repo_analysis.site_model.source_lens import Context
+from seo_agents.repo_analysis.tools.parsing.element_index import build_element_index
 
 FILES = {
     'index.html': '<!doctype html>\n<html lang="en">\n<head><title>Lakshay Goyal — Software Engineer</title></head>\n<body><div id="root"></div></body>\n</html>',

@@ -12,7 +12,6 @@ from bisect import bisect_right
 from functools import lru_cache
 import hashlib
 import json
-from pathlib import Path
 import re
 
 from seo_agents.lib.signal_profiles import SIGNAL_PROFILE_DOCS_DIR, SIGNAL_PROFILES_DIR

@@ -11,30 +11,31 @@ from pathlib import Path
 import re
 import unittest
 
-ROOT = Path(__file__).parents[1] / 'src' / 'seo_agents' / 'exploration' / 'repo_analysis'
+ROOT = Path(__file__).parents[1] / 'src' / 'seo_agents' / 'lib' / 'signal_profiles'
+PY_ROOT = Path(__file__).parents[1] / 'src' / 'seo_agents' / 'repo_analysis'
 TOKEN = re.compile(r'`([^`\n]+)`')
 IGNORED_PREFIXES = ('profiles/', 'tests/', 'agents/')
 IGNORED = {'COVERED_BY_PYTHON'}
 
 PYTHON = {
-    'ai-search-readiness': ['agents/ai_search_readiness.py', 'agents/sitemap_robots.py'],
-    'brand-entity-signals': ['agents/brand_entity_signals.py'],
-    'canonicals-redirects': ['agents/canonicals_redirects.py'],
-    'client-diagnostics': ['agents/rendering_strategy.py'],
-    'code-exploration': ['agents/code_exploration.py', 'tools/project.py'],
-    'content': ['tools/page_inventory.py'],
-    'hreflang-i18n': ['agents/hreflang_i18n.py'],
-    'https-security-headers': ['agents/https_security_headers.py'],
-    'keywords': ['tools/keywords.py', 'tools/source_index.py'],
-    'local-business-presence': ['agents/local_business_presence.py'],
-    'metadata': ['tools/page_inventory.py'],
-    'mobile-parity': ['agents/mobile_parity.py'],
-    'performance-assets': ['agents/performance_assets.py'],
-    'rendering-strategy': ['agents/rendering_strategy.py'],
-    'routes': ['tools/routes.py', 'tools/adapters.py'],
+    'ai-search-readiness': ['agents/entity_signals/ai_search_readiness_agent.py', 'agents/crawling_indexing/sitemap_robots_agent.py'],
+    'brand-entity-signals': ['agents/entity_signals/brand_entity_signals_agent.py'],
+    'canonicals-redirects': ['agents/crawling_indexing/canonicals_redirects_agent.py'],
+    'client-diagnostics': ['agents/rendering_performance/rendering_strategy_agent.py'],
+    'code-exploration': ['agents/codebase/code_exploration_agent.py', 'tools/repository/project_profile.py'],
+    'content': ['tools/content/page_inventory.py'],
+    'hreflang-i18n': ['agents/crawling_indexing/hreflang_i18n_agent.py'],
+    'https-security-headers': ['agents/security/https_security_headers_agent.py'],
+    'keywords': ['tools/content/keyword_extraction.py', 'tools/repository/source_index.py'],
+    'local-business-presence': ['agents/entity_signals/local_business_presence_agent.py'],
+    'metadata': ['tools/content/page_inventory.py'],
+    'mobile-parity': ['agents/rendering_performance/mobile_parity_agent.py'],
+    'performance-assets': ['agents/rendering_performance/performance_assets_agent.py'],
+    'rendering-strategy': ['agents/rendering_performance/rendering_strategy_agent.py'],
+    'routes': ['tools/routing/route_discovery.py', 'tools/routing/framework_route_adapters.py'],
     'shareability-link-assets': [],
-    'sitemap-robots': ['agents/sitemap_robots.py'],
-    'structured-data': ['agents/structured_data.py'],
+    'sitemap-robots': ['agents/crawling_indexing/sitemap_robots_agent.py'],
+    'structured-data': ['agents/entity_signals/structured_data_agent.py'],
 }
 
 COVERED_BY_PYTHON = {
@@ -91,7 +92,7 @@ class SkillDocDriftTests(unittest.TestCase):
     def test_allowlisted_output_keys_exist_in_python(self):
         failures = []
         for name, tokens in COVERED_BY_PYTHON.items():
-            source = ''.join((ROOT / path).read_text() for path in PYTHON[name] if (ROOT / path).exists())
+            source = ''.join((PY_ROOT / path).read_text() for path in PYTHON[name] if (PY_ROOT / path).exists())
             for token in tokens:
                 if re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)+', token) and token not in source:
                     failures.append(f'{name}: documented key `{token}` not found in {PYTHON[name]}')

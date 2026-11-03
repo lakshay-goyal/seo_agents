@@ -2,8 +2,8 @@
 
 import unittest
 
-from seo_agents.exploration.repo_analysis.source_lens import source_lens
-from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+from seo_agents.repo_analysis.site_model.source_lens import source_lens
+from seo_agents.repo_analysis.tools.parsing.element_index import build_element_index
 
 try:
     from test_element_index_ir import PAGE_RAIL
@@ -134,7 +134,7 @@ class ResolutionTests(unittest.TestCase):
         out = lens(files, 'react-spa', [{'id': 'a', 'url': '/', 'template': 'src/A.jsx'}])
         block = [b for b in out['a']['content']['blocks'] if b['tag'] == 'button']
         self.assertEqual(len(block), 0)  # unresolved (two candidates), not two fake blocks
-        from seo_agents.exploration.repo_analysis.source_lens import Context, PageResolver
+        from seo_agents.repo_analysis.site_model.source_lens import Context, PageResolver
         snapshot = {'files': files, 'assets': {}}
         index = build_element_index(snapshot)
         ctx = Context(snapshot, index, {'primary': 'react-spa'})

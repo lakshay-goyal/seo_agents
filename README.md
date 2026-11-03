@@ -17,7 +17,7 @@ uv pip install -e '.[render]'             # optional: Playwright for rendered-DO
 seo-agents https://github.com/<owner>/<repo> [--site-url https://example.com] [--render] [--build] [--llm-agents]
 
 # Local checkout, no clone/PR:
-python -m seo_agents.exploration.repo_analysis /path/to/site [--site-url URL] [--render] [--build]
+python -m seo_agents.repo_analysis /path/to/site [--site-url URL] [--render] [--build]
 ```
 
 Requires Docker and `GITHUB_TOKEN` (classic PAT, `repo` scope) for the PR flow. Only
@@ -39,6 +39,39 @@ only the compact planner files (`seo_reports/exploration/manifest.json`, `summar
 and on-page proposals within a 50 KB budget (`SEO_PR_COMMIT_BUDGET`; `SEO_PR_COMMIT_FULL=1`
 commits everything), and puts the summary in the PR body.
 
+## Code layout
+
+```
+src/seo_agents/
+├── main.py                    `seo-agents` CLI: validate URL -> DockerSandbox -> SandboxPipeline -> reports PR
+├── lib/                       everything you tune by hand
+│   ├── models.py              model tier per agent (AGENT_MODELS), tier defaults, token caps, prices
+│   ├── tool_mapping.py        agent / stage -> tools it uses; LangChain tools of the legacy extractors
+│   ├── prompts/               every prompt sent to a model (SKILL.md files + system_prompts.py)
+│   └── signal_profiles/       regex profiles used by the deterministic agents (+ their docs)
+├── llm/                       shared model layer: ChatModelFactory, tiers, prompt caching, errors, usage/cost
+├── utils/                     helpers used in several places (logger, LangGraph reducers, JSON parsing, env, prompt files)
+├── repo_analysis/             stage 1: explore the repository (no model except gap workers)
+│   ├── repo_analysis.py       RepoAnalysisWorkflow: the sequential LangGraph that calls every agent below
+│   ├── agents/                one class per agent (codebase, crawling_indexing, rendering_performance, security,
+│   │                          entity_signals, gap_workers, legacy_llm_extractors)
+│   ├── tools/                 one class per tool (repository, parsing, routing, content, signal_profiles, http)
+│   ├── measurement/           runtime lenses: SiteServer, PageRenderer, HtmlSummarizer, LighthouseAuditor, LinkChecker
+│   ├── site_model/            SiteModelWorkflow (map-reduce LangGraph, one class per stage) + its building blocks
+│   ├── repo_context/          RepoContextBuilder -> seo_reports/repo_context.json
+│   ├── evidence/              legacy evidence bundle + inspect CLI
+│   └── output/                sharded seo_reports/exploration/ writer, issue ranking, JSON schemas
+├── onpage/                    stage 2: on-page proposals from the exploration JSON only
+│   ├── onpage_analysis.py     OnpageAnalysisWorkflow: load -> 12 checks (one at a time) -> site -> write
+│   ├── checks/                one class per checklist item + checklist.py (execution order)
+│   ├── writer/                ContentWriter (skill prompt -> model -> validator -> repair loop)
+│   ├── reports/ page_context/ changes/ validation/ output/
+└── sandbox/                   Docker sandbox, container entrypoint, clone + PR
+```
+
+To move an agent to a cheaper or stronger model, edit `lib/models.py`. To see which tools an agent gets, read
+`lib/tool_mapping.py` (a test keeps it in sync with the code). Prompts are only in `lib/prompts/`.
+
 ## How exploration works
 
 Deterministic code produces the facts; cheap models resolve only what code cannot. Works on
@@ -46,13 +79,13 @@ any stack: the rendered site (when available) is ground truth, framework adapter
 
 | Stage | What happens | Module |
 | --- | --- | --- |
-| A acquire | one snapshot (source dirs first; assets have their own budget; build output skipped; README/docs tagged `role: doc` and never treated as page content) → framework fingerprint (every framework above threshold, per package root for monorepos) → unified element index (JSX/TSX via tree-sitter; Vue/Svelte/Astro; HTML and every server template language; Markdown; JSON/YAML/TOML/PO data and i18n catalogs; composition edges). Every value has an exact span (`line, col, end_line, end_col`), content-anchored ids, same-file constant / prop / namespaced-i18n data flow, loop context (`in_loop`, `template_n`, `data_source` JSON pointers) and `shared`/`used_by` flags | `tools/framework.py`, `tools/element_index.py` |
-| B build/serve | `site_url`, else opt-in install+build+serve (per-tool port flags, yarn berry/corepack, workspace-root installs, readiness = 2xx), else pre-built HTML (flagged possibly stale), else source-only (degraded-mode banner in `manifest.json`). `SEO_INSTRUMENT=1` stamps `data-seo-src="file:line:col"` on rendered Vite/React elements for exact attribution | `runtime/build_serve.py` |
-| C URL manifest | adapters for every detected framework (file routes, router configs incl. route constants, pathname-switch SPAs, nav arrays, Next intercepting/parallel/`[locale]`, Remix v1, Gatsby `createPage`, Shopify, WordPress, Hugo/Jekyll/11ty front matter incl. TOML/aliases, Django/Laravel/Rails/Flask/Express/Razor) ∪ static params ∪ content collections ∪ sitemaps ∪ build output ∪ crawl ∪ gap-worker suggestions; every row has `discovered_by[]`; catch-all rewrites / client not-found views recorded as soft-404 risks | `tools/adapters.py`, `url_manifest.py`, `tools/head_recipes.py` |
-| D measure | canonical host resolved first (apex→www, http→https chain), then per URL in parallel: raw HTML + headers, rendered DOM desktop+mobile (pooled Chromium), Lighthouse (parallel, partial runs kept), link status (`ok/broken/blocked/error`), served probes on the final host (robots/sitemap incl. `spa-shell-fallback`, soft 404, trailing slash on a real route, HSTS, X-Robots-Tag) | `runtime/*`, `site_graph.py` |
-| E attribute | served value → file:line:col: `data-seo-src` hint → lens agreement → exact literal → data/i18n → composed; links match href + anchor + DOM order; no `line:1` placeholders (unresolved → gap) | `source_lens.py`, `attribution.py` |
-| F gap workers | typed small-model tasks with JSON-schema structured output, closed-set candidate ids, edit kind derived in code; transport retries separate from validation retries; small → haiku → mid only after 2 validation failures; caches keyed by repo + snapshot + code version | `gap_workers.py`, `agents/gap/skills/` |
-| G assemble + verify | grounding validator (`verify: grounded/heuristic/failed` on every EDIT), scope pass (`scope: shell/layout/template/data/literal`, `shared_by`, `template_n`, per-route `head_scope`), coverage ledger reflecting failures, JSON Schema + referential-integrity validation | `site_model.py`, `output/` |
+| A acquire | one snapshot (source dirs first; assets have their own budget; build output skipped; README/docs tagged `role: doc` and never treated as page content) → framework fingerprint (every framework above threshold, per package root for monorepos) → unified element index (JSX/TSX via tree-sitter; Vue/Svelte/Astro; HTML and every server template language; Markdown; JSON/YAML/TOML/PO data and i18n catalogs; composition edges). Every value has an exact span (`line, col, end_line, end_col`), content-anchored ids, same-file constant / prop / namespaced-i18n data flow, loop context (`in_loop`, `template_n`, `data_source` JSON pointers) and `shared`/`used_by` flags | `tools/repository/framework_detection.py`, `tools/parsing/element_index.py` |
+| B build/serve | `site_url`, else opt-in install+build+serve (per-tool port flags, yarn berry/corepack, workspace-root installs, readiness = 2xx), else pre-built HTML (flagged possibly stale), else source-only (degraded-mode banner in `manifest.json`). `SEO_INSTRUMENT=1` stamps `data-seo-src="file:line:col"` on rendered Vite/React elements for exact attribution | `measurement/site_server.py` |
+| C URL manifest | adapters for every detected framework (file routes, router configs incl. route constants, pathname-switch SPAs, nav arrays, Next intercepting/parallel/`[locale]`, Remix v1, Gatsby `createPage`, Shopify, WordPress, Hugo/Jekyll/11ty front matter incl. TOML/aliases, Django/Laravel/Rails/Flask/Express/Razor) ∪ static params ∪ content collections ∪ sitemaps ∪ build output ∪ crawl ∪ gap-worker suggestions; every row has `discovered_by[]`; catch-all rewrites / client not-found views recorded as soft-404 risks | `tools/routing/framework_route_adapters.py`, `site_model/url_manifest.py`, `tools/routing/head_recipes.py` |
+| D measure | canonical host resolved first (apex→www, http→https chain), then per URL in parallel: raw HTML + headers, rendered DOM desktop+mobile (pooled Chromium), Lighthouse (parallel, partial runs kept), link status (`ok/broken/blocked/error`), served probes on the final host (robots/sitemap incl. `spa-shell-fallback`, soft 404, trailing slash on a real route, HSTS, X-Robots-Tag) | `measurement/*`, `site_model/site_model_workflow.py` |
+| E attribute | served value → file:line:col: `data-seo-src` hint → lens agreement → exact literal → data/i18n → composed; links match href + anchor + DOM order; no `line:1` placeholders (unresolved → gap) | `site_model/source_lens.py`, `site_model/value_attribution.py` |
+| F gap workers | typed small-model tasks with JSON-schema structured output, closed-set candidate ids, edit kind derived in code; transport retries separate from validation retries; small → haiku → mid only after 2 validation failures; caches keyed by repo + snapshot + code version | `agents/gap_workers/`, `lib/prompts/gap_workers/` |
+| G assemble + verify | grounding validator (`verify: grounded/heuristic/failed` on every EDIT), scope pass (`scope: shell/layout/template/data/literal`, `shared_by`, `template_n`, per-route `head_scope`), coverage ledger reflecting failures, JSON Schema + referential-integrity validation | `site_model/site_model_builder.py`, `output/` |
 
 ### Output: `seo_reports/exploration/` (sharded, the execution-stage contract)
 
@@ -112,8 +145,8 @@ read/write multipliers.
 
 ## Repository context (`repo_context.json`)
 
-The deterministic skill runners (`pipeline.explore_codebase()`, profiles in
-[`repo_analysis/profiles/`](src/seo_agents/exploration/repo_analysis/profiles)) still write
+The deterministic skill runners (`repo_analysis.explore_codebase()`, profiles in
+[`lib/signal_profiles/profiles/`](src/seo_agents/lib/signal_profiles/profiles)) still write
 `seo_reports/repo_context.json`: per-concern signals (sitemap/robots, canonicals/redirects,
 rendering, client diagnostics, state, Core Web Vitals causes, security headers,
 structured data, mobile, i18n, shareability, brand/entity, local business, AI-search
@@ -126,7 +159,7 @@ Deprecated: the site model covers this data more cheaply. A legacy-agent failure
 blocks publishing the site model or repo_context.
 
 Each category has its own LangChain agent and packaged
-[`SKILL.md`](src/seo_agents/exploration/repo_analysis/agents/llm/skills): URLs, content, page
+[`SKILL.md`](src/seo_agents/lib/prompts/legacy_extractors): URLs, content, page
 structure, internal links, metadata, media and E-E-A-T. The URL agent runs first;
 its verified route/template catalog is shared with the other agents so all reports
 cover the same pages. Each remaining agent has a fresh conversation, its own domain
@@ -259,14 +292,14 @@ Explore without cloning, committing or publishing; JSON goes to stdout and logs
 to stderr. Choose an artifact location outside this agent checkout:
 
 ```sh
-python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode agent > /tmp/exploration.json
+python -m seo_agents.repo_analysis.evidence.inspect_evidence_cli /path/to/site --mode agent > /tmp/exploration.json
 # Offline legacy extraction plus the same corpus/evidence views:
-python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode static > /tmp/exploration.json
+python -m seo_agents.repo_analysis.evidence.inspect_evidence_cli /path/to/site --mode static > /tmp/exploration.json
 # Query the saved evidence without source, models or network access:
-python -m seo_agents.exploration.repo_analysis.inspect /tmp/exploration.json --query /pages
-python -m seo_agents.exploration.repo_analysis.inspect /tmp/exploration.json --query /reports/content/pages/0
+python -m seo_agents.repo_analysis.evidence.inspect_evidence_cli /tmp/exploration.json --query /pages
+python -m seo_agents.repo_analysis.evidence.inspect_evidence_cli /tmp/exploration.json --query /reports/content/pages/0
 # Recover source/page relationships for src/layout.tsx (JSON-pointer escaping):
-python -m seo_agents.exploration.repo_analysis.inspect /tmp/exploration.json --query /source_relationships/src~1layout.tsx
+python -m seo_agents.repo_analysis.evidence.inspect_evidence_cli /tmp/exploration.json --query /source_relationships/src~1layout.tsx
 ```
 
 `query_evidence(bundle, pointer, offset=...)` supports JSON-pointer queries. List
@@ -285,7 +318,7 @@ Optional page fields also include `locale` and `content_sources`.
 An explicit runtime URL enables serial initial-response observations:
 
 ```sh
-python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode static \
+python -m seo_agents.repo_analysis.evidence.inspect_evidence_cli /path/to/site --mode static \
   --site-url https://example.com --max-runtime-pages 100 --runtime-timeout 12 \
   > /tmp/exploration.json
 ```
@@ -327,7 +360,7 @@ cannot be reused conservatively. Shared-source changes invalidate the whole sour
 result instead of attempting dependency-aware incremental invalidation.
 
 ```sh
-python -m seo_agents.exploration.repo_analysis.inspect /path/to/site --mode static \
+python -m seo_agents.repo_analysis.evidence.inspect_evidence_cli /path/to/site --mode static \
   --resume /tmp/exploration.json > /tmp/exploration-resumed.json
 ```
 

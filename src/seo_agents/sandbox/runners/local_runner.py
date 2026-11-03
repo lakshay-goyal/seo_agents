@@ -1,7 +1,7 @@
 """Local runner: same run/write interface, but executes directly.
 
 Used by code running INSIDE the container, so clone and PR steps
-work unchanged whether driven from the host or from in_container.py.
+work unchanged whether driven from the host or from container_entrypoint.py.
 """
 
 import os

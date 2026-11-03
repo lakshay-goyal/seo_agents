@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from seo_agents.sandbox.clone import clone_command, clone_repo, repo_folder
-from seo_agents.sandbox.in_container import site_model_files
-from seo_agents.sandbox.pr import create_pr, safe_relative
-from seo_agents.sandbox.tools.local import LocalResult
-from seo_agents.sandbox.validate import is_valid_github_url
+from seo_agents.sandbox.git.repository_clone import clone_command, clone_repo, repo_folder
+from seo_agents.sandbox.container_entrypoint import site_model_files
+from seo_agents.sandbox.git.pull_request import create_pr, safe_relative
+from seo_agents.sandbox.runners.local_runner import LocalResult
+from seo_agents.sandbox.github_url_validation import is_valid_github_url
 
 
 class GithubUrlValidationTests(unittest.TestCase):
@@ -63,7 +63,7 @@ class ShellQuotingTests(unittest.TestCase):
             return LocalResult('', '', 0)
         runner.run.side_effect = run
         files = {'seo_reports/site_model/pages/p_1 $(id).json': '{}', 'seo_reports/site_model/index.json': '{}'}
-        with patch('seo_agents.sandbox.pr.login_env', return_value={}):
+        with patch('seo_agents.sandbox.git.pull_request.login_env', return_value={}):
             url = create_pr(runner, 'https://github.com/example-owner/example-site', reports={}, extra_files=files)
         self.assertTrue(url.endswith('/pull/2'))
         add = next(args[0] for args, _ in runner.run.call_args_list if ' git add ' in args[0])

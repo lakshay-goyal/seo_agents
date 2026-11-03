@@ -2,7 +2,7 @@
 
 import unittest
 
-from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index
+from seo_agents.repo_analysis.tools.parsing.element_index import build_element_index
 
 
 def index(files):

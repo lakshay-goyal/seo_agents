@@ -6,24 +6,24 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from seo_agents.exploration.repo_analysis.agents.ai_search_readiness import analyze_ai_search_readiness
-from seo_agents.exploration.repo_analysis.agents.brand_entity_signals import analyze_brand_entity_signals
-from seo_agents.exploration.repo_analysis.agents.canonicals_redirects import analyze_canonicals_redirects
-from seo_agents.exploration.repo_analysis.agents.code_exploration import explore_code
-from seo_agents.exploration.repo_analysis.agents.hreflang_i18n import analyze_hreflang_i18n
-from seo_agents.exploration.repo_analysis.agents.https_security_headers import analyze_https_security_headers
-from seo_agents.exploration.repo_analysis.agents.local_business_presence import analyze_local_business_presence
-from seo_agents.exploration.repo_analysis.agents.mobile_parity import analyze_mobile_parity
-from seo_agents.exploration.repo_analysis.agents.performance_assets import analyze_performance_assets
-from seo_agents.exploration.repo_analysis.agents.react_diagnostics import diagnose_react
-from seo_agents.exploration.repo_analysis.agents.rendering_strategy import analyze_rendering_strategy
-from seo_agents.exploration.repo_analysis.agents.sitemap_robots import check_sitemap_and_robots
-from seo_agents.exploration.repo_analysis.agents.structured_data import analyze_structured_data
-from seo_agents.exploration.repo_analysis.tools.keywords import extract_keywords
-from seo_agents.exploration.repo_analysis.tools.page_inventory import analyze_page_inventory
-from seo_agents.exploration.repo_analysis.tools.repository_snapshot import snapshot_repository
-from seo_agents.exploration.repo_analysis.tools.skill_runner import in_comment, run_skill
-from seo_agents.exploration.repo_analysis.tools.source_index import SourceIndex
+from seo_agents.repo_analysis.agents.entity_signals.ai_search_readiness_agent import analyze_ai_search_readiness
+from seo_agents.repo_analysis.agents.entity_signals.brand_entity_signals_agent import analyze_brand_entity_signals
+from seo_agents.repo_analysis.agents.crawling_indexing.canonicals_redirects_agent import analyze_canonicals_redirects
+from seo_agents.repo_analysis.agents.codebase.code_exploration_agent import explore_code
+from seo_agents.repo_analysis.agents.crawling_indexing.hreflang_i18n_agent import analyze_hreflang_i18n
+from seo_agents.repo_analysis.agents.security.https_security_headers_agent import analyze_https_security_headers
+from seo_agents.repo_analysis.agents.entity_signals.local_business_presence_agent import analyze_local_business_presence
+from seo_agents.repo_analysis.agents.rendering_performance.mobile_parity_agent import analyze_mobile_parity
+from seo_agents.repo_analysis.agents.rendering_performance.performance_assets_agent import analyze_performance_assets
+from seo_agents.repo_analysis.agents.rendering_performance.client_diagnostics_agent import diagnose_client_rendering
+from seo_agents.repo_analysis.agents.rendering_performance.rendering_strategy_agent import analyze_rendering_strategy
+from seo_agents.repo_analysis.agents.crawling_indexing.sitemap_robots_agent import check_sitemap_and_robots
+from seo_agents.repo_analysis.agents.entity_signals.structured_data_agent import analyze_structured_data
+from seo_agents.repo_analysis.tools.content.keyword_extraction import extract_keywords
+from seo_agents.repo_analysis.tools.content.page_inventory import analyze_page_inventory
+from seo_agents.repo_analysis.tools.repository.repository_snapshot import snapshot_repository
+from seo_agents.repo_analysis.tools.signal_profiles.signal_profile_runner import in_comment, run_signal_profile
+from seo_agents.repo_analysis.tools.repository.source_index import SourceIndex
 
 
 class Repo(unittest.TestCase):
@@ -169,8 +169,8 @@ class BrandAndLocal(Repo):
         index = self.index()
         local = analyze_local_business_presence(index)
         self.assertEqual(local['status'], 'not-applicable')
-        self.assertEqual(run_skill(index, 'local-business-presence')['signals']['contact-or-location-page']['count'], 0)
-        self.assertEqual(run_skill(index, 'brand-entity-signals')['signals']['about-page']['count'], 0)
+        self.assertEqual(run_signal_profile(index, 'local-business-presence')['signals']['contact-or-location-page']['count'], 0)
+        self.assertEqual(run_signal_profile(index, 'brand-entity-signals')['signals']['about-page']['count'], 0)
 
     def test_local_business_telephone_and_email_values(self):
         self.write('index.html', '<script type="application/ld+json">{"@type": "Restaurant", "telephone": "+1 555 123 4567",'
@@ -226,7 +226,7 @@ class RenderingAndAi(Repo):
         self.write('app/page.tsx', 'export default () => <h1>x</h1>')
         index = self.index()
         routes = [{'route': '/', 'kind': 'page', 'source': {'location': {'file': 'app/page.tsx'}}}]
-        result = analyze_rendering_strategy(index, routes, diagnose_react(index))
+        result = analyze_rendering_strategy(index, routes, diagnose_client_rendering(index))
         row = result['route_modes'][0]
         self.assertEqual((row['route'], row['mode']), ('/', 'SSG'))
         self.assertEqual(row['source_chain'][0]['level'], 'config')
@@ -236,7 +236,7 @@ class RenderingAndAi(Repo):
         self.write('vite.config.js', 'export default {}')
         self.write('src/main.jsx', "createRoot(document.getElementById('root')).render(<HashRouter><a href=\"#\">x</a></HashRouter>)")
         index = self.index()
-        result = analyze_rendering_strategy(index, [], diagnose_react(index))
+        result = analyze_rendering_strategy(index, [], diagnose_client_rendering(index))
         self.assertTrue(result['csr_only'])
         self.assertEqual(result['config_mode']['mode'], 'CSR')
         self.assertIn('hash-router', {h['signal'] for h in result['client_hazards_by_file']['src/main.jsx']})

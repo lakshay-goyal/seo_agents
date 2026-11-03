@@ -1,70 +1,65 @@
 # `repo_analysis`: everything used to explore a codebase
 
-Entry point: `repo_analysis()` in [`pipeline.py`](pipeline.py): one snapshot, then the
-deterministic skill runners (`explore_codebase()`), the page-centric site model
-(`site_model.explore_site()`, orchestrated by `site_graph.py`), and optionally the seven
-legacy LLM category extractors (`graph.py`). Output contract: [`docs/site-model.md`](../../../../docs/site-model.md).
+Entry point: `RepoAnalysisWorkflow` / `repo_analysis()` in [`repo_analysis.py`](repo_analysis.py). It is one
+sequential LangGraph: snapshot once, run the 17 deterministic agents in order, write `repo_context.json`, build the
+page-centric site model (its own LangGraph in [`site_model/site_model_workflow.py`](site_model/site_model_workflow.py)),
+and optionally run the seven legacy LLM category extractors. Output contract:
+[`docs/site-model.md`](../../../docs/site-model.md).
 
 ```sh
-python -m seo_agents.exploration.repo_analysis <checkout>                        # repo_context.json + site_model/
-python -m seo_agents.exploration.repo_analysis <checkout> --site-url https://x.y  # + raw/rendered/Lighthouse lenses
-python -m seo_agents.exploration.repo_analysis <checkout> --render --build        # build+serve in a sandbox, render
-python -m seo_agents.exploration.repo_analysis <checkout> --with-llm-agents       # + 7 legacy LLM reports
+python -m seo_agents.repo_analysis <checkout>                        # repo_context.json + site_model/
+python -m seo_agents.repo_analysis <checkout> --site-url https://x.y  # + raw/rendered/Lighthouse lenses
+python -m seo_agents.repo_analysis <checkout> --render --build        # build+serve in a sandbox, render
+python -m seo_agents.repo_analysis <checkout> --with-llm-agents       # + 7 legacy LLM reports
 ```
+
+Model per agent: [`lib/models.py`](../lib/models.py). Tools per agent: [`lib/tool_mapping.py`](../lib/tool_mapping.py).
+Prompts: [`lib/prompts/`](../lib/prompts). Signal profiles: [`lib/signal_profiles/`](../lib/signal_profiles).
 
 ```
 repo_analysis/
-├── __init__.py / __main__.py   exports + CLI
-├── pipeline.py                 repo_analysis(): snapshot once -> skills -> site model -> optional LLM categories
-├── site_model.py               explore_site(), page assembly, validators (schema/grounding/lens), site facts, writers
-├── site_graph.py               LangGraph orchestrator: acquire -> build_serve -> url_manifest -> measure_page (Send)
-│                               -> discover (crawl waves) -> attribute -> gap_worker (Send) -> assemble
-├── url_manifest.py             adapters ∪ static params ∪ content collections ∪ sitemaps ∪ build output ∪ crawl
-├── source_lens.py              per-page values + edit locations from source (props, blocks, i18n, front matter, metadata APIs)
-├── attribution.py              served value -> file:line:col / data pointer / i18n key; ambiguity -> gap queue
-├── gap_workers.py              cheap-model task packets, validation, retry, tier escalation, votes, learned adapters, cache
-├── context_builder.py          deterministic results -> repo_context.json (references + hashes)
-├── graph.py                    7 legacy LLM category extractors as a DAG (urls -> 4 parallel -> content -> eeat)
-├── evidence.py                 combined evidence bundle over LLM reports + corpus
-├── inspect.py                  read-only CLI: explore/export/query evidence (no PR)
-├── output/                     sharded exploration writer (manifest, summary, shards, evidence), issues ranking,
-│                               JSON Schemas + mini validator + referential-integrity checks
+├── repo_analysis.py            RepoAnalysisWorkflow (LangGraph): capture_snapshot -> 17 agents -> write_repo_context
+│                               -> build_site_model -> run_legacy_llm_extractors -> finish
+├── cli.py / __main__.py        `python -m seo_agents.repo_analysis`
 │
-├── runtime/                    measurement lenses (no LLM)
-│   ├── build_serve.py              site_url | pre-built HTML (+SPA fallback) | install+build+serve | source-only
-│   ├── dom.py                      one page-summary shape for raw HTML / built files / rendered DOM
-│   ├── render.py                   raw fetch + Playwright desktop/mobile render, mobile parity, JS dependence
-│   ├── lighthouse.py               Lighthouse CLI (median of N) or PageSpeed Insights (+CrUX field data)
-│   └── link_check.py               internal + sampled external link status with redirect chains
+├── agents/                     one class per agent; base_agent.RepoAnalysisAgent (name, signal_profile, requires, run)
+│   ├── codebase/                   CodeExplorationAgent, RouteDiscoveryAgent, PageInventoryAgent, KeywordExtractionAgent
+│   ├── crawling_indexing/          SitemapRobotsAgent, CanonicalsRedirectsAgent, HreflangI18nAgent
+│   ├── rendering_performance/      ClientDiagnosticsAgent, RenderingStrategyAgent, PerformanceAssetsAgent, MobileParityAgent
+│   ├── security/                   HttpsSecurityHeadersAgent
+│   ├── entity_signals/             StructuredDataAgent, ShareabilityLinkAssetsAgent, BrandEntitySignalsAgent,
+│   │                               LocalBusinessPresenceAgent, AiSearchReadinessAgent
+│   ├── gap_workers/                GapWorkerAgent (cheap-model tasks): task builder, prompts, solver, answer validation,
+│   │                               result applier, route-adapter learner
+│   └── legacy_llm_extractors/      DEPRECATED, opt-in: LegacyExtractionWorkflow (LangGraph DAG) + CategoryExtractorAgent,
+│                                   observation verification, sandboxed script policy/worker, prior-report handoff,
+│                                   cross-report references, LangChain retrieval tools, static_mode/ (offline tests)
 │
-├── agents/
-│   ├── gap/skills/                 gap-worker skills: attribute-value, explain-computed, topic-intent,
-│   │                               eeat-classify, enumerate-instances, route-adapter
-│   ├── llm/                        legacy LLM extractor harness (extractor, verification w/ grounding,
-│   │                               script policy/worker, handoff, references, skills/contract-common.md + 7 skills)
-│   └── *.py                        deterministic skill runners (sitemap_robots, canonicals_redirects, rendering_strategy,
-│                                   react_diagnostics, performance_assets, https_security_headers,
-│                                   structured_data, mobile_parity, hreflang_i18n, shareability_link_assets,
-│                                   brand_entity_signals, local_business_presence, ai_search_readiness, page_latency)
+├── tools/                      one class per tool (no model)
+│   ├── repository/                 RepositorySnapshotTool, SourceIndex, FrameworkDetector, ProjectProfileTool, constants
+│   ├── parsing/                    ElementIndexBuilder, SourceContextBuilder, SafeXmlParser
+│   ├── routing/                    FrameworkRouteAdapters, HeadRecipeTool, RouteDiscoveryTool
+│   ├── content/                    PageInventoryTool, KeywordExtractionTool, AssetProbe
+│   ├── signal_profiles/            SignalProfileRunner (applies lib/signal_profiles/profiles/<name>.json)
+│   └── http/                       HttpProbe (isolated worker), InitialResponseParser, RuntimeObserver
 │
-├── tools/
-│   ├── repository_snapshot.py      bounded read-only snapshot, content-hash identity (no mtimes)
-│   ├── framework.py                framework fingerprint (deps, config, layout) for 35+ stacks
-│   ├── element_index.py            unified element index, data/i18n index, composition refs, alias resolution
-│   ├── adapters.py                 framework route adapters (URL pattern -> entry template), Adapter registry
-│   ├── head_recipes.py             per-framework head recipe + head_scope (per-route | shared-shell | mixed)
-│   ├── source_index.py             line-addressable index used by the skill runners
-│   ├── skill_runner.py             loads profiles/*.json (validated), scoped signals, truncation flags
-│   ├── routes.py                   generic route skill (fallback for unknown stacks)
-│   ├── project.py, page_inventory.py, keywords.py   project profile, tag inventory, keyword candidates
-│   ├── source_context.py           tree-sitter import/JSON/HTML records for the legacy LLM agents
-│   ├── agent_retrieval.py          legacy agent tools: read, grep, symbols, find_definition, resolve_import, query_index, drafts
-│   ├── runtime.py, http_probe.py, initial_response.py   isolated stdlib HTTP probe + initial-HTML parsing
-│   ├── asset_probe.py, safe_xml.py local image dimensions; defusedxml-backed XML parsing
-│   ├── llm.py                      model tiers (small/mid), per-call usage/cost logging, JSONL trace (SEO_TRACE)
-│   ├── contracts.py, helpers.py    legacy report schema + shared constants
-│   └── inventory.py, react_source.py   DEPRECATED React/Next static extractor (legacy offline graph tests only)
+├── measurement/                runtime lenses (no model)
+│   ├── site_server.py              SiteServer: site_url | pre-built HTML (+SPA fallback) | install+build+serve | source-only
+│   ├── html_summary.py             HtmlSummarizer: one page-summary shape for raw HTML / built files / rendered DOM
+│   ├── page_renderer.py            PageRenderer: raw fetch + Playwright desktop/mobile render
+│   ├── lighthouse_audit.py         LighthouseAuditor: Lighthouse CLI (median of N) or PageSpeed Insights (+CrUX)
+│   └── link_checker.py             LinkChecker: internal + sampled external link status with redirect chains
 │
-├── profiles/                   19 deterministic signal profiles (+ schema.json); examples run as unit tests
-└── skills/                     human documentation for each profile
+├── site_model/                 page-centric site model
+│   ├── site_model_workflow.py      SiteModelWorkflow: AcquireStage -> BuildServeStage -> UrlManifestStage ->
+│   │                               MeasurePageStage (Send) <-> CrawlDiscoveryStage -> AttributionStage ->
+│   │                               GapWorkerStage (Send) -> AssembleStage
+│   ├── site_model_builder.py       SiteModelBuilder / explore_site(): config, page assembly, validators, site facts, writers
+│   ├── url_manifest.py             UrlManifestBuilder: adapters ∪ static params ∪ content ∪ sitemaps ∪ build output ∪ crawl
+│   ├── source_lens.py              SourceLens: per-page values + edit locations from source
+│   └── value_attribution.py        Attributor: served value -> file:line:col / data pointer / i18n key; ambiguity -> gap
+│
+├── repo_context/               RepoContextBuilder -> seo_reports/repo_context.json (references + hashes)
+├── evidence/                   EvidenceBundleBuilder (legacy reports + corpus) and the read-only inspect CLI
+└── output/                     ExplorationWriter (sharded seo_reports/exploration/), IssueRanker, JSON schema validation
 ```

@@ -10,11 +10,11 @@ import time
 import unittest
 from unittest.mock import patch
 
-from seo_agents.exploration.repo_analysis.runtime import build_serve as bs
-from seo_agents.exploration.repo_analysis.runtime import lighthouse, link_check
-from seo_agents.exploration.repo_analysis.runtime.dom import summarize_html
-from seo_agents.exploration.repo_analysis.runtime.render import chromium_args, close_browsers
-from seo_agents.exploration.repo_analysis.tools.agent_retrieval import repository_tools, safe_compile
+from seo_agents.repo_analysis.measurement import site_server as bs
+from seo_agents.repo_analysis.measurement import lighthouse_audit as lighthouse, link_checker as link_check
+from seo_agents.repo_analysis.measurement.html_summary import summarize_html
+from seo_agents.repo_analysis.measurement.page_renderer import chromium_args, close_browsers
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.repository_retrieval_tools import repository_tools, safe_compile
 
 
 class SafeEnvTests(unittest.TestCase):

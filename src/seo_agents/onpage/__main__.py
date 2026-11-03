@@ -8,7 +8,7 @@ import argparse
 import os
 from pathlib import Path
 
-from seo_agents.log import log
+from seo_agents.utils.step_logger import log
 
 
 def main(argv=None):
@@ -31,13 +31,14 @@ def main(argv=None):
             del os.environ[key]  # empty .env entries mean "use the default", not "model ''"
     if not os.getenv('OPENROUTER_API_KEY'):
         raise SystemExit('OPENROUTER_API_KEY is not set (.env); the content writer needs a model.')
-    from seo_agents.onpage.graph import run_onpage
-    state = run_onpage(args.reports_dir, out_dir=args.out, site_url=args.site_url, run_date=args.run_date, only_pages=args.pages)
+    from seo_agents.onpage.onpage_analysis import OnpageAnalysisWorkflow
+    state = OnpageAnalysisWorkflow().run(args.reports_dir, out_dir=args.out, site_url=args.site_url, run_date=args.run_date,
+                                         only_pages=args.pages)
     written = state.get('written') or {}
     log('onpage output: ' + str(written.get('out_dir')))
     if args.publish:
-        from seo_agents.onpage.publish import publish
-        log('published: ' + publish(written['out_dir']))
+        from seo_agents.onpage.output.pr_publisher import OnpagePrPublisher
+        log('published: ' + OnpagePrPublisher().publish(written['out_dir']))
 
 
 if __name__ == '__main__':

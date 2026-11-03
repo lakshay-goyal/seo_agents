@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from seo_agents.exploration.repo_analysis.site_model import explore_site
+from seo_agents.repo_analysis.site_model.site_model_builder import explore_site
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'sites' / 'pathname-spa'
 ENV = {'SEO_GAP_WORKERS': '0', 'SEO_GAP_CACHE': '0', 'OPENROUTER_API_KEY': ''}

@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from seo_agents.exploration.repo_analysis.tools.inventory import inventory, routes
-from seo_agents.exploration.repo_analysis.tools.helpers import REPORT_FILES
-from seo_agents.exploration.repo_analysis.graph import run_onpage_graph
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.static_mode.static_inventory import inventory, routes
+from seo_agents.repo_analysis.tools.repository.repository_constants import REPORT_FILES
+from seo_agents.repo_analysis.agents.legacy_llm_extractors.legacy_extraction_workflow import run_legacy_extraction
 
 
 class InventoryTests(unittest.TestCase):
@@ -93,7 +93,7 @@ export default function Home() { return <main><h1>Welcome</h1><Hero /><h2>Detail
         self.assertTrue(any(s['signal'] == 'authorship' and s['evidence'] for s in home['signals']))
 
     def test_graph_tools_and_offline_analysis(self):
-        state = run_onpage_graph(str(self.repo), mode='static')
+        state = run_legacy_extraction(str(self.repo), mode='static')
         reports = state['artifacts']
         self.assertEqual(set(reports), set(REPORT_FILES))
         folder = self.repo / 'saved'
@@ -125,7 +125,7 @@ export default function Page() { return <main><h1>{title}</h1><img src={photo} a
         self.assertEqual(links[0]['accessible_name'], 'About our team')
 
     def test_invalid_category_payload_rejected_before_pr(self):
-        from seo_agents.sandbox.pr import check_reports
+        from seo_agents.sandbox.git.pull_request import check_reports
         reports = {key: inventory(self.repo, key) for key in REPORT_FILES}
         reports['content']['pages'][0]['items'] = []
         with self.assertRaisesRegex(ValueError, 'Unexpected page fields'):

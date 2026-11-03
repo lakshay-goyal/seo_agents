@@ -10,12 +10,12 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from seo_agents.exploration.repo_analysis import gap_workers
-from seo_agents.exploration.repo_analysis.site_model import explore_site, grounding_issue
-from seo_agents.exploration.repo_analysis.tools.adapters import spa_routes, wordpress_routes, shopify_routes, rails_routes
-from seo_agents.exploration.repo_analysis.tools.element_index import build_element_index, page_composition, resolve_module, load_aliases
-from seo_agents.exploration.repo_analysis.tools.framework import detect_frameworks
-from seo_agents.exploration.repo_analysis.url_manifest import build_manifest, normalize_path, pattern_regex
+from seo_agents.repo_analysis.agents.gap_workers import (gap_answer_validation, gap_result_applier, gap_task_builder, gap_task_prompts, gap_task_solver, route_adapter_learner)
+from seo_agents.repo_analysis.site_model.site_model_builder import explore_site, grounding_issue
+from seo_agents.repo_analysis.tools.routing.framework_route_adapters import spa_routes, wordpress_routes, shopify_routes, rails_routes
+from seo_agents.repo_analysis.tools.parsing.element_index import build_element_index, page_composition, resolve_module, load_aliases
+from seo_agents.repo_analysis.tools.repository.framework_detection import detect_frameworks
+from seo_agents.repo_analysis.site_model.url_manifest import build_manifest, normalize_path, pattern_regex
 
 ENV = {'SEO_GAP_WORKERS': '0', 'SEO_LIGHTHOUSE': '0', 'SEO_RENDER': '0', 'SEO_BUILD': '0', 'SEO_SITE_URL': '',
        'SEO_GAP_CACHE': '0', 'OPENROUTER_API_KEY': ''}
@@ -203,12 +203,12 @@ class SiteModelTests(unittest.TestCase):
                'candidates': [{'id': 'c1', 'kind': 'literal', 'file': 'b.html', 'line': 1, 'snippet': '<title>Welcome</title>'},
                               {'id': 'c2', 'kind': 'literal', 'file': 'a.html', 'line': 3, 'snippet': '<title>Welcome</title>'}]}
         ctx = SimpleNamespace(files={'a.html': '', 'b.html': ''}, index={'refs': [], 'data': []})
-        with patch.object(gap_workers, 'default_factory', lambda tier, temperature=0, label=None: Model(tier)), \
+        with patch.object(gap_task_solver, 'default_factory', lambda tier, temperature=0, label=None: Model(tier)), \
                 patch.dict(os.environ, {'SEO_TOPIC_MAX_PAGES': '0', 'SEO_EEAT_MAX_PAGES': '0'}):
-            tasks = gap_workers.build_tasks([gap], [page], ctx, {'family': 'html'})
+            tasks = gap_task_builder.build_tasks([gap], [page], ctx, {'family': 'html'})
             self.assertEqual([t['task'] for t in tasks], ['attribute_value'])
-            result = gap_workers.solve(tasks[0], 'html', model_factory=lambda tier, temperature=0, label=None: Model(tier))
-        self.assertTrue(gap_workers.apply(tasks[0], result, page, ctx))
+            result = gap_task_solver.solve(tasks[0], 'html', model_factory=lambda tier, temperature=0, label=None: Model(tier))
+        self.assertTrue(gap_result_applier.apply(tasks[0], result, page, ctx))
         self.assertEqual(calls, [('small', False), ('small', True)])
         edit = page['head']['title']['edit']
         self.assertEqual((edit['file'], edit['line'], edit['resolved_by']), ('a.html', 3, 'llm:small'))
@@ -223,8 +223,8 @@ class SiteModelTests(unittest.TestCase):
             def invoke(self, messages):
                 return SimpleNamespace(content=json.dumps({'framework': 'tpl', 'rules': [
                     {'path_regex': r'^site/pages/(?P<route>.+)\.tpl$', 'url_template': '/{route}', 'index_names': ['home']}]}))
-        with patch.object(gap_workers, 'CACHE_DIR', Path(self.temp.name) / 'cache'), \
-                patch.object(gap_workers, 'default_factory', lambda tier, temperature=0, label=None: Mid()):
+        with patch.object(route_adapter_learner, 'CACHE_DIR', Path(self.temp.name) / 'cache'), \
+                patch.object(gap_task_solver, 'default_factory', lambda tier, temperature=0, label=None: Mid()):
             model = self.explore(run_gap_workers=True)
         urls = sorted(p['url'] for p in model['pages'].values())
         self.assertEqual(urls, ['/', '/team'])
@@ -242,15 +242,15 @@ class GapValidationTests(unittest.TestCase):
     def test_validators_reject_out_of_contract_answers(self):
         task = {'task': 'topic_intent', 'packet': {}}
         with self.assertRaises(ValueError):
-            gap_workers.validate(task, {'primary_topic': 'x', 'intent': 'buy', 'target_queries': ['a', 'b', 'c']})
+            gap_answer_validation.validate(task, {'primary_topic': 'x', 'intent': 'buy', 'target_queries': ['a', 'b', 'c']})
         with self.assertRaises(ValueError):
-            gap_workers.validate({'task': 'route_adapter', 'packet': {'files': ['tests/a.tpl']}},
+            gap_answer_validation.validate({'task': 'route_adapter', 'packet': {'files': ['tests/a.tpl']}},
                                  {'rules': [{'path_regex': r'^tests/(?P<route>.+)\.tpl$'}]})
-        merged, agreement = gap_workers.majority([{'intent': 'local'}, {'intent': 'local'}, {'intent': 'commercial'}])
+        merged, agreement = gap_task_solver.majority([{'intent': 'local'}, {'intent': 'local'}, {'intent': 'commercial'}])
         self.assertEqual((merged['intent'], agreement), ('local', 0.67))
 
     def test_progressive_disclosure_keeps_family_examples(self):
-        body, meta = gap_workers.load_skill('attribute-value', 'liquid')
+        body, meta = gap_task_prompts.load_skill('attribute-value', 'liquid')
         self.assertIn('### liquid', body)
         self.assertNotIn('### jsx', body)
         self.assertEqual(meta['tier'], 'small')
@@ -273,19 +273,19 @@ class ReviewRegressionTests(unittest.TestCase):
         self.assertEqual(link['col'], files['b.tsx'].index('<a'))
 
     def test_yaml_sequences_at_key_indent_and_exact_json_lines(self):
-        from seo_agents.exploration.repo_analysis.tools.element_index import json_string_lines, yaml_strings
+        from seo_agents.repo_analysis.tools.parsing.element_index import json_string_lines, yaml_strings
         self.assertEqual(list(yaml_strings('nav:\n- title: Home\n- title: About\n')),
                          [('/nav/0/title', 'Home', 2), ('/nav/1/title', 'About', 3)])
         self.assertEqual(json_string_lines('{"title":"Home",\n"nav":{\n"home":"Home"},\n"x":"title"}'),
                          [('/title', 'Home', 1), ('/nav/home', 'Home', 3), ('/x', 'title', 4)])
 
     def test_remix_optional_and_layout_opt_out_segments(self):
-        from seo_agents.exploration.repo_analysis.tools.adapters import remix_routes
+        from seo_agents.repo_analysis.tools.routing.framework_route_adapters import remix_routes
         rows = {(r['url'], r['is_dynamic']) for r in remix_routes({'app/routes/($lang)._index.tsx': '', 'app/routes/blog_.$slug.tsx': ''})}
         self.assertEqual(rows, {('/:lang?', True), ('/blog/:slug', True)})
 
     def test_manifest_specificity_substitution_and_own_hosts(self):
-        from seo_agents.exploration.repo_analysis.url_manifest import specificity, substitute
+        from seo_agents.repo_analysis.site_model.url_manifest import specificity, substitute
         self.assertEqual(substitute('/blog/[slug]', 'a\\d'), '/blog/a\\d')
         self.assertLess(specificity('/blog/[slug]'), specificity('/[lang]/[page]'))
         self.assertLess(specificity('/[lang]/[page]'), specificity('/[...rest]'))
@@ -294,13 +294,13 @@ class ReviewRegressionTests(unittest.TestCase):
 
     def test_gap_answers_with_null_reason_apply_without_crashing(self):
         task = {'task': 'attribute_value', 'packet': {'candidates': [{'id': 'c1', 'file': 'a.html', 'line': 1}]}}
-        answer = gap_workers.validate(task, {'candidate': 'c1', 'edit_kind': 'literal', 'reason': None})
+        answer = gap_answer_validation.validate(task, {'candidate': 'c1', 'edit_kind': 'literal', 'reason': None})
         self.assertEqual(answer['reason'], '')
         with self.assertRaises(ValueError):
-            gap_workers.validate(task, {'candidate': 'c1', 'edit_kind': 'literal', 'reason': 5})
+            gap_answer_validation.validate(task, {'candidate': 'c1', 'edit_kind': 'literal', 'reason': 5})
 
     def test_unbuilt_source_shell_is_never_served(self):
-        from seo_agents.exploration.repo_analysis.runtime.build_serve import build_and_serve
+        from seo_agents.repo_analysis.measurement.site_server import build_and_serve
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / 'public').mkdir()

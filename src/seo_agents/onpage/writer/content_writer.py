@@ -17,7 +17,6 @@ from functools import lru_cache
 import inspect
 import json
 import os
-from pathlib import Path
 import re
 
 from seo_agents.lib.models import ONPAGE_MID_REASONING_EFFORT, ONPAGE_WRITER_MAX_TOKENS, skill_model_meta
