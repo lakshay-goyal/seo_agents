@@ -20,3 +20,5 @@ order: 12
 5. Checklist `after` is derived from the final changes: true (a proposed change fixes it), "blocked",
    "needs_input", "needs_platform_change" or false. Nothing is assumed to pass.
 6. `expected.html` is generated from the change list (review aid only).
+7. Every change gets `serves` (keywords / questions / prompts it serves); the page gets `keyword_coverage` (before /
+   after per keyword) and the fact-check `quality` verdict. Changes the fact check blocked stay `blocked`.

@@ -4,7 +4,8 @@ import inspect
 import unittest
 
 from seo_agents.lib.models import AGENT_MODELS
-from seo_agents.lib.prompts import GAP_WORKER_PROMPTS_DIR, ONPAGE_PROMPTS_DIR
+from seo_agents.keyword_research.keyword_research import PAGE_LOOP_NODES, WORKFLOW_NODES, KeywordResearchWorkflow
+from seo_agents.lib.prompts import GAP_WORKER_PROMPTS_DIR, KEYWORD_RESEARCH_PROMPTS_DIR, ONPAGE_PROMPTS_DIR
 from seo_agents.lib.tool_mapping import (AGENT_TOOLS, LEGACY_EXTRACTOR_DRAFT_TOOLS, LEGACY_EXTRACTOR_HANDOFF_TOOLS,
                                          LEGACY_EXTRACTOR_TOOLS, TOOL_CLASSES, tool_class)
 from seo_agents.onpage.checks.checklist import CHECKS
@@ -34,6 +35,17 @@ class ToolMappingTests(unittest.TestCase):
         for skill in TASK_SKILL.values():
             self.assertIn('gap_worker.' + skill, AGENT_TOOLS, skill)
 
+    def test_every_keyword_research_node_has_a_mapping(self):
+        workflow = KeywordResearchWorkflow(toolkit=object(), generator=object(), judge=object())
+        outer = [n for n in workflow.build_graph().get_graph().nodes if not n.startswith('__')]
+        loop = [n for n in workflow.build_page_loop().get_graph().nodes if not n.startswith('__')]
+        self.assertEqual(outer, list(WORKFLOW_NODES))
+        self.assertEqual(sorted(loop), sorted(PAGE_LOOP_NODES))
+        for node in outer:
+            self.assertIn('keyword_research.' + node, AGENT_TOOLS, node)
+        for node in loop:
+            self.assertIn('keyword_research.page_loop.' + node, AGENT_TOOLS, node)
+
     def test_agents_only_read_results_of_earlier_agents(self):
         seen = set()
         for agent in DETERMINISTIC_AGENTS:
@@ -57,6 +69,8 @@ class ModelSettingsTests(unittest.TestCase):
                 self.assertTrue((GAP_WORKER_PROMPTS_DIR / skill / 'SKILL.md').exists(), key)
             elif stage == 'onpage':
                 self.assertTrue((ONPAGE_PROMPTS_DIR / skill / 'SKILL.md').exists(), key)
+            elif stage == 'keyword_research':
+                self.assertTrue((KEYWORD_RESEARCH_PROMPTS_DIR / skill / 'SKILL.md').exists(), key)
 
     def test_model_checks_and_gap_tasks_have_model_settings(self):
         for check in CHECKS:
@@ -65,7 +79,7 @@ class ModelSettingsTests(unittest.TestCase):
             self.assertIn('gap_worker.' + skill, AGENT_MODELS)
 
     def test_prompt_frontmatter_holds_no_model_settings(self):
-        for directory in (GAP_WORKER_PROMPTS_DIR, ONPAGE_PROMPTS_DIR):
+        for directory in (GAP_WORKER_PROMPTS_DIR, ONPAGE_PROMPTS_DIR, KEYWORD_RESEARCH_PROMPTS_DIR):
             for path in directory.glob('*/SKILL.md'):
                 front = path.read_text().split('---')[1]
                 for key in ('tier:', 'ladder:', 'votes:', 'temperature:'):

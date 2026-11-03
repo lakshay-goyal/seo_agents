@@ -3,6 +3,7 @@
     legacy_extractors/  contract-common.md + one SKILL.md per legacy LLM category extractor
     gap_workers/        one SKILL.md per gap-worker task (attribute-value, explain-computed, ...)
     onpage/             _principles.md + one SKILL.md per on-page checklist item
+    keyword_research/   _principles.md + one SKILL.md per keyword-research generator task (business-profile, ...)
     system_prompts.py   prompts that are built in code (role lines, repair / validator feedback turns)
 """
 
@@ -12,3 +13,4 @@ PROMPTS_DIR = Path(__file__).parent
 LEGACY_EXTRACTOR_PROMPTS_DIR = PROMPTS_DIR / 'legacy_extractors'
 GAP_WORKER_PROMPTS_DIR = PROMPTS_DIR / 'gap_workers'
 ONPAGE_PROMPTS_DIR = PROMPTS_DIR / 'onpage'
+KEYWORD_RESEARCH_PROMPTS_DIR = PROMPTS_DIR / 'keyword_research'

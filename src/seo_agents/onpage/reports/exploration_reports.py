@@ -24,6 +24,7 @@ class Reports:
     pages: dict  # page id -> page record
     repo_context: dict = field(default_factory=dict)
     exploration: dict = field(default_factory=dict)  # optional sharded output (seo_reports/exploration/)
+    keyword_map: dict = field(default_factory=dict)  # optional keyword research (seo_reports/keywords/keyword_map.json)
 
     def page_rows(self):
         return self.index.get('pages') or []
@@ -48,7 +49,7 @@ def load_reports(root) -> Reports:
     repo_context = json.loads(context_path.read_text()) if context_path.exists() else {}
     exploration = load_exploration(base / 'exploration')
     return Reports(root=base, site_model_dir=model_dir, index=index, site=site, pages=pages, repo_context=repo_context,
-                   exploration=exploration)
+                   exploration=exploration, keyword_map=load_keyword_map(base / 'keywords'))
 
 
 def _read(path):
@@ -68,6 +69,36 @@ def load_exploration(directory):
         if data is not None:
             out[name] = data
     return out
+
+
+KEYWORD_MAP_FILE = 'keyword_map.json'
+
+
+def load_keyword_map(directory):
+    """Optional keyword research output (keyword_research stage): {schema, market, business, generated_at, filters,
+    pages: {page_id: PageKeywordPlan}}. Missing or unreadable -> {} (on-page falls back to model hypotheses)."""
+    data = _read(Path(directory) / KEYWORD_MAP_FILE)
+    if not isinstance(data, dict) or not isinstance(data.get('pages'), dict):
+        return {}
+    return {**data, 'path': str(Path(directory) / KEYWORD_MAP_FILE)}
+
+
+def _url_key(url):
+    """'/about/', 'https://x.com/about' and '/about' compare equal."""
+    if not isinstance(url, str) or not url:
+        return None
+    path = re.sub(r'^https?://[^/]+', '', url.strip()).split('#')[0].split('?')[0]
+    return path.rstrip('/') or '/'
+
+
+def keyword_plan(reports, page_id, page=None):
+    """The researched PageKeywordPlan for a page: matched by page_id, then by url. None when there is none."""
+    plans = (reports.keyword_map or {}).get('pages') or {}
+    plan = plans.get(page_id)
+    if not isinstance(plan, dict):
+        wanted = _url_key((page or {}).get('url') or (page or {}).get('route'))
+        plan = next((p for p in plans.values() if isinstance(p, dict) and wanted and _url_key(p.get('url')) == wanted), None)
+    return plan if isinstance(plan, dict) else None
 
 
 def exploration_site(reports):
@@ -276,24 +307,39 @@ def visible_strings(page):
 
 
 IMAGE_EXT = re.compile(r'\.(?:png|jpe?g|webp|avif|gif|svg)$', re.I)
+VIDEO_EXT = re.compile(r'\.(?:mp4|webm|mov|m4v|ogv)$', re.I)
+
+
+def videos(page):
+    """Videos the exploration recorded for a page (`videos` or `media` rows with a src), if any."""
+    rows = [v for v in (page.get('videos') or []) if isinstance(v, dict)]
+    rows += [v for v in (page.get('media') or []) if isinstance(v, dict) and (v.get('type') == 'video' or VIDEO_EXT.search(str(v.get('src') or '')))]
+    return [v for v in rows if isinstance(v.get('src'), str) and v['src']]
 
 
 def site_assets(reports, page=None):
-    """Images the writer may use: this page's images first, then public/ image files from the inventory."""
+    """Media the writer may use (never invented): this page's images and videos first, then public/ image and video
+    files from the inventory. `type` is image | video."""
     assets, seen = [], set()
     for image in images(page or {}):
         src = image.get('src')
         if src and src not in seen:
             seen.add(src)
             assets.append({'src': src, 'alt': clean(image.get('alt')), 'on_page': True,
-                           'natural': image.get('natural')})
+                           'natural': image.get('natural'), 'type': 'image'})
+    for video in videos(page or {}):
+        if video['src'] not in seen:
+            seen.add(video['src'])
+            assets.append({'src': video['src'], 'alt': clean(video.get('title') or video.get('alt')), 'on_page': True,
+                           'natural': None, 'type': 'video'})
     for entry in reports.repo_context.get('file_inventory') or []:
         path = (entry or {}).get('path') or ''
-        if path.startswith('public/') and IMAGE_EXT.search(path):
+        if path.startswith('public/') and (IMAGE_EXT.search(path) or VIDEO_EXT.search(path)):
             src = path[len('public'):]
             if src not in seen:
                 seen.add(src)
-                assets.append({'src': src, 'alt': None, 'on_page': False, 'natural': None})
+                assets.append({'src': src, 'alt': None, 'on_page': False, 'natural': None,
+                               'type': 'video' if VIDEO_EXT.search(path) else 'image'})
     return assets
 
 

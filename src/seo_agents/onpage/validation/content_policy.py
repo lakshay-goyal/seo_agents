@@ -26,6 +26,9 @@ LIMITS = {
     'PRIMARY_PHRASE_PER_100_WORDS': (0, 1),
     'MAX_TERM_DENSITY_PCT': (0, 3.5),
     'DEFAULT_VIEW_CHANGES': (0, 15),
+    'QUESTION_ANSWER_WORDS': (40, 60),   # AEO: a question keyword gets a direct answer of this length under its heading
+    'QUOTABLE_PASSAGE_WORDS': (25, 90),  # GEO: a self-contained passage an answer engine can quote
+    'CLAIM_SUPPORT_MIN': (0, 0.5),       # fact check: share of a sentence's content words found in the page facts
 }
 
 

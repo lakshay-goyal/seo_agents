@@ -99,6 +99,10 @@ AGENT_MODELS = {
     'onpage.page-plan': AgentModelSettings(tier='mid', temperature=0.3),
     'onpage.media-links': AgentModelSettings(tier='small', temperature=0),
     'onpage.eeat-aeo-advice': AgentModelSettings(tier='small', temperature=0),
+
+    # Keyword research generator (keyword_research/generation): business profile once per site, ideation per page.
+    'keyword_research.business-profile': AgentModelSettings(tier='small', ladder=('small', 'haiku', 'mid'), temperature=0),
+    'keyword_research.keyword-ideation': AgentModelSettings(tier='mid', temperature=0.4),
 }
 
 # Output-token caps
@@ -106,6 +110,8 @@ GAP_WORKER_MAX_TOKENS_BY_TIER = {'small': 1500}  # every other tier: GAP_WORKER_
 GAP_WORKER_MAX_TOKENS = 6000
 ONPAGE_WRITER_MAX_TOKENS = 16000                  # SEO_ONPAGE_MAX_TOKENS overrides (reasoning + output)
 ONPAGE_MID_REASONING_EFFORT = 'low'               # SEO_ONPAGE_REASONING_EFFORT overrides; mid endpoints reject 'none'
+KEYWORD_WRITER_MAX_TOKENS = 12000                 # SEO_KEYWORD_MAX_TOKENS overrides (reasoning + output)
+KEYWORD_MID_REASONING_EFFORT = 'low'              # SEO_KEYWORD_REASONING_EFFORT overrides; mid endpoints reject 'none'
 
 
 def agent_model(agent):

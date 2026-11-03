@@ -288,6 +288,70 @@ def keeps_client_terms(text, corpus, name='text'):
                 raise ValueError(f'{name} replaces the client\'s term "{own}" with "{swapped[0]}"; keep "{own}".')
 
 
+# ------------------------------------------------------------------ researched keywords (keyword_research stage)
+QUESTION_WORDS = {'what', 'how', 'why', 'who', 'when', 'where', 'which', 'whose', 'is', 'are', 'can', 'does', 'do', 'should',
+                  'best', 'way', 'ways', 'get', 'need'}
+# Pronouns and page-structure words carry no claim of their own (fact-check support ratio, coverage matching).
+FILLER = {'he', 'him', 'his', 'she', 'her', 'hers', 'they', 'them', 'theirs', 'us', 'it', 'its', 'you', 'yours', 'page', 'pages',
+          'site', 'website', 'content', 'through', 'via', 'each', 'every', 'also', 'well', 'like', 'using', 'use', 'here',
+          'there', 'see', 'find', 'read', 'learn', 'explore', 'visit', 'check', 'including', 'include', 'includes'}
+
+
+def stem(token):
+    return token[:-1] if len(token) > 3 and token.endswith('s') and not token.endswith('ss') else token
+
+
+def content_tokens(text):
+    """Meaningful words (no stopwords / question words), lightly stemmed, for coverage and support matching."""
+    tokens = (w.strip(".'-") for w in words(text))
+    return {stem(t) for t in tokens if len(t) > 2 and t not in STOPWORDS and t not in QUESTION_WORDS and t not in FILLER}
+
+
+def contains_query(text, query):
+    """The exact phrase, or every non-stopword token of it (word order may vary: "crm for startups" ~ "startup crm")."""
+    if not text or not query:
+        return False
+    if phrase_count(text, query):
+        return True
+    tokens = {stem(w) for w in words(query) if w not in STOPWORDS}
+    have = {stem(w) for w in words(text)}
+    return bool(tokens) and tokens <= have
+
+
+def covers_question(question, heading, threshold=0.6, ignore=()):
+    """A heading covers a question keyword when it holds most of the question's content words. Words in `ignore`
+    (the brand / entity names) alone never make a match: most of the remaining words must match too."""
+    wanted, have = content_tokens(question), content_tokens(heading)
+    if not wanted or not have or len(wanted & have) / len(wanted) < threshold:
+        return False
+    skip = set().union(*(content_tokens(i) for i in ignore if i)) if ignore else set()
+    rest = wanted - skip
+    return not rest or len(rest & have) / len(rest) >= 0.5
+
+
+def primary_in(text, primary, name):
+    """The researched primary keyword must appear (phrase or all its tokens) in a short field (title / H1)."""
+    if primary and not contains_query(text, primary):
+        raise ValueError(f'{name} must contain the primary keyword "{primary}" once, naturally (word order may vary)')
+
+
+def keyword_caps(text, keywords, *, name='text', short=False, protected=()):
+    """Every researched keyword obeys the same caps as the primary (no_stuffing): once in short fields, ~1/100 words."""
+    for keyword in keywords:
+        if keyword:
+            no_stuffing(text, keyword, name=name, short=short, protected=protected)
+
+
+def support_ratio(sentence, corpus_tokens, allowed_tokens=()):
+    """Share of a sentence's content words that appear in the page facts (or are allowed, e.g. keyword words)."""
+    tokens = content_tokens(sentence)
+    if not tokens:
+        return 1.0, []
+    known = corpus_tokens | set(allowed_tokens)
+    missing = sorted(t for t in tokens if t not in known)
+    return round(1 - len(missing) / len(tokens), 2), missing
+
+
 def similar(a, b, threshold=0.75):
     """Token Jaccard similarity of two short texts (FAQ question vs heading)."""
     left = {w for w in words(a) if w not in STOPWORDS}
@@ -326,3 +390,9 @@ class ContentValidators:
     entity_cap = staticmethod(entity_cap)
     keeps_client_terms = staticmethod(keeps_client_terms)
     similar = staticmethod(similar)
+    content_tokens = staticmethod(content_tokens)
+    contains_query = staticmethod(contains_query)
+    covers_question = staticmethod(covers_question)
+    primary_in = staticmethod(primary_in)
+    keyword_caps = staticmethod(keyword_caps)
+    support_ratio = staticmethod(support_ratio)

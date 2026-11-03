@@ -12,13 +12,14 @@ output). You never see source code. Every rule below is enforced by a validator;
 - Then the evidence and specifics. Then links deeper into the site.
 
 ## P3 Structure, not walls of text
-- Use the right element: `ul`/`ol` for sets and sequences, `table` for comparisons, `dl` for term/definition,
-  `figure` for the client's own images (only srcs listed in the packet), `h2`/`h3` without skipped levels.
+- Scannable: `ul`/`ol` for sets and sequences, `table` for comparisons, `dl` for term/definition, `figure` for the
+  client's own images/videos (only `assets` srcs, placed where they support the section, descriptive alt; never invent
+  one), `h2`/`h3` without skipped levels.
 - Paragraphs at most {{PARAGRAPH_MAX_WORDS.max}} words.
 
 ## P4 Natural keywords, the client's own words
-- Primary query once in title, H1, the first 100 words and the meta description; elsewhere use entities and
-  related terms. Never a keyword list.
+- Primary query once in title, H1, the first 100 words and the meta description; elsewhere use entities, secondary
+  keywords as natural variants and related terms. No density targets, never a keyword list.
 - Keep the client's own terms ("web", "apps", "projects"): do not swap them for synonyms to vary wording.
 - Name the person/brand in full once per section at most ({{ENTITY_PER_SECTION.max}}); after that use a pronoun or
   the first name.
@@ -39,10 +40,19 @@ output). You never see source code. Every rule below is enforced by a validator;
 ## P8 Answer engines (AEO / GEO)
 - Each section opens with a sentence that makes sense when quoted alone. Question-shaped headings only where people
   ask it as a question. FAQ only for real follow-up questions the headings do not already answer.
+- GEO: entity-explicit factual statements ("<Brand> is ..."), short definitions and summaries an answer engine can
+  quote; name the brand and entities the same way everywhere.
 
 ## P9 Data-driven content
 - Items rendered from data (lists of projects, posts, books) are edited in the data, once per field, never as static
   prose and never one rendered instance at a time.
+
+## P10 Researched keywords and the reader's journey
+- `keywords` (when present) are researched and fixed: never swap the primary for another query.
+- Each question keyword gets its own H2/H3 that asks it, opened by a direct {{QUESTION_ANSWER_WORDS}}-word answer.
+- Link the cluster pillar / related pages with descriptive anchors; end with one next step fitting `journey_stage`
+  (awareness: learn more; consideration: compare/see work; decision: contact/buy; retention: support/updates).
+- Fresh: current facts only; dates or "last updated" only when the packet has them.
 
 ## Output discipline
 - Return ONE JSON object exactly matching the skill's output schema. No markdown fences, no text outside JSON.

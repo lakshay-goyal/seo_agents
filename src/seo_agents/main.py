@@ -26,10 +26,10 @@ FORWARDED_ENV = (
     "SEO_REPAIR_ROUNDS", "SEO_MAX_TOOL_CALLS", "SEO_AGENT_CONCURRENCY",
     "SEO_MEASURE_PREBUILT", "SEO_MAX_CRAWL_DEPTH", "SEO_ADAPTER_CACHE", "SEO_GAP_CACHE", "OPENROUTER_HAIKU_MODEL",
     "SEO_INSTRUMENT", "SEO_LIGHTHOUSE_CONCURRENCY", "SEO_RENDER_BROWSERS",
-    "SEO_PR_COMMIT_FULL", "SEO_PR_COMMIT_BUDGET", "SEO_PR_BRANCH",
+    "SEO_PR_COMMIT_FULL", "SEO_PR_COMMIT_BUDGET", "SEO_PR_BRANCH", "KEYWORD_SITE_AUTHORITY",
 )
-# Whole families forwarded by prefix (tracing, on-page stage settings).
-FORWARDED_PREFIXES = ("LANGSMITH_", "SEO_ONPAGE_")
+# Whole families forwarded by prefix (tracing, on-page + keyword stage settings, keyword data providers, Jev judge).
+FORWARDED_PREFIXES = ("LANGSMITH_", "SEO_ONPAGE_", "SEO_KEYWORD_", "DATAFORSEO_", "GOOGLE_ADS_", "GSC_", "TYPESAFE_")
 
 
 def forward_env(overrides=None):

@@ -1,4 +1,10 @@
-"""Check 3 (model, mid): one plan for title, meta description, H1, outline, answer-first opening, sections and FAQ."""
+"""Check 3 (model, mid): one plan for title, meta description, H1, outline, answer-first opening, sections, FAQ and a
+next-step link.
+
+With researched keywords (query_source `keyword-research`) the validator also requires the primary keyword in the
+title and H1, every question keyword covered by an H2/H3 (or FAQ) with a direct 40-60 word answer
+(or declared `unanswerable` from the facts), and every researched keyword within the stuffing caps.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,8 @@ from seo_agents.onpage.changes import page_preview_renderer as render
 from seo_agents.onpage.validation import content_validators as v
 from seo_agents.onpage.page_context.page_context_builder import facts
 from seo_agents.onpage.validation.content_policy import LIMITS
-from seo_agents.onpage.checks.check_helpers import add_target, brand, first_main_edit, intent_of, numbers_allowed, page_type, result, site_type, site_url_set
+from seo_agents.onpage.checks.check_helpers import (RESEARCHED, add_target, brand, first_main_edit, intent_of, keywords_of,
+                                                    numbers_allowed, page_type, result, site_type, site_url_set)
 from seo_agents.onpage.checks.base_check import OnpageCheck
 
 # ====================================================================== 3. page plan (mid, one call)
@@ -24,6 +31,73 @@ def faq_allowed(ctx, prior):
     if intent == 'navigational' or site_type(ctx, prior) == 'personal':
         return LIMITS['FAQ_ITEMS_NAVIGATIONAL'][1]
     return LIMITS['FAQ_ITEMS'][1]
+
+
+def keyword_packet(ctx, prior, intent, urls):
+    """What the writer must target when keywords were researched (None for model hypotheses)."""
+    if intent.get('query_source') != RESEARCHED:
+        return None
+    kw = keywords_of(prior)
+    current = (prior.get('keyword_plan') or {}).get('data') or {}
+    titles = {u['url']: u['title'] for u in ctx['site_urls']}
+    cluster = intent.get('cluster') or {}
+    linked = [u for u in [cluster.get('pillar_url')] + list(cluster.get('related_urls') or []) if u and u in urls and u != ctx['url']]
+    return {'source': RESEARCHED, 'primary': kw['primary'], 'secondary': kw['secondary'], 'short_tail': kw['short_tail'],
+            'questions': kw['questions'], 'conversational': kw['conversational'],
+            'questions_answered_now': [q for q, c in (current.get('questions_current') or {}).items() if c.get('answered')],
+            'content_gaps': kw['content_gaps'], 'alignment_gaps': (current.get('alignment_gaps') or [])[:12],
+            'journey_stage': intent.get('journey_stage'),
+            'cluster': {'role': cluster.get('role'), 'pillar_url': cluster.get('pillar_url'),
+                        'links': [{'url': u, 'title': titles.get(u)} for u in dict.fromkeys(linked)]}}
+
+
+def question_slots(a, ctx, by_hid):
+    """(label, heading, answer, new) for every place a question keyword can be answered in the plan."""
+    slots = []
+    for i, s in enumerate(a['sections']):
+        first = s['blocks'][0] if s['blocks'] else {}
+        slots.append((f'sections[{i}]', s['heading'], first.get('text') if first.get('tag') == 'p' else None, True))
+    for i, q in enumerate(a['faq']):
+        slots.append((f'faq[{i}]', q['question'], q['answer'], True))
+    for i, item in enumerate(a['outline']):
+        rid = item.get('replaces_id')
+        if rid in by_hid:
+            old = v.normalize(by_hid[rid][0]['text'])
+            current = next((s for s in ctx['sections'] if v.normalize(s.get('heading') or '') == old), None)
+            para = next((b['text'] for b in (current or {}).get('blocks') or [] if b.get('text')), None)
+            slots.append((f'outline[{i}]', item['text'], para, False))
+    return slots
+
+
+def check_questions(a, keywords, ctx, by_hid, names=()):
+    """Every researched question is answered: already on the page, in a new H2/H3 section or FAQ item whose heading
+    covers it and opens with a direct 40-60 word answer, or declared unanswerable from the facts."""
+    low, high = LIMITS['QUESTION_ANSWER_WORDS']
+    unanswerable = a.get('unanswerable') if isinstance(a.get('unanswerable'), list) else []
+    skipped = set()
+    for i, item in enumerate(unanswerable):
+        if not isinstance(item, dict) or item.get('question') not in keywords['questions']:
+            raise ValueError(f'unanswerable[{i}].question must be one of the question keywords verbatim')
+        v.text_length(item.get('needed'), 5, 160, f'unanswerable[{i}].needed')
+        skipped.add(item['question'])
+    a['unanswerable'] = unanswerable
+    answered_now = set(keywords['questions_answered_now'])
+    slots = question_slots(a, ctx, by_hid)
+    covered = {}
+    for question in keywords['questions']:
+        if question in answered_now or question in skipped:
+            continue
+        slot = next((s for s in slots if v.covers_question(question, s[1], ignore=names)), None)
+        if slot is None:
+            raise ValueError(f'question keyword "{question}" is not covered: add an H2/H3 section (or FAQ item) that asks it and '
+                             f'opens with a direct {low}-{high} word answer, or list it in `unanswerable` when the facts cannot answer it')
+        label, _, answer, new = slot
+        if not answer:
+            raise ValueError(f'{label} covers "{question}" but no paragraph answers it; open with a {low}-{high} word <p>')
+        if new:
+            v.word_count(answer, low, high, f'{label} answer to "{question}"')
+        covered[question] = label
+    return covered
 
 
 def check_page_plan(ctx, prior, writer):
@@ -45,15 +119,21 @@ def check_page_plan(ctx, prior, writer):
     assets = {a['src'] for a in ctx['assets']}
     current_h2 = [h['text'] for h in ctx['headings'] if h['level'] == 2]
     protected = [name or ''] + list(intent.get('entities') or []) + [h['text'] for h in ctx['headings']]
+    keywords = keyword_packet(ctx, prior, intent, urls)
+    variants = (keywords['secondary'] + keywords['short_tail']) if keywords else []
+    if keywords:
+        protected += [keywords['primary']] + variants
     packet = {
         'page': {'url': ctx['url'], 'lang': ctx['lang'], 'is_home': ctx['is_home'], 'title': ctx['title'], 'description': ctx['description'],
                  'site_type': site_type(ctx, prior), 'page_type': page_type(ctx, prior)},
         'intent': {k: intent.get(k) for k in ('primary_query', 'secondary_queries', 'user_questions', 'entities', 'intent', 'journey_stage')},
         'brand': name, 'other_titles': others, 'headings': headings, 'sections': sections, 'facts': fact_rows,
-        'assets': [{'src': a['src'], 'alt': a['alt']} for a in ctx['assets']][:30],
+        'assets': [{'src': a['src'], 'alt': a['alt'], 'type': a.get('type', 'image')} for a in ctx['assets']][:30],
         'links': [{'url': u['url'], 'title': u['title']} for u in ctx['site_urls'] if u['url'] != ctx['url']],
         'max_faq': max_faq, 'stack': {'framework': ctx['framework'], 'head_scope': ctx['head_scope']},
     }
+    if keywords:
+        packet['keywords'] = keywords
 
     def validate(a):
         v.require(a, 'title', 'description', 'h1', 'outline', 'direct_answer', 'sections', 'faq', 'fact_slots')
@@ -64,8 +144,12 @@ def check_page_plan(ctx, prior, writer):
         if '"' in a['description']:
             raise ValueError('remove double quotes from the description')
         a['h1'] = v.text_length(a['h1'], *LIMITS['H1_CHARS'], 'h1')
+        if keywords:
+            v.primary_in(a['title'], primary, 'title')
+            v.primary_in(a['h1'], primary, 'h1')
         for key in ('title', 'description', 'h1'):
             v.no_stuffing(a[key], primary, name=key, short=True)
+            v.keyword_caps(a[key], variants, name=key, short=True)
             v.grounded(a[key], ctx['corpus'], key)
             v.keeps_client_terms(a[key], ctx['corpus'], key)
         outline = a['outline'] if isinstance(a['outline'], list) else None
@@ -153,10 +237,33 @@ def check_page_plan(ctx, prior, writer):
         v.entity_cap(units, name, 'page plan')
         body = ' '.join(t for _, t in units)
         v.no_stuffing(body, primary, name='body', protected=protected)
+        v.keyword_caps(body, variants, name='body', protected=protected)
+        a['cta'] = check_cta(a.get('cta'), urls, ctx)
+        if keywords:
+            a['questions_covered'] = check_questions(a, keywords, ctx, by_hid, [name] + list(intent.get('entities') or []))
+            a['placements_proposed'] = {'title': True, 'h1': True,
+                                        'meta_description': v.contains_query(a['description'], primary),
+                                        'first_100_words': v.contains_query(a['direct_answer'], primary)}
         return a
 
     answer, meta = writer.write('page-plan', packet, validate, PLAN_SCHEMA)
-    return result(data=answer, changes=plan_changes(ctx, prior, answer, by_hid, by_sid), meta=meta)
+    inputs = []
+    if keywords:
+        answer['keyword_source'] = RESEARCHED
+        inputs = [ops.client_input(ctx, f'[VERIFY: {item["needed"]}] to answer "{item["question"]}"', field='content.questions')
+                  for item in answer.get('unanswerable') or []]
+    return result(data=answer, changes=plan_changes(ctx, prior, answer, by_hid, by_sid), meta=meta, client_inputs=inputs)
+
+
+def check_cta(cta, urls, ctx):
+    """Optional next-step link (journey stage): an existing site URL with a descriptive anchor."""
+    if cta in (None, {}, ''):
+        return None
+    if not isinstance(cta, dict) or cta.get('href') not in urls or cta.get('href') == ctx['url']:
+        raise ValueError('cta must be {"text", "href"} with href one of links[].url (another page), or null')
+    v.check_anchor(cta.get('text') or '', 'cta.text')
+    v.grounded(cta['text'], ctx['corpus'], 'cta.text', numbers_allowed(ctx))
+    return {'text': cta['text'].strip(), 'href': cta['href']}
 
 
 def plan_changes(ctx, prior, a, by_hid, by_sid):
@@ -221,6 +328,11 @@ def plan_changes(ctx, prior, a, by_hid, by_sid):
                                      html=render.section(s['heading'], s.get('level', 2), s['blocks']),
                                      rationale=s.get('purpose') or 'Covers a question the page does not answer yet')
         changes.append(change)
+    if a.get('cta'):
+        target = ops.target_of(last_block, placement='end of main content (next step)') if last_block else None
+        changes.append(ops.make_change(ctx, 'page_plan', 'content.cta', None, a['cta'], target=target, op='insert_node', confidence=0.6,
+                                       html=f'<p><a href="{render.html.escape(a["cta"]["href"])}">{render.inline(a["cta"]["text"])}</a></p>',
+                                       rationale='Next step for the reader\'s journey stage (topic cluster link)'))
     if a['faq']:
         target = ops.target_of(last_block, placement='end of main content (FAQ)') if last_block else None
         changes.append(ops.make_change(ctx, 'page_plan', 'content.faq', None, a['faq'], target=target, op='insert_node', confidence=0.65,

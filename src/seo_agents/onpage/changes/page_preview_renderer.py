@@ -6,6 +6,7 @@ import html
 import json
 import re
 
+VIDEO_SRC = re.compile(r'\.(?:mp4|webm|mov|m4v|ogv)(?:[?#].*)?$', re.I)
 INLINE = re.compile(r'&lt;(/?)(strong|em|code)&gt;|&lt;a href=&quot;([^&"]+)&quot;\s*&gt;|&lt;/a&gt;')
 
 
@@ -38,6 +39,9 @@ def block(b, indent='  '):
         return f'{indent}<dl>\n{items}{indent}</dl>\n'
     if tag == 'figure':
         caption = f'\n{indent}  <figcaption>{inline(b["caption"])}</figcaption>' if b.get('caption') else ''
+        if VIDEO_SRC.search(b.get('src') or ''):  # an existing video asset (never invented)
+            return (f'{indent}<figure>\n{indent}  <video src="{html.escape(b.get("src") or "")}" controls preload="none" '
+                    f'aria-label="{html.escape(b.get("alt") or "")}"></video>{caption}\n{indent}</figure>\n')
         dims = ''
         if b.get('width') and b.get('height'):
             dims = f' width="{int(b["width"])}" height="{int(b["height"])}"'
@@ -105,6 +109,10 @@ def page_from_changes(changes, ctx):
         c = first(field)
         value = c['value'] or {}
         parts.append(f'<!-- {c["id"]} {c["op"]} {c["status"]} -->\n' + section(value.get('heading'), value.get('level', 2), value.get('blocks') or []))
+    cta = first('content.cta')
+    if cta and isinstance(cta.get('value'), dict):
+        parts.append(f'<!-- {cta["id"]} {cta["status"]} -->\n<p class="next-step"{status(cta)}>'
+                     f'<a href="{html.escape(cta["value"].get("href") or "")}">{inline(cta["value"].get("text"))}</a></p>\n')
     faq_change = first('content.faq')
     if faq_change:
         parts.append(f'<!-- {faq_change["id"]} {faq_change["status"]} -->\n' + faq(faq_change['value']))

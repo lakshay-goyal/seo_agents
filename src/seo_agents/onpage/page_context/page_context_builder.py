@@ -122,6 +122,54 @@ def canonical_origin(reports, site, origin):
     return origin
 
 
+def _keyword_list(items, limit=12):
+    out = []
+    for item in items or []:
+        text = re.sub(r'\s+', ' ', item).strip() if isinstance(item, str) else ''
+        if text and text.lower() not in {o.lower() for o in out}:
+            out.append(text)
+    return out[:limit]
+
+
+def _site_path(url):
+    if not isinstance(url, str) or not url:
+        return None
+    path = re.sub(r'^https?://[^/]+', '', url.strip()) or '/'
+    return path if path == '/' else path.rstrip('/') or '/'
+
+
+def normalize_keyword_plan(plan):
+    """PageKeywordPlan dict (keyword_research/contracts.py) -> the shape the checks read. None stays None."""
+    if not isinstance(plan, dict):
+        return None
+    primary = plan.get('primary')
+    primary = re.sub(r'\s+', ' ', primary).strip().lower() if isinstance(primary, str) and primary.strip() else None
+    cluster = plan.get('cluster') if isinstance(plan.get('cluster'), dict) else {}
+    return {
+        'page_id': plan.get('page_id'), 'url': plan.get('url'), 'intent': plan.get('intent'),
+        'journey_stage': plan.get('journey_stage'), 'primary': primary,
+        'secondary': [k.lower() for k in _keyword_list(plan.get('secondary')) if k.lower() != primary],
+        'questions': _keyword_list(plan.get('questions'), 8),
+        'conversational': _keyword_list(plan.get('conversational'), 6),
+        'short_tail': [k.lower() for k in _keyword_list(plan.get('short_tail'))],
+        'cluster': {'role': cluster.get('role'), 'pillar_url': _site_path(cluster.get('pillar_url')),
+                    'related_urls': [u for u in (_site_path(x) for x in cluster.get('related_urls') or []) if u]},
+        'competitor_urls': _keyword_list(plan.get('competitor_urls'), 10),
+        'content_gaps': _keyword_list(plan.get('content_gaps'), 10),
+        'iterations': plan.get('iterations'), 'status': plan.get('status') or 'complete',
+    }
+
+
+def keyword_research_meta(reports):
+    kmap = reports.keyword_map or {}
+    if not kmap:
+        return None
+    return {'schema': kmap.get('schema'), 'market': kmap.get('market'), 'generated_at': kmap.get('generated_at'),
+            'source': 'seo_reports/keywords/keyword_map.json',
+            'business': {k: (kmap.get('business') or {}).get(k) for k in ('brand', 'site_type', 'offering')}
+            if isinstance(kmap.get('business'), dict) else None}
+
+
 def build_context(reports, page_id, *, origin=None, run_date=None):
     page = reports.pages[page_id]
     run_date = run_date or date.today().isoformat()
@@ -198,6 +246,9 @@ def build_context(reports, page_id, *, origin=None, run_date=None):
         'site_gaps': {k: (v or {}).get('gaps') for k, v in (site.get('deterministic_signals') or {}).items() if isinstance(v, dict)},
         'broken_links': site.get('broken_links') or [],
         'corpus': ' \n '.join(visible + site_strings),
+        # Researched keywords (keyword_research stage) for this page, or None (on-page then uses model hypotheses).
+        'keyword_plan': normalize_keyword_plan(m.keyword_plan(reports, page_id, page)),
+        'keyword_research': keyword_research_meta(reports),
     }
 
 

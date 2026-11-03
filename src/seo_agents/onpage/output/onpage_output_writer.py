@@ -25,7 +25,10 @@ Generated from the exploration JSON only; no client source was read or changed. 
   Each change is ONE operation: `op` (set_text | set_attr | set_json | insert_node | remove | platform_config) on
   `target` (file, pointer or line/col, attr, `scope`: literal | data | template | layout | shell | page | platform,
   `shared_by`, `verified`), with `current`, `value`, `depends_on`, `conflicts_with`, `supersedes` and
-  `status`: proposed | blocked (waits for `depends_on`, e.g. `chg_prerender`) | needs_input (unverified target or facts).
+  `status`: proposed | blocked (waits for `depends_on`, e.g. `chg_prerender`, or `blocked_by: fact_check` = a claim not
+  supported by the page facts) | needs_input (unverified target or facts). `serves` = the keywords/questions it serves.
+  `keyword_coverage` = before/after per keyword (researched in seo_reports/keywords/ when present, else model hypotheses);
+  `quality` = fact-check / helpfulness / freshness verdict (pass | needs_work | fail).
 - `pages/<id>.expected.html` - review aid generated from the change list; NOT directly applicable.
 """
 
@@ -47,7 +50,7 @@ def model_info():
 
 def trimmed(res):
     data = dict(res.get('data') or {})
-    for key in ('expected_page_html', 'changes', 'changes_more', 'advice', 'client_inputs', 'site_changes'):
+    for key in ('expected_page_html', 'changes', 'changes_more', 'advice', 'client_inputs', 'site_changes', 'keyword_coverage'):
         data.pop(key, None)
     return {'status': res.get('status'), 'meta': res.get('meta'), 'errors': res.get('errors'), 'data': data}
 
@@ -78,6 +81,9 @@ def write_outputs(out_dir, state):
             'framework_hint': ctx['framework_hint'], 'hosting': ctx['hosting'],
             'intent': (page_results.get('intent') or {}).get('data'),
             'keyword_plan': (page_results.get('keyword_plan') or {}).get('data'),
+            'keyword_research': ctx.get('keyword_research') if ctx.get('keyword_plan') else None,
+            'keyword_coverage': qa.get('keyword_coverage'),
+            'quality': qa.get('quality'),
             'checklist': qa.get('checklist'),
             'changes': changes, 'changes_more': more, 'advice': qa.get('advice') or [], 'client_inputs': inputs,
             'site_changes': [c['id'] for c in qa.get('site_changes') or []],
@@ -92,6 +98,8 @@ def write_outputs(out_dir, state):
         rows.append({'id': page_id, 'url': ctx['url'], 'file': 'pages/' + page_id + '.json',
                      'expected_html': 'pages/' + page_id + '.expected.html' if qa.get('expected_page_html') else None,
                      'primary_query': ((page_results.get('intent') or {}).get('data') or {}).get('primary_query'),
+                     'query_source': ((page_results.get('intent') or {}).get('data') or {}).get('query_source'),
+                     'quality': (qa.get('quality') or {}).get('verdict'),
                      'head_scope': ctx['head_scope'], 'changes': len(changes), 'changes_more': len(more),
                      'advice': len(qa.get('advice') or []), 'client_inputs': len(inputs),
                      'by_status': counts(changes + more, 'status'), 'by_impact': counts(changes + more, 'impact'),

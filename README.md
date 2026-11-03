@@ -61,7 +61,11 @@ src/seo_agents/
 │   ├── repo_context/          RepoContextBuilder -> seo_reports/repo_context.json
 │   ├── evidence/              legacy evidence bundle + inspect CLI
 │   └── output/                sharded seo_reports/exploration/ writer, issue ranking, JSON schemas
-├── onpage/                    stage 2: on-page proposals from the exploration JSON only
+├── keyword_research/          stage 2: keyword research (providers + LLM ideas + Jev judge) -> seo_reports/keywords
+│   ├── keyword_research.py    KeywordResearchWorkflow: load -> profile -> competitors -> page loop -> map -> write
+│   ├── contracts.py           shared dataclasses + Protocols (ResearchToolkit, KeywordGenerator, KeywordJudge)
+│   ├── providers/ generation/ judge/ mapping/ output/
+├── onpage/                    stage 3: on-page proposals from the exploration JSON (+ keyword_map.json)
 │   ├── onpage_analysis.py     OnpageAnalysisWorkflow: load -> 12 checks (one at a time) -> site -> write
 │   ├── checks/                one class per checklist item + checklist.py (execution order)
 │   ├── writer/                ContentWriter (skill prompt -> model -> validator -> repair loop)
@@ -133,6 +137,84 @@ Validators: grounding against served text + data JSON only (numbers incl. spelle
 repetition cap, no synonym swaps of the client's own terms, FAQ ∩ H2 = ∅, no repeated facts.
 Settings: `SEO_ONPAGE_TIER`, `SEO_ONPAGE_ATTEMPTS`, `SEO_ONPAGE_ADVICE`,
 `SEO_ONPAGE_REASONING_EFFORT`, `SEO_ONPAGE_CONCURRENCY`, `SEO_ONPAGE_MAX_PAGES`.
+
+## Keyword research stage (`seo_agents.keyword_research`)
+
+Runs between the exploration and the on-page stage. Reads only the exploration JSON, finds keywords per page with
+real third-party data, judges each one, maps them site-wide and writes `seo_reports/keywords/`. The LLM proposes
+keywords and hypotheses only; volumes, difficulty, SERP and trends come from providers, and Jev (TypeSafe) answers
+atomic judgments that code turns into accept / reject / review.
+
+```sh
+python -m seo_agents.keyword_research path/to/seo_reports [--country US --location-code 2840 --language en] \
+    [--competitor rival.com ...] [--pages ID|URL ...] [--max-iterations N] [--out DIR] [--site-url URL]
+```
+
+In the sandbox, `SEO_KEYWORD_RESEARCH=1` runs it right after the exploration and commits `seo_reports/keywords/`
+on the same PR (`SEO_KEYWORD_*`, `DATAFORSEO_*`, `GOOGLE_ADS_*`, `GSC_*`, `TYPESAFE_*` are forwarded).
+
+```
+START -> load -> business_profile -> competitor_discovery -> research_loop -> map -> write -> END
+                                                                  |
+          per page, in parallel (SEO_KEYWORD_CONCURRENCY), a compiled LangGraph subgraph:
+          START -> generate -> expand -> enrich -> judge --should_continue--> generate
+                                                         \--> finish -> END   (quota met | max iterations | nothing new)
+```
+
+| Node | What happens |
+| --- | --- |
+| load | `PageSelector` (reuses `ExplorationReportsLoader` + `PageContextBuilder`) -> one `PageBrief` per real page, own domain, market + targets, available providers |
+| business_profile | generator profiles the business once (brand, offering, audience, competitors); `--competitor` domains merged in |
+| competitor_discovery | seed queries (title, H1, exploration terms, seed topics) -> competitor URLs from the SERP -> **reverse research**: keywords each competitor URL ranks for; Search Console queries the page already gets; the most relevant are enriched up front |
+| generate | needs = targets − accepted per slot; the generator gets the needs, competitor keywords + metrics, accepted keywords (this page and every other page, against cannibalization) and the rejected ones with their codes and reasons |
+| expand | provider related keywords on last iteration's accepts (or the seeds) and questions (autocomplete / People-Also-Ask) while questions are needed; they join a per-page pool with the competitor/GSC keywords, and the most relevant fill the batch |
+| enrich | volume, difficulty, CPC/bids, intent, SERP snapshot, GSC, content alignment; Google Trends compared in groups of 5 (direction, seasonality, regions) |
+| judge | hard gates -> Jev judgments -> decision table -> composite score -> quota fill; a judge failure is `review` + `judge_error`, never a silent "no" |
+| map | `KeywordMapper`: same keyword / token overlap / shared SERP URLs across pages -> `judge.same_intent`; the page with the best `composite_score × content_alignment` keeps it, the other gets `REJECT cannibalization` naming the winner; one primary per page; topic clusters (pillar = broadest primary head in a shared-token group) |
+| write | `KeywordOutputWriter` |
+
+Targets per page (`contracts.ResearchTargets`): 1 primary, 4 secondary, 3 questions (AEO), 2 conversational (GEO),
+0 short-tail for now (long tail first), max 4 iterations, 25 candidates per iteration.
+
+**Data sources**: DataForSEO (volume, keyword difficulty, SERP + features + People-Also-Ask, related and
+competitor-ranked keywords), Google Ads Keyword Planner (Ads volume, bids, ideas), Google Search Console (existing
+impressions / position), Google Trends (interest over time, regions), autocomplete (questions). Every metric carries
+provenance; a metric a provider did not return is unknown (an empty cell), never 0. With no provider configured the
+stage still runs, flags a **DEGRADED** banner in the log and `summary.md`, and every keyword that needs data becomes
+`review`. Without `TYPESAFE_API_KEY` the judge runs heuristic-only (gate-passing keywords become `review`). Without
+`OPENROUTER_API_KEY` the stage refuses to run.
+
+**Output** `seo_reports/keywords/`:
+
+- `keyword_research.csv` — every candidate ever generated or expanded, one row each (accepted, rejected, review and
+  `unevaluated` pool leftovers). Columns: `page_id, page_url, keyword, kind, tail, source, competitor_url, iteration,
+  hypothesized_intent, judged_user_intent, serp_intent, journey_stage, search_volume, search_volume_ads,
+  keyword_difficulty, cpc, bid_low, bid_high, ads_competition, ads_competition_level, provider_intent,
+  trend_direction, seasonal_peak_months, top_regions, serp_features, people_also_ask, click_opportunity,
+  serp_authority_share, gsc_impressions, gsc_position, content_alignment, factor_<name>…, composite_score, decision,
+  final_status, mapped_page_url, rejection_codes, rejection_reasons, filter_stage (gate | jev | quota | mapping |
+  not_evaluated), providers, retrieved_at, market, rationale`. Lists are `;`-joined; `rejection_reasons` explains how
+  and why a keyword was not used.
+- `keyword_map.json` — `{schema: "keyword-research/1", market, business, generated_at, filters, pages: {page_id:
+  PageKeywordPlan}}`; each plan has `primary, secondary, questions, conversational, short_tail, intent,
+  journey_stage, cluster {role, pillar_url, related_urls}, competitor_urls, content_gaps, iterations, status
+  (complete | partial | failed)`.
+- `pages/<page_id>.json` — brief, plan, competitor URLs, cannibalization moves and every record with full evidence
+  and verdict (audit); `jev/` holds the logged Jev request payloads.
+- `summary.json` / `summary.md` — counts per decision, rejection code and filter stage, complete vs partial pages,
+  providers, Jev mode, generator failures, cost estimates when the components report them.
+
+**How on-page uses it**: `keyword_map.json` is the keyword contract for `seo_agents.onpage`: for page `page_id` it
+should use `primary` for the title / H1 / description, work `secondary` into headings and copy, answer `questions` as
+FAQ / direct answers (AEO), cover `conversational` prompts in the direct answer (GEO), match `intent` /
+`journey_stage`, link cluster pages to `cluster.pillar_url` (and the pillar to `related_urls`), and treat
+`content_gaps` as sections to consider. Pages with `status: partial` have fewer keywords than targeted;
+`review` rows in the CSV need a human decision before they are used.
+
+Settings: `SEO_KEYWORD_COUNTRY`, `SEO_KEYWORD_LOCATION_CODE`, `SEO_KEYWORD_LANGUAGE`, `SEO_KEYWORD_MAX_ITERATIONS`,
+`SEO_KEYWORD_CONCURRENCY`, `SEO_KEYWORD_MAX_PAGES`, `SEO_KEYWORD_TIER`, `SEO_KEYWORD_REASONING_EFFORT`,
+`SEO_KEYWORD_CACHE*`, `SEO_KEYWORD_AUTOCOMPLETE*`, `SEO_KEYWORD_ENRICH_SERP`, `SEO_KEYWORD_MAX_SPEND`,
+`SEO_KEYWORD_COMPETITOR_*`, `SEO_KEYWORD_SAME_INTENT`, `KEYWORD_SITE_AUTHORITY` (see `.env.example`).
 
 ## Model tiers
 

@@ -1,7 +1,8 @@
 """On-page analysis: the LangGraph workflow that runs every on-page check, one at a time (pages in parallel inside a check).
 
     START
-      -> load              ExplorationReportsLoader + PageContextBuilder (reads only seo_reports/ JSON)
+      -> load              ExplorationReportsLoader + PageContextBuilder (reads only seo_reports/ JSON, incl. the optional
+                           keywords/keyword_map.json from keyword research -> ctx['keyword_plan'])
       -> intent            SearchIntentCheck          (model, small)
       -> keyword_plan      KeywordPlanCheck
       -> page_plan         PagePlanCheck              (model, mid)
@@ -84,7 +85,10 @@ class LoadReportsNode:
         done('onpage: load exploration JSON', begun)
         meta = {'site_model_dir': str(reports.site_model_dir), 'schema': reports.index.get('schema'),
                 'snapshot_sha256': (reports.index.get('repo') or {}).get('snapshot_sha256'),
-                'framework': (reports.index.get('repo') or {}).get('framework'), 'origin': origin}
+                'framework': (reports.index.get('repo') or {}).get('framework'), 'origin': origin,
+                'keyword_map': {k: reports.keyword_map.get(k) for k in ('path', 'schema', 'generated_at', 'market')}
+                if reports.keyword_map else None,
+                'keyword_plans_used': sum(1 for c in contexts.values() if c.get('keyword_plan'))}
         return {'contexts': contexts, 'run_date': run_date, 'reports_meta': meta,
                 'out_dir': state.get('out_dir') or str(reports.root / 'onpage')}
 

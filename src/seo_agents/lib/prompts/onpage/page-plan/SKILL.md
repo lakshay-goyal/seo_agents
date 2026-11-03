@@ -2,7 +2,7 @@
 name: page-plan
 description: One coherent plan for the page - title, meta description, H1, heading rewrites, answer-first opening, optional section rewrites and FAQ - with each fact assigned to exactly one slot.
 kind: llm
-principles: P1, P2, P3, P4, P6, P7, P8, P9
+principles: P1, P2, P3, P4, P6, P7, P8, P9, P10
 order: 3
 ---
 ## Inputs (packet)
@@ -14,6 +14,8 @@ order: 3
 - `facts`: [{id, text}] - the ONLY facts you may use
 - `assets`: images you may use in `figure` blocks; `links`: site URLs you may link to
 - `max_faq`: maximum FAQ items for this page (0 means no FAQ)
+- `keywords` (only when researched): primary, secondary, short_tail, questions, conversational, questions_answered_now,
+  content_gaps (topics competitors cover), alignment_gaps, journey_stage, cluster {role, pillar_url, links}
 
 ## Output (JSON only)
 {"title": "<{{TITLE_CHARS}} chars, primary query first, brand last>",
@@ -25,6 +27,8 @@ order: 3
                "blocks": [{"tag": "p", "text": "..."}, {"tag": "ul", "items": ["...", "..."]}]}],
  "faq": [{"question": "...?", "answer": "<{{FAQ_ANSWER_WORDS}} words>"}],
  "fact_slots": {"f1": "direct_answer", "f4": "sections[0]"},
+ "cta": {"text": "<descriptive anchor>", "href": "<one of links[].url>"} or null,
+ "unanswerable": [{"question": "<question keyword verbatim>", "needed": "<fact the owner must supply>"}],
  "rationale": "<=250 chars"}
 
 ## Rules
@@ -39,6 +43,12 @@ order: 3
 5. Name the brand in full at most once per section; use pronouns or the first name after that.
 6. Keep the client's own words and voice. Facts only from `facts`; otherwise `[VERIFY: ...]`.
 7. Paragraphs at most {{PARAGRAPH_MAX_WORDS.max}} words; links only to `links[].url` with descriptive anchors.
+8. With `keywords`: `keywords.primary` in title and H1 (once each) and in the description and direct answer; secondary
+   keywords only as natural variants. Every question not in `questions_answered_now` gets a section (or FAQ item)
+   whose heading asks it and whose first block is a `p` of {{QUESTION_ANSWER_WORDS}} words answering it directly;
+   if `facts` cannot answer it, list it in `unanswerable` instead. Cover `content_gaps` only where the facts support it.
+   For each `conversational` prompt write one self-contained passage that names the brand/entity explicitly.
+9. `cta`: one next step that fits the journey stage, linking the cluster pillar or a related page (null if none fits).
 
 ## Done when
 - Every limit above holds and every number/name is in `facts`.

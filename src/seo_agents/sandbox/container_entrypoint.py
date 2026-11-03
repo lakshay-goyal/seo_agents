@@ -43,9 +43,11 @@ def site_model_files(directory):
 
 
 def output_files(state, target):
-    """Everything the exploration wrote (site model, sharded exploration output, on-page proposals, repo context)."""
+    """Everything the exploration wrote (site model, sharded exploration output, keyword research, on-page proposals,
+    repo context)."""
     files = site_model_files(state.get("site_model_dir"))
-    for key, prefix in (("exploration_dir", "seo_reports/exploration"), ("onpage_dir", "seo_reports/onpage")):
+    for key, prefix in (("exploration_dir", "seo_reports/exploration"), ("onpage_dir", "seo_reports/onpage"),
+                        ("keywords_dir", "seo_reports/keywords")):
         files.update(directory_files(state.get(key), prefix))
     exploration = Path(target) / "seo_reports" / "exploration"
     if not state.get("exploration_dir") and exploration.is_dir():
@@ -54,6 +56,23 @@ def output_files(state, target):
         with open(state["repo_context_path"]) as stream:
             files["seo_reports/repo_context.json"] = stream.read()
     return files
+
+
+def run_keyword_research(state, target):
+    """SEO_KEYWORD_RESEARCH=1: keyword research on the fresh exploration output; sets state["keywords_dir"].
+    A failure is logged and the exploration PR still opens (keywords are an optional stage)."""
+    if os.environ.get("SEO_KEYWORD_RESEARCH", "0") != "1":
+        return state
+    from seo_agents.keyword_research.keyword_research import KeywordResearchWorkflow
+    reports = Path(state["site_model_dir"]).parent if state.get("site_model_dir") else Path(target) / "seo_reports"
+    log("stage 2b: keyword research (" + str(reports) + ")")
+    try:
+        result = KeywordResearchWorkflow().run(reports)
+    except Exception as error:  # noqa: BLE001 - never lose the exploration PR over the optional keyword stage
+        log("keyword research failed: " + type(error).__name__ + ": " + str(error)[:300])
+        return state
+    state["keywords_dir"] = (result.get("written") or {}).get("out_dir") or result.get("out_dir")
+    return state
 
 
 def analyze(github_url, site_url=None):
@@ -70,6 +89,7 @@ def analyze(github_url, site_url=None):
     log("analysed commit: " + str(sha))
     log("stage 2/2: analyze" + (" (site_url=" + site_url + ")" if site_url else ""))
     state = RepoAnalysisWorkflow(github_url, repo_path=target, site_url=site_url).run()
+    state = run_keyword_research(state, target)
     files = {path: scrub_paths(text, (target, str(Path(target).resolve())))
              for path, text in output_files(state, target).items()}
     publisher = PullRequestPublisher()

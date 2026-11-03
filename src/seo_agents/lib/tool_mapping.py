@@ -13,6 +13,7 @@ from __future__ import annotations
 from importlib import import_module
 
 _RA = 'seo_agents.repo_analysis'
+_KR = 'seo_agents.keyword_research'
 
 TOOL_CLASSES = {
     # ---- repository capture and parsing (repo_analysis/tools)
@@ -61,6 +62,13 @@ TOOL_CLASSES = {
     'site_level_builder': 'seo_agents.onpage.output.site_level_builder:SiteLevelBuilder',
     'onpage_output_writer': 'seo_agents.onpage.output.onpage_output_writer:OnpageOutputWriter',
     'pr_publisher': 'seo_agents.onpage.output.pr_publisher:OnpagePrPublisher',
+    # ---- keyword research stage (seo_agents/keyword_research)
+    'keyword_page_selector': f'{_KR}.page_selection:PageSelector',
+    'keyword_research_toolkit': f'{_KR}.providers.research_toolkit:ProviderResearchToolkit',
+    'keyword_generator': f'{_KR}.generation.keyword_generator:LlmKeywordGenerator',
+    'keyword_judge': f'{_KR}.judge.keyword_judge:JevKeywordJudge',
+    'keyword_mapper': f'{_KR}.mapping.keyword_mapper:KeywordMapper',
+    'keyword_output_writer': f'{_KR}.output.keyword_output_writer:KeywordOutputWriter',
 }
 
 AGENT_TOOLS = {
@@ -128,6 +136,21 @@ AGENT_TOOLS = {
     'onpage.qa': ('change_operations', 'page_preview_renderer'),
     'onpage.site': ('site_level_builder',),
     'onpage.write': ('onpage_output_writer',),
+
+    # ---- keyword research workflow (keyword_research/keyword_research.py), in execution order
+    'keyword_research.load': ('keyword_page_selector', 'exploration_reports', 'page_context', 'keyword_research_toolkit',
+                              'keyword_judge'),
+    'keyword_research.business_profile': ('keyword_generator',),
+    'keyword_research.competitor_discovery': ('keyword_research_toolkit',),
+    'keyword_research.research_loop': ('keyword_research_toolkit', 'keyword_generator', 'keyword_judge'),
+    'keyword_research.map': ('keyword_mapper', 'keyword_judge'),
+    'keyword_research.write': ('keyword_output_writer',),
+    # per-page loop subgraph run by research_loop: generate -> expand -> enrich -> judge -> (generate | finish)
+    'keyword_research.page_loop.generate': ('keyword_generator',),
+    'keyword_research.page_loop.expand': ('keyword_research_toolkit',),
+    'keyword_research.page_loop.enrich': ('keyword_research_toolkit',),
+    'keyword_research.page_loop.judge': ('keyword_judge',),
+    'keyword_research.page_loop.finish': (),
 }
 
 # LangChain tools given to every legacy LLM category extractor, in the order the model sees them.

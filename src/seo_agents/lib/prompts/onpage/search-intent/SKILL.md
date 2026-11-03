@@ -11,6 +11,7 @@ order: 1
 - `site_type_hint`: deterministic guess (personal | business | ecommerce | publisher | docs | other)
 - `site`: brand candidates, site URLs with titles
 - `exploration_keywords`: hints from exploration (may be empty)
+- `researched` (optional): keywords from keyword research (search data). They are fixed; see rule 5.
 
 ## Output (JSON only)
 {"brand_name": "<person/brand name exactly as written in the packet>",
@@ -32,6 +33,8 @@ order: 1
 2. `entities` and `user_questions` come only from the packet. If unsure, return fewer items (empty lists are fine).
 3. `pillar_url` / `related_urls` must be URLs from `site.urls`.
 4. Name and person queries are navigational.
+5. When `researched` is present, omit every field it contains (they are ignored); answer brand_name, site_type,
+   page_type, primary_topic, entities, answer_gap and only the keyword fields `researched` lacks.
 
 ## Done when
 - One primary query, valid enums, every entity present in the packet.

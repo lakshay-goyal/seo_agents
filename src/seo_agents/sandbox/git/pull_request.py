@@ -50,7 +50,9 @@ def commit_priority(path):
     name = path.rsplit("/", 1)[-1]
     if name in {"manifest.json", "summary.json"}:
         return 0
-    if path.startswith("seo_reports/onpage/"):
+    if path.startswith("seo_reports/onpage/") or path in {"seo_reports/keywords/keyword_map.json",
+                                                          "seo_reports/keywords/summary.md",
+                                                          "seo_reports/keywords/keyword_research.csv"}:
         return 1
     if name == "index.json":
         return 2
